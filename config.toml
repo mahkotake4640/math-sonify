@@ -1,0 +1,42 @@
+[system]
+name = "lorenz"
+dt = 0.001
+speed = 1.0
+
+[sonification]
+mode = "direct"
+scale = "pentatonic"
+base_frequency = 220.0
+octave_range = 3.0
+
+[audio]
+sample_rate = 44100
+buffer_size = 512
+reverb_wet = 0.4
+delay_ms = 300.0
+delay_feedback = 0.3
+master_volume = 0.7
+
+[lorenz]
+sigma = 10.0
+rho = 28.0
+beta = 2.6667
+
+[rossler]
+a = 0.2
+b = 0.2
+c = 5.7
+
+[double_pendulum]
+m1 = 1.0
+m2 = 1.0
+l1 = 1.0
+l2 = 1.0
+
+[geodesic_torus]
+R = 3.0
+r = 1.0
+
+[kuramoto]
+n_oscillators = 8
+coupling = 1.5
