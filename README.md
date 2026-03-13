@@ -1,7 +1,7 @@
 # Math Sonify 🎵
 
 > **Real-time procedural audio from mathematical dynamical systems.**
-> The math drives the music. You hear the actual dynamics — chaos, synchronization, orbital resonance — translated directly into sound.
+> The math drives the music. You hear the actual dynamics - chaos, synchronization, orbital resonance - translated directly into sound.
 
 ![Lorenz Attractor Phase Portrait](screenshots/lorenz-phase-portrait.png)
 
@@ -9,7 +9,7 @@
 
 ## What is this?
 
-Math Sonify runs continuous simulations of mathematical systems — strange attractors, coupled oscillators, gravitational problems, geodesic flows — and maps their evolving state to sound in real time. It's not data sonification in the generic sense. The actual differential equations are running, and what you hear *is* the math.
+Math Sonify runs continuous simulations of mathematical systems - strange attractors, coupled oscillators, gravitational problems, geodesic flows - and maps their evolving state to sound in real time. It's not data sonification in the generic sense. The actual differential equations are running, and what you hear *is* the math.
 
 Crank up the coupling constant on the Kuramoto oscillators and listen to synchronization emerge. Drop the Lorenz system into a chaotic regime and hear the butterfly attractor spiral through pitch space. Watch the three-body figure-8 orbit in phase space while its near-periodic rhythm plays out in audio.
 
@@ -17,12 +17,12 @@ Crank up the coupling constant on the Kuramoto oscillators and listen to synchro
 
 ## Screenshots
 
-### Lorenz Attractor — Phase Portrait
+### Lorenz Attractor - Phase Portrait
 The butterfly attractor traced in real time. Color encodes trajectory speed (deep blue → cyan → white). The gold arrow shows the current velocity vector (dx/dt). Equations visible bottom-left, live state values top-right.
 
 
-### Kuramoto Oscillators — Math View
-8 coupled phase oscillators shown on a unit circle. The gold arrow is the order parameter — watch it grow as you raise the coupling constant K, showing the synchronization phase transition live.
+### Kuramoto Oscillators - Math View
+8 coupled phase oscillators shown on a unit circle. The gold arrow is the order parameter - watch it grow as you raise the coupling constant K, showing the synchronization phase transition live.
 
 ![Kuramoto Math View](screenshots/kuramoto-math-view.png)
 
@@ -35,16 +35,16 @@ Neon green oscilloscope with 32-bin DFT spectrum below. RMS level bar on the rig
 
 ## Get Started (Windows)
 
-### Option A — Run the prebuilt executable (no install needed)
+### Option A - Run the prebuilt executable (no install needed)
 
 1. Download [`math-sonify.exe`](release/math-sonify.exe) and [`config.toml`](release/config.toml)
 2. Put both files in the **same folder**
 3. Double-click `math-sonify.exe`
-4. Sound starts immediately — Lorenz attractor, pentatonic scale, direct mapping
+4. Sound starts immediately - Lorenz attractor, pentatonic scale, direct mapping
 
 > **Note:** Windows may show a SmartScreen warning since the exe isn't signed. Click **"More info" → "Run anyway"**.
 
-### Option B — Build from source
+### Option B - Build from source
 
 Requires [Rust](https://rustup.rs/) (stable, 1.75+).
 
@@ -83,18 +83,18 @@ cargo run --release
 ## Controls
 
 **Left panel:**
-- **PRESETS** — 6 named starting points: Lorenz Ambience, Pendulum Rhythm, Torus Drone, Kuramoto Sync, Three-Body Jazz, Rössler Drift
-- **SYSTEM** — selector + per-system parameters (σ, ρ, β for Lorenz etc.)
-- **SONIFICATION** — mode, scale (pentatonic / chromatic / just intonation / microtonal), root frequency, octave range
-- **HARMONY** — chord voicings (major / minor / power / dom7 / sus2 / octave), transpose (±24 semitones), portamento, per-voice mix
-- **EFFECTS** — reverb wet/dry, delay time + feedback
-- **MASTER** — volume, pause, live chaos meter
+- **PRESETS** - 6 named starting points: Lorenz Ambience, Pendulum Rhythm, Torus Drone, Kuramoto Sync, Three-Body Jazz, Rössler Drift
+- **SYSTEM** - selector + per-system parameters (σ, ρ, β for Lorenz etc.)
+- **SONIFICATION** - mode, scale (pentatonic / chromatic / just intonation / microtonal), root frequency, octave range
+- **HARMONY** - chord voicings (major / minor / power / dom7 / sus2 / octave), transpose (±24 semitones), portamento, per-voice mix
+- **EFFECTS** - reverb wet/dry, delay time + feedback
+- **MASTER** - volume, pause, live chaos meter
 
 **Visualization tabs:**
-- **Phase Portrait** — glowing fading trail + velocity arrow + equations overlay + live state values
-- **Waveform** — oscilloscope + 32-bin spectrum
-- **Note Map** — log-frequency axis showing voice pitches and chord tones as note names
-- **Math View** — equations, live state vector vs. derivative, Kuramoto phase circle, chaos gauge
+- **Phase Portrait** - glowing fading trail + velocity arrow + equations overlay + live state values
+- **Waveform** - oscilloscope + 32-bin spectrum
+- **Note Map** - log-frequency axis showing voice pitches and chord tones as note names
+- **Math View** - equations, live state vector vs. derivative, Kuramoto phase circle, chaos gauge
 
 ---
 
@@ -104,7 +104,7 @@ cargo run --release
 
 **Hearing synchronization happen:** Load *Kuramoto Sync* → set coupling K to 0.5 (incoherent noise) → slowly drag K up to 3.0 → listen as the tones lock into harmony. That's the Kuramoto phase transition in real time.
 
-**Chaotic rhythm:** Load *Pendulum Rhythm* → set mode to Granular → increase speed to 3.0. The grain density tracks trajectory speed — chaotic phases sound dense, near-periodic passages pulse rhythmically.
+**Chaotic rhythm:** Load *Pendulum Rhythm* → set mode to Granular → increase speed to 3.0. The grain density tracks trajectory speed - chaotic phases sound dense, near-periodic passages pulse rhythmically.
 
 **Jazz voicings from chaos:** Load *Three-Body Jazz* → Spectral mode → Dom7 chord → just intonation scale. The near-periodic figure-8 orbit produces repeating harmonic structures with occasional chaotic departures.
 
@@ -163,11 +163,11 @@ egui panels + painters
 ## Built with
 
 - [Rust](https://www.rust-lang.org/)
-- [cpal](https://github.com/RustAudio/cpal) — cross-platform audio I/O
-- [egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) — immediate-mode GUI
-- [crossbeam-channel](https://github.com/crossbeam-rs/crossbeam) — lock-free inter-thread communication
-- [parking_lot](https://github.com/Amanieu/parking_lot) — fast mutexes
-- [serde](https://serde.rs/) + [toml](https://docs.rs/toml) — config parsing
+- [cpal](https://github.com/RustAudio/cpal) - cross-platform audio I/O
+- [egui](https://github.com/emilk/egui) / [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) - immediate-mode GUI
+- [crossbeam-channel](https://github.com/crossbeam-rs/crossbeam) - lock-free inter-thread communication
+- [parking_lot](https://github.com/Amanieu/parking_lot) - fast mutexes
+- [serde](https://serde.rs/) + [toml](https://docs.rs/toml) - config parsing
 
 ---
 
