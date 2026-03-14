@@ -22,7 +22,7 @@ use crate::sonification::{
     DirectMapping, OrbitalResonance, GranularMapping, SpectralMapping, FmMapping,
     chord_intervals_for,
 };
-use crate::audio::{AudioEngine, WavRecorder, LoopExportPending};
+use crate::audio::{AudioEngine, WavRecorder, LoopExportPending, VuMeter, SidechainLevel, ClipBuffer};
 use crate::synth::OscShape;
 use midir;
 use crate::ui::{AppState, SharedState, draw_ui};
@@ -56,8 +56,17 @@ fn main() -> anyhow::Result<()> {
     // Bifurcation data
     let bifurc_data: Arc<Mutex<Vec<(f32, f32)>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Channel: sim thread -> audio thread
-    let (tx, rx) = bounded::<AudioParams>(CHANNEL_CAP);
+    // Channel: sim thread -> audio thread (layer batch)
+    let (tx, rx) = bounded::<[Option<AudioParams>; 3]>(CHANNEL_CAP);
+
+    // VU meter shared state
+    let vu_meter: VuMeter = Arc::new(Mutex::new([0.0; 4]));
+
+    // Sidechain level
+    let sidechain_level: SidechainLevel = Arc::new(Mutex::new(0.0));
+
+    // Clip buffer (~60s stereo audio)
+    let clip_buffer: ClipBuffer = Arc::new(Mutex::new(std::collections::VecDeque::new()));
 
     // Audio engine
     let (_audio, actual_sr) = AudioEngine::start(
@@ -70,10 +79,19 @@ fn main() -> anyhow::Result<()> {
         waveform_buf.clone(),
         recording.clone(),
         loop_export.clone(),
+        vu_meter.clone(),
+        clip_buffer.clone(),
+        sidechain_level.clone(),
     )?;
 
-    // Store actual sample rate in AppState
-    shared.lock().sample_rate = actual_sr;
+    // Store actual sample rate and shared state in AppState
+    {
+        let mut st = shared.lock();
+        st.sample_rate = actual_sr;
+        st.vu_meter = vu_meter;
+        st.clip_buffer = clip_buffer;
+        st.sidechain_level_shared = sidechain_level.clone();
+    }
 
     // Simulation thread
     let shared_sim = shared.clone();
@@ -125,7 +143,7 @@ impl eframe::App for SonifyApp {
         let points = self.viz_history.lock().clone();
         draw_ui(ctx, &self.shared, &points, &self.waveform_buf, &self.recording,
                 &self.loop_export, &self.bifurc_data);
-        ctx.request_repaint_after(Duration::from_millis(33)); // ~30 fps UI
+        ctx.request_repaint_after(Duration::from_millis(33));
     }
 }
 
@@ -133,14 +151,22 @@ impl eframe::App for SonifyApp {
 // Simulation thread
 // ---------------------------------------------------------------------------
 
+struct ExtraLayer {
+    system: Box<dyn DynamicalSystem>,
+    mapper: Box<dyn Sonification>,
+    config: Config,
+}
+
 fn sim_thread(
     shared: SharedState,
     viz: Arc<Mutex<Vec<(f32, f32, f32, f32, bool)>>>,
-    tx: crossbeam_channel::Sender<AudioParams>,
+    tx: crossbeam_channel::Sender<[Option<AudioParams>; 3]>,
 ) {
     let initial_config = shared.lock().config.clone();
     let mut system = build_system(&initial_config);
     let mut mapper = build_mapper(&initial_config.sonification.mode);
+    // Extra polyphony layers (indices 1 and 2)
+    let mut extra_layers: [Option<ExtraLayer>; 2] = [None, None];
 
     let control_rate_hz = 120.0f64;
     let control_period = Duration::from_secs_f64(1.0 / control_rate_hz);
@@ -157,7 +183,8 @@ fn sim_thread(
         }
         next_tick += control_period;
 
-        let (paused, mut config, sys_changed, mode_changed, bpm_sync, bpm, auto_recording, auto_playing) = {
+        let (paused, mut config, sys_changed, mode_changed, bpm_sync, bpm, auto_recording, auto_playing,
+             poly_defs, sidechain_enabled, sidechain_level_shared, sidechain_target, sidechain_amount) = {
             let mut st = shared.lock();
             let p = st.paused;
             let c = st.config.clone();
@@ -169,7 +196,12 @@ fn sim_thread(
             let bm = st.bpm;
             let ar = st.auto_recording;
             let ap = st.auto_playing;
-            (p, c, sc, mc, bs, bm, ar, ap)
+            let pd = st.poly_layers.clone();
+            let se = st.sidechain_enabled;
+            let sl = st.sidechain_level_shared.clone();
+            let st_target = st.sidechain_target.clone();
+            let sa = st.sidechain_amount;
+            (p, c, sc, mc, bs, bm, ar, ap, pd, se, sl, st_target, sa)
         };
 
         if paused { continue; }
@@ -459,7 +491,100 @@ fn sim_thread(
             }
         }
 
-        let _ = tx.try_send(params);
+        // Apply sidechain input modulation
+        if sidechain_enabled {
+            let sc_rms = if let Some(lvl) = sidechain_level_shared.try_lock() { *lvl } else { 0.0 };
+            let sc_delta = sc_rms * sidechain_amount;
+            match sidechain_target.as_str() {
+                "speed"  => config.system.speed  = (config.system.speed  * (1.0 + sc_delta as f64)).clamp(0.05, 20.0),
+                "reverb" => params.reverb_wet     = (params.reverb_wet    + sc_delta).clamp(0.0, 1.0),
+                "filter" => params.filter_cutoff  = (params.filter_cutoff * (1.0 + sc_delta * 4.0)).clamp(20.0, 20000.0),
+                "sigma"  => config.lorenz.sigma   = (config.lorenz.sigma  * (1.0 + sc_delta as f64)).clamp(0.1, 50.0),
+                "volume" => params.master_volume  = (params.master_volume + sc_delta).clamp(0.0, 1.0),
+                _ => {}
+            }
+        }
+
+        // Reinit extra layers if their preset changed
+        for i in 0..2 {
+            if i < poly_defs.len() {
+                let def = &poly_defs[i];
+                if def.changed || extra_layers[i].is_none() {
+                    if def.active && !def.preset_name.is_empty() {
+                        let cfg = crate::patches::load_preset(&def.preset_name);
+                        let sys = build_system(&cfg);
+                        let mpr = build_mapper(&cfg.sonification.mode);
+                        extra_layers[i] = Some(ExtraLayer { system: sys, mapper: mpr, config: cfg });
+                    } else {
+                        extra_layers[i] = None;
+                    }
+                }
+            }
+        }
+        // Clear changed flags
+        {
+            let mut st = shared.lock();
+            for d in &mut st.poly_layers { d.changed = false; }
+        }
+
+        // Tick extra layers and build their AudioParams
+        let mut layer1_params: Option<AudioParams> = None;
+        let mut layer2_params: Option<AudioParams> = None;
+        for (li, el_opt) in extra_layers.iter_mut().enumerate() {
+            if let Some(el) = el_opt {
+                let steps = ((el.config.system.speed / control_rate_hz) / el.config.system.dt)
+                    .round() as usize;
+                for _ in 0..steps.clamp(1, 10_000) { el.system.step(el.config.system.dt); }
+                let mut lp = el.mapper.map(el.system.state(), el.system.speed(), &el.config.sonification);
+                lp.transpose_semitones = el.config.sonification.transpose_semitones;
+                lp.chord_intervals     = chord_intervals_for(&el.config.sonification.chord_mode);
+                lp.voice_levels        = el.config.sonification.voice_levels;
+                lp.portamento_ms       = el.config.sonification.portamento_ms;
+                lp.master_volume       = el.config.audio.master_volume;
+                lp.reverb_wet          = el.config.audio.reverb_wet;
+                lp.delay_ms            = el.config.audio.delay_ms;
+                lp.delay_feedback      = el.config.audio.delay_feedback;
+                lp.bit_depth           = el.config.audio.bit_depth;
+                lp.rate_crush          = el.config.audio.rate_crush;
+                lp.chorus_mix          = el.config.audio.chorus_mix;
+                lp.waveshaper_drive    = el.config.audio.waveshaper_drive;
+                lp.waveshaper_mix      = el.config.audio.waveshaper_mix;
+                lp.voice_shapes        = [
+                    osc_shape_from_str(&el.config.sonification.voice_shapes[0]),
+                    osc_shape_from_str(&el.config.sonification.voice_shapes[1]),
+                    osc_shape_from_str(&el.config.sonification.voice_shapes[2]),
+                    osc_shape_from_str(&el.config.sonification.voice_shapes[3]),
+                ];
+                // Per-layer ADSR and mix from poly_defs
+                if li < poly_defs.len() {
+                    let def = &poly_defs[li];
+                    lp.layer_level       = if def.mute { 0.0 } else { def.level };
+                    lp.layer_pan         = def.pan;
+                    lp.adsr_attack_ms    = def.adsr_attack_ms;
+                    lp.adsr_decay_ms     = def.adsr_decay_ms;
+                    lp.adsr_sustain      = def.adsr_sustain;
+                    lp.adsr_release_ms   = def.adsr_release_ms;
+                }
+                lp.layer_id = li + 1;
+                if li == 0 { layer1_params = Some(lp); }
+                else       { layer2_params = Some(lp); }
+            }
+        }
+
+        // Update layer 0 ADSR from AppState
+        {
+            let st = shared.lock();
+            params.adsr_attack_ms  = st.adsr_attack_ms;
+            params.adsr_decay_ms   = st.adsr_decay_ms;
+            params.adsr_sustain    = st.adsr_sustain;
+            params.adsr_release_ms = st.adsr_release_ms;
+            params.layer_level     = if st.layer0_mute { 0.0 } else { st.layer0_level };
+            params.layer_pan       = st.layer0_pan;
+        }
+        params.layer_id = 0;
+
+        let batch: [Option<AudioParams>; 3] = [Some(params), layer1_params, layer2_params];
+        let _ = tx.try_send(batch);
     }
 }
 

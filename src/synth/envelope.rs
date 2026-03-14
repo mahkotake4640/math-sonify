@@ -1,7 +1,8 @@
 /// ADSR envelope generator (per-sample).
-#[derive(Clone, Copy, PartialEq)]
-enum Stage { Idle, Attack, Decay, Sustain, Release }
+#[derive(Clone, Copy, PartialEq, Default)]
+enum Stage { #[default] Idle, Attack, Decay, Sustain, Release }
 
+#[derive(Clone, Default)]
 pub struct Adsr {
     stage: Stage,
     level: f32,
@@ -9,6 +10,7 @@ pub struct Adsr {
     decay_rate: f32,
     sustain_level: f32,
     release_rate: f32,
+    sample_rate: f32,
 }
 
 impl Adsr {
@@ -21,12 +23,24 @@ impl Adsr {
             decay_rate: ms_to_rate(decay_ms),
             sustain_level: sustain.clamp(0.0, 1.0),
             release_rate: ms_to_rate(release_ms),
+            sample_rate,
         }
+    }
+
+    /// Update timing parameters without resetting the envelope stage.
+    pub fn set_params(&mut self, attack_ms: f32, decay_ms: f32, sustain: f32, release_ms: f32) {
+        let sr = self.sample_rate.max(1.0);
+        let ms_to_rate = |ms: f32| 1.0 / (ms * 0.001 * sr).max(1.0);
+        self.attack_rate = ms_to_rate(attack_ms);
+        self.decay_rate = ms_to_rate(decay_ms);
+        self.sustain_level = sustain.clamp(0.0, 1.0);
+        self.release_rate = ms_to_rate(release_ms);
     }
 
     pub fn trigger(&mut self) { self.stage = Stage::Attack; }
     pub fn release(&mut self) { self.stage = Stage::Release; }
     pub fn is_idle(&self) -> bool { self.stage == Stage::Idle }
+    pub fn level(&self) -> f32 { self.level }
 
     pub fn next_sample(&mut self) -> f32 {
         match self.stage {

@@ -1,130 +1,42 @@
-/// Audio thread: consumes AudioParams from a lock-free ring buffer,
-/// synthesizes stereo PCM, applies effects chain, outputs via cpal.
+/// Audio thread: multi-layer polyphonic synthesis engine.
+/// Up to 3 independent attractor layers mix into one shared effects chain.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use hound;
 use cpal::{Stream, SampleFormat};
 use std::sync::Arc;
+use std::collections::VecDeque;
 use parking_lot::Mutex;
 use crossbeam_channel::Receiver;
 
 use crate::sonification::{AudioParams, SonifMode};
 use crate::synth::{
-    Oscillator, OscShape, BiquadFilter, Freeverb, DelayLine, Limiter, GrainEngine, Bitcrusher,
-    KarplusStrong, Chorus, Waveshaper,
+    Oscillator, OscShape, BiquadFilter, Freeverb, DelayLine, Limiter,
+    GrainEngine, Bitcrusher, KarplusStrong, Chorus, Waveshaper, Adsr,
 };
 
-pub type WavRecorder = Arc<parking_lot::Mutex<Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>>>;
-/// When Some(n), audio thread records n more samples then finalizes.
-pub type LoopExportPending = Arc<parking_lot::Mutex<Option<u64>>>;
+pub type WavRecorder     = Arc<Mutex<Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>>>;
+pub type LoopExportPending = Arc<Mutex<Option<u64>>>;
+/// Shared VU meter: [layer0_peak, layer1_peak, layer2_peak, master_peak]
+pub type VuMeter = Arc<Mutex<[f32; 4]>>;
+/// Shared sidechain RMS level written by the input stream, read by the sim thread.
+pub type SidechainLevel = Arc<Mutex<f32>>;
+/// Circular audio clip buffer (last ~60 seconds stereo interleaved f32).
+pub type ClipBuffer = Arc<Mutex<VecDeque<f32>>>;
 
-pub struct AudioEngine {
-    _stream: Stream,
-}
+const CLIP_SECONDS: usize = 60;
 
-impl AudioEngine {
-    pub fn start(
-        params_rx: Receiver<AudioParams>,
-        sample_rate: u32,
-        reverb_wet: f32,
-        delay_ms: f32,
-        delay_feedback: f32,
-        master_volume: f32,
-        waveform: Arc<Mutex<Vec<f32>>>,
-        recording: WavRecorder,
-        loop_export: LoopExportPending,
-    ) -> anyhow::Result<(Self, u32)> {
-        let host = cpal::default_host();
-        let device = host.default_output_device()
-            .ok_or_else(|| anyhow::anyhow!("No audio output device"))?;
+// ---------------------------------------------------------------------------
+// Per-layer DSP state
+// ---------------------------------------------------------------------------
 
-        // Use the device's default config and read back the actual sample rate.
-        let default_config = device.default_output_config()?;
-        let actual_sr = default_config.sample_rate().0;
-        let fmt = default_config.sample_format();
-        log::info!("Audio: {} Hz, {:?}", actual_sr, fmt);
-
-        let sr = actual_sr as f32;
-        let synth_state = Arc::new(Mutex::new(SynthState::new(sr, reverb_wet, delay_ms, delay_feedback, waveform, recording, loop_export)));
-        synth_state.lock().master_volume = master_volume;
-        let synth_state_clone = synth_state.clone();
-        let stream_config = default_config.config();
-
-        let stream = match fmt {
-            SampleFormat::F32 => {
-                let ss = synth_state_clone.clone();
-                device.build_output_stream(
-                    &stream_config,
-                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        let params = { let mut l = None; while let Ok(p) = params_rx.try_recv() { l = Some(p); } l };
-                        let mut state = ss.lock();
-                        if let Some(p) = params { state.update_params(p); }
-                        state.render(data);
-                    },
-                    |err| log::error!("Audio stream error: {err}"),
-                    None,
-                )?
-            }
-            SampleFormat::I16 => {
-                let ss = synth_state_clone.clone();
-                device.build_output_stream(
-                    &stream_config,
-                    move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        let params = { let mut l = None; while let Ok(p) = params_rx.try_recv() { l = Some(p); } l };
-                        let mut state = ss.lock();
-                        if let Some(p) = params { state.update_params(p); }
-                        let mut buf = vec![0.0f32; data.len()];
-                        state.render(&mut buf);
-                        for (d, s) in data.iter_mut().zip(buf.iter()) {
-                            *d = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                        }
-                    },
-                    |err| log::error!("Audio stream error: {err}"),
-                    None,
-                )?
-            }
-            SampleFormat::U16 => {
-                let ss = synth_state_clone.clone();
-                device.build_output_stream(
-                    &stream_config,
-                    move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
-                        let params = { let mut l = None; while let Ok(p) = params_rx.try_recv() { l = Some(p); } l };
-                        let mut state = ss.lock();
-                        if let Some(p) = params { state.update_params(p); }
-                        let mut buf = vec![0.0f32; data.len()];
-                        state.render(&mut buf);
-                        for (d, s) in data.iter_mut().zip(buf.iter()) {
-                            *d = ((s.clamp(-1.0, 1.0) + 1.0) * 0.5 * u16::MAX as f32) as u16;
-                        }
-                    },
-                    |err| log::error!("Audio stream error: {err}"),
-                    None,
-                )?
-            }
-            _ => anyhow::bail!("Unsupported audio sample format: {:?}", fmt),
-        };
-
-        stream.play()?;
-        Ok((Self { _stream: stream }, actual_sr))
-    }
-}
-
-/// All mutable DSP state lives here, owned exclusively by the audio callback.
-struct SynthState {
-    sample_rate: f32,
-    params: AudioParams,
-    master_volume: f32,
+struct LayerSynth {
+    sr: f32,
     oscs: [Oscillator; 4],
     chord_oscs: [Oscillator; 3],
-    filter: BiquadFilter,
-    reverb: Freeverb,
-    delay: DelayLine,
-    limiter: Limiter,
     grains: GrainEngine,
-    bitcrusher: Bitcrusher,
     ks: KarplusStrong,
-    chorus: Chorus,
-    waveshaper: Waveshaper,
+    voice_adsr: [Adsr; 4],
     partial_phases: [f32; 32],
     amp_smooth: [f32; 4],
     freq_smooth: [f32; 4],
@@ -134,138 +46,328 @@ struct SynthState {
     chord_intervals: [f32; 3],
     fm_phase: f32,
     fm_mod_phase: f32,
-    pub waveform: Arc<Mutex<Vec<f32>>>,
-    pub recording: WavRecorder,
-    pub loop_export: LoopExportPending,
-    loop_recorder: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>,
+    waveshaper: Waveshaper,
+    bitcrusher: Bitcrusher,
+    level: f32,
+    pan: f32,
+    peak: f32,
 }
 
-impl SynthState {
-    fn new(sample_rate: f32, reverb_wet: f32, delay_ms: f32, delay_feedback: f32,
-           waveform: Arc<Mutex<Vec<f32>>>, recording: WavRecorder, loop_export: LoopExportPending) -> Self {
-        let mut reverb = Freeverb::new(sample_rate);
-        reverb.wet = reverb_wet;
-        let mut delay = DelayLine::new(2000.0, sample_rate);
-        delay.set_delay_ms(delay_ms, sample_rate);
-        delay.feedback = delay_feedback;
-        delay.mix = 0.25;
-
+impl LayerSynth {
+    fn new(sr: f32) -> Self {
         Self {
-            sample_rate,
-            master_volume: 0.7,
-            params: AudioParams::default(),
-            oscs: std::array::from_fn(|i| {
-                Oscillator::new(220.0 * (i + 1) as f32, OscShape::Sine, sample_rate)
-            }),
+            sr,
+            oscs: std::array::from_fn(|i| Oscillator::new(110.0 * (i + 1) as f32, OscShape::Sine, sr)),
             chord_oscs: [
-                Oscillator::new(330.0, OscShape::Sine, sample_rate),
-                Oscillator::new(440.0, OscShape::Sine, sample_rate),
-                Oscillator::new(550.0, OscShape::Sine, sample_rate),
+                Oscillator::new(220.0, OscShape::Sine, sr),
+                Oscillator::new(330.0, OscShape::Sine, sr),
+                Oscillator::new(440.0, OscShape::Sine, sr),
             ],
-            filter: BiquadFilter::low_pass(2000.0, 0.7, sample_rate),
-            reverb,
-            delay,
-            limiter: Limiter::new(-1.0, 5.0, sample_rate),
-            grains: GrainEngine::new(sample_rate),
-            bitcrusher: Bitcrusher::new(),
-            ks: KarplusStrong::new(50.0, sample_rate),
-            chorus: Chorus::new(sample_rate),
-            waveshaper: Waveshaper::new(),
+            grains: GrainEngine::new(sr),
+            ks: KarplusStrong::new(50.0, sr),
+            voice_adsr: std::array::from_fn(|_| Adsr::new(10.0, 200.0, 0.7, 400.0, sr)),
             partial_phases: [0.0; 32],
             amp_smooth: [0.0; 4],
-            freq_smooth: [220.0, 440.0, 660.0, 880.0],
+            freq_smooth: [110.0, 220.0, 330.0, 440.0],
             chord_amp_smooth: [0.0; 3],
-            chord_freq_smooth: [330.0, 440.0, 550.0],
+            chord_freq_smooth: [220.0, 330.0, 440.0],
             freq_smooth_rate: 0.01,
             chord_intervals: [0.0; 3],
             fm_phase: 0.0,
             fm_mod_phase: 0.0,
+            waveshaper: Waveshaper::new(),
+            bitcrusher: Bitcrusher::new(),
+            level: 1.0,
+            pan: 0.0,
+            peak: 0.0,
+        }
+    }
+
+    fn update(&mut self, p: &AudioParams) {
+        self.grains.spawn_rate = p.grain_spawn_rate;
+        self.grains.base_freq  = p.grain_base_freq;
+        self.grains.freq_spread = p.grain_freq_spread;
+        self.freq_smooth_rate = (1.0 / (p.portamento_ms.max(1.0) * 0.001 * self.sr)).clamp(0.001, 1.0);
+        self.chord_intervals = p.chord_intervals;
+        self.waveshaper.drive = p.waveshaper_drive;
+        self.waveshaper.mix   = p.waveshaper_mix;
+        self.bitcrusher.bit_depth  = p.bit_depth;
+        self.bitcrusher.rate_crush = p.rate_crush;
+        self.level = p.layer_level;
+        self.pan   = p.layer_pan;
+        for i in 0..4 { self.oscs[i].shape = p.voice_shapes[i]; }
+
+        // Update ADSR params (without resetting stage so legato works)
+        for adsr in &mut self.voice_adsr {
+            adsr.set_params(p.adsr_attack_ms, p.adsr_decay_ms, p.adsr_sustain, p.adsr_release_ms);
+        }
+
+        if p.ks_trigger && p.ks_freq > 20.0 {
+            self.ks.trigger(p.ks_freq, self.sr);
+            // Velocity-sensitive ADSR trigger: louder hits = faster attack, longer release
+            let velocity = p.amps[0].clamp(0.01, 1.0);
+            let att = (p.adsr_attack_ms * (1.2 - velocity * 0.8)).max(1.0);
+            let rel = p.adsr_release_ms * (0.7 + velocity * 0.6);
+            for adsr in &mut self.voice_adsr {
+                adsr.set_params(att, p.adsr_decay_ms, p.adsr_sustain, rel);
+                adsr.trigger();
+            }
+        }
+        self.ks.volume = p.ks_volume;
+    }
+
+    /// Render one stereo sample for this layer (no master effects yet).
+    fn next_sample(&mut self, p: &AudioParams) -> (f32, f32) {
+        let (raw_l, raw_r) = match p.mode {
+            SonifMode::Direct | SonifMode::Orbital => self.synth_additive(p),
+            SonifMode::Granular => self.grains.next_sample(),
+            SonifMode::Spectral => self.synth_spectral(p),
+            SonifMode::FM       => self.synth_fm(p),
+        };
+
+        // Karplus-Strong mixed before per-layer waveshaper
+        let ks = self.ks.next_sample();
+        let l = self.waveshaper.process(raw_l + ks * 0.5);
+        let r = self.waveshaper.process(raw_r + ks * 0.5);
+
+        // Per-layer bitcrusher
+        let l = self.bitcrusher.process(l);
+        let r = self.bitcrusher.process(r);
+
+        // Apply level + pan
+        let pan_l = (1.0 - (self.pan + p.layer_pan).clamp(-1.0, 1.0).max(0.0)).max(0.0);
+        let pan_r = (1.0 + (self.pan + p.layer_pan).clamp(-1.0, 1.0).min(0.0)).max(0.0);
+        let out_l = l * self.level * pan_l;
+        let out_r = r * self.level * pan_r;
+
+        // Track peak for VU meter
+        let peak = out_l.abs().max(out_r.abs());
+        self.peak = (self.peak * 0.999).max(peak); // fast attack, slow decay
+
+        (out_l, out_r)
+    }
+
+    fn synth_additive(&mut self, p: &AudioParams) -> (f32, f32) {
+        let gain = p.gain;
+        let transpose = 2.0f32.powf(p.transpose_semitones / 12.0);
+        let mut l = 0.0f32;
+        let mut r = 0.0f32;
+
+        for i in 0..4 {
+            let target_freq = p.freqs[i] * transpose;
+            let target_amp  = p.amps[i] * p.voice_levels[i];
+            if target_freq > 10.0 {
+                self.freq_smooth[i] += self.freq_smooth_rate * (target_freq - self.freq_smooth[i]);
+                self.amp_smooth[i]  += 0.005 * (target_amp - self.amp_smooth[i]);
+                self.oscs[i].freq = self.freq_smooth[i];
+                let env = self.voice_adsr[i].next_sample();
+                let sig = self.oscs[i].next_sample() * self.amp_smooth[i] * gain * env;
+                let pan = p.pans[i].clamp(-1.0, 1.0);
+                l += sig * (1.0 - pan.max(0.0));
+                r += sig * (1.0 + pan.min(0.0));
+            } else {
+                // Still advance ADSR even if voice not sounding
+                self.voice_adsr[i].next_sample();
+            }
+        }
+
+        // Chord voices from voice[0] frequency
+        let v0 = self.freq_smooth[0];
+        for k in 0..3 {
+            let interval = self.chord_intervals[k];
+            if interval.abs() > 0.001 {
+                let target_cf = v0 * 2.0f32.powf(interval / 12.0);
+                let target_ca = p.amps[0] * p.voice_levels[0] * 0.65;
+                self.chord_freq_smooth[k] += self.freq_smooth_rate * (target_cf - self.chord_freq_smooth[k]);
+                self.chord_amp_smooth[k]  += 0.005 * (target_ca - self.chord_amp_smooth[k]);
+                self.chord_oscs[k].freq = self.chord_freq_smooth[k];
+                let sig = self.chord_oscs[k].next_sample() * self.chord_amp_smooth[k] * gain;
+                let pan = (k as f32 / 2.0) * 2.0 - 1.0;
+                l += sig * (1.0 - pan.max(0.0));
+                r += sig * (1.0 + pan.min(0.0));
+            } else {
+                self.chord_amp_smooth[k] += 0.005 * (0.0 - self.chord_amp_smooth[k]);
+            }
+        }
+        (l * 0.5, r * 0.5)
+    }
+
+    fn synth_spectral(&mut self, p: &AudioParams) -> (f32, f32) {
+        use std::f32::consts::TAU;
+        let mut out = 0.0f32;
+        for k in 0..32 {
+            let freq = p.partials_base_freq * (k + 1) as f32;
+            self.partial_phases[k] = (self.partial_phases[k] + TAU * freq / self.sr) % TAU;
+            out += self.partial_phases[k].sin() * p.partials[k];
+        }
+        let mono = out * p.gain;
+        (mono, mono)
+    }
+
+    fn synth_fm(&mut self, p: &AudioParams) -> (f32, f32) {
+        use std::f32::consts::TAU;
+        let carrier = p.fm_carrier_freq;
+        let modfreq = carrier * p.fm_mod_ratio;
+        self.fm_mod_phase = (self.fm_mod_phase + TAU * modfreq  / self.sr).rem_euclid(TAU);
+        self.fm_phase     = (self.fm_phase     + TAU * carrier  / self.sr).rem_euclid(TAU);
+        let out = (self.fm_phase + p.fm_mod_index * self.fm_mod_phase.sin()).sin() * p.gain;
+        (out, out)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Master SynthState (shared effects chain + 3 LayerSynths)
+// ---------------------------------------------------------------------------
+
+struct SynthState {
+    sample_rate: f32,
+    layer_params: [Option<AudioParams>; 3],
+    layers: [LayerSynth; 3],
+    // Shared master effects chain
+    filter: BiquadFilter,
+    reverb: Freeverb,
+    delay: DelayLine,
+    limiter: Limiter,
+    chorus: Chorus,
+    master_volume: f32,
+    reverb_wet: f32,
+    delay_ms: f32,
+    delay_feedback: f32,
+    // Metering
+    meter: VuMeter,
+    master_peak: f32,
+    // Recording
+    pub waveform: Arc<Mutex<Vec<f32>>>,
+    pub recording: WavRecorder,
+    pub loop_export: LoopExportPending,
+    loop_recorder: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>,
+    // Clip buffer (circular, last CLIP_SECONDS seconds)
+    pub clip_buffer: ClipBuffer,
+}
+
+impl SynthState {
+    fn new(
+        sr: f32, reverb_wet: f32, delay_ms: f32, delay_feedback: f32,
+        waveform: Arc<Mutex<Vec<f32>>>,
+        recording: WavRecorder,
+        loop_export: LoopExportPending,
+        meter: VuMeter,
+        clip_buffer: ClipBuffer,
+    ) -> Self {
+        let mut reverb = Freeverb::new(sr);
+        reverb.wet = reverb_wet;
+        let mut delay = DelayLine::new(2000.0, sr);
+        delay.set_delay_ms(delay_ms, sr);
+        delay.feedback = delay_feedback;
+        delay.mix = 0.25;
+        Self {
+            sample_rate: sr,
+            layer_params: [None, None, None],
+            layers: [LayerSynth::new(sr), LayerSynth::new(sr), LayerSynth::new(sr)],
+            filter: BiquadFilter::low_pass(8000.0, 0.7, sr),
+            reverb,
+            delay,
+            limiter: Limiter::new(-1.0, 5.0, sr),
+            chorus: Chorus::new(sr),
+            master_volume: 0.7,
+            reverb_wet,
+            delay_ms,
+            delay_feedback,
+            meter,
+            master_peak: 0.0,
             waveform,
             recording,
             loop_export,
             loop_recorder: None,
+            clip_buffer,
         }
     }
 
-    fn update_params(&mut self, params: AudioParams) {
-        self.filter.update_lp(params.filter_cutoff, params.filter_q, self.sample_rate);
-        self.grains.spawn_rate = params.grain_spawn_rate;
-        self.grains.base_freq = params.grain_base_freq;
-        self.grains.freq_spread = params.grain_freq_spread;
-        self.freq_smooth_rate = (1.0 / (params.portamento_ms.max(1.0) * 0.001 * self.sample_rate)).clamp(0.001, 1.0);
-        self.chord_intervals = params.chord_intervals;
-        self.master_volume = params.master_volume;
-        self.reverb.wet = params.reverb_wet.clamp(0.0, 1.0);
-        self.delay.feedback = params.delay_feedback.clamp(0.0, 0.9); // cap < 1 to prevent runaway
-        self.delay.set_delay_ms(params.delay_ms.max(1.0), self.sample_rate);
-        // Bitcrusher
-        self.bitcrusher.bit_depth = params.bit_depth;
-        self.bitcrusher.rate_crush = params.rate_crush;
-        // Karplus-Strong
-        if params.ks_trigger && params.ks_freq > 20.0 {
-            self.ks.trigger(params.ks_freq, self.sample_rate);
+    fn update_params(&mut self, idx: usize, params: AudioParams) {
+        if idx >= 3 { return; }
+        // Update master effects from layer 0 params (layer 0 owns the master bus)
+        if idx == 0 {
+            self.filter.update_lp(params.filter_cutoff, params.filter_q, self.sample_rate);
+            self.master_volume = params.master_volume;
+            self.reverb.wet = params.reverb_wet.clamp(0.0, 1.0);
+            self.delay.feedback = params.delay_feedback.clamp(0.0, 0.9);
+            self.delay.set_delay_ms(params.delay_ms.max(1.0), self.sample_rate);
+            self.chorus.mix   = params.chorus_mix;
+            self.chorus.rate  = params.chorus_rate;
+            self.chorus.depth = params.chorus_depth;
         }
-        self.ks.volume = params.ks_volume;
-        // Chorus
-        self.chorus.mix = params.chorus_mix;
-        self.chorus.rate = params.chorus_rate;
-        self.chorus.depth = params.chorus_depth;
-        // Waveshaper
-        self.waveshaper.drive = params.waveshaper_drive;
-        self.waveshaper.mix = params.waveshaper_mix;
-        // Voice shapes
-        for i in 0..4 {
-            self.oscs[i].shape = params.voice_shapes[i];
-        }
-        self.params = params;
+        self.layers[idx].update(&params);
+        self.layer_params[idx] = Some(params);
     }
 
     fn render(&mut self, data: &mut [f32]) {
-        let master_vol = self.master_volume;
-        let chunk = data.chunks_exact_mut(2);
-        for frame in chunk {
+        let mv = self.master_volume;
+        for frame in data.chunks_exact_mut(2) {
             let (l, r) = self.next_stereo_sample();
-            frame[0] = l * master_vol;
-            frame[1] = r * master_vol;
+            frame[0] = l * mv;
+            frame[1] = r * mv;
         }
     }
 
     fn next_stereo_sample(&mut self) -> (f32, f32) {
-        let (l, r) = match self.params.mode {
-            SonifMode::Direct | SonifMode::Orbital => self.synth_additive_voices(),
-            SonifMode::Granular => self.grains.next_sample(),
-            SonifMode::Spectral => self.synth_spectral(),
-            SonifMode::FM => self.synth_fm(),
-        };
+        // Sum all active layers
+        let mut sum_l = 0.0f32;
+        let mut sum_r = 0.0f32;
+        for i in 0..3 {
+            if let Some(ref p) = self.layer_params[i].clone() {
+                let (l, r) = self.layers[i].next_sample(p);
+                sum_l += l;
+                sum_r += r;
+            }
+        }
 
-        // Waveshaper (before filter)
-        let l = self.waveshaper.process(l);
-        let r = self.waveshaper.process(r);
+        // Write per-layer peaks to VU meter (non-blocking)
+        if let Some(mut m) = self.meter.try_lock() {
+            for i in 0..3 {
+                // Decay existing reading
+                m[i] *= 0.99;
+                m[i] = m[i].max(self.layers[i].peak);
+                self.layers[i].peak *= 0.98; // decay layer peak
+            }
+        }
 
-        // Karplus-Strong mixed in before filter
-        let ks_sample = self.ks.next_sample();
-        let lf = self.filter.process(l + ks_sample * 0.5);
-        let rf = self.filter.process(r + ks_sample * 0.5);
-
-        // Bitcrusher
-        let lf = self.bitcrusher.process(lf);
-        let rf = self.bitcrusher.process(rf);
-
+        // Shared master effects chain
+        let (lf, rf) = (
+            self.filter.process(sum_l),
+            self.filter.process(sum_r),
+        );
         let (ld, rd) = self.delay.process(lf, rf);
         let (lc, rc) = self.chorus.process(ld, rd);
         let (lrev, rrev) = self.reverb.process(lc, rc);
         let (lo_raw, ro_raw) = self.limiter.process(lrev, rrev);
-        // Final NaN/inf guard — any upstream corruption ends here, never reaches the driver
-        let (lo, ro) = (
-            if lo_raw.is_finite() { lo_raw } else { 0.0 },
-            if ro_raw.is_finite() { ro_raw } else { 0.0 },
-        );
 
-        // Capture waveform non-blocking
+        // Final NaN guard
+        let lo = if lo_raw.is_finite() { lo_raw } else { 0.0 };
+        let ro = if ro_raw.is_finite() { ro_raw } else { 0.0 };
+
+        // Master peak for VU
+        let mpeak = lo.abs().max(ro.abs());
+        self.master_peak = (self.master_peak * 0.999).max(mpeak);
+        if let Some(mut m) = self.meter.try_lock() {
+            m[3] = (m[3] * 0.99).max(self.master_peak);
+            self.master_peak *= 0.98;
+        }
+
+        // Waveform capture (non-blocking)
         if let Some(mut wf) = self.waveform.try_lock() {
             wf.push(lo);
             let excess = wf.len().saturating_sub(2048);
             if excess > 0 { wf.drain(0..excess); }
+        }
+
+        // Clip buffer (non-blocking, keeps last CLIP_SECONDS of stereo audio)
+        if let Some(mut cb) = self.clip_buffer.try_lock() {
+            cb.push_back(lo);
+            cb.push_back(ro);
+            let max_samples = CLIP_SECONDS * self.sample_rate as usize * 2;
+            while cb.len() > max_samples {
+                cb.pop_front();
+            }
         }
 
         // WAV recording (non-blocking)
@@ -276,127 +378,255 @@ impl SynthState {
             }
         }
 
-        // Loop export countdown (non-blocking check)
         self.handle_loop_export(lo, ro);
-
         (lo, ro)
     }
 
     fn handle_loop_export(&mut self, lo: f32, ro: f32) {
-        // Check if a loop export has been requested
         if let Some(mut pending) = self.loop_export.try_lock() {
             match *pending {
                 Some(n) if n > 0 => {
-                    // We're actively loop-recording
                     if self.loop_recorder.is_none() {
-                        // Start loop recorder
                         let secs = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
+                            .unwrap_or_default().as_secs();
                         let filename = format!("loop_{}.wav", secs);
                         let spec = hound::WavSpec {
-                            channels: 2,
-                            sample_rate: self.sample_rate as u32,
-                            bits_per_sample: 32,
-                            sample_format: hound::SampleFormat::Float,
+                            channels: 2, sample_rate: self.sample_rate as u32,
+                            bits_per_sample: 32, sample_format: hound::SampleFormat::Float,
                         };
-                        if let Ok(writer) = hound::WavWriter::create(&filename, spec) {
-                            self.loop_recorder = Some(writer);
+                        if let Ok(w) = hound::WavWriter::create(&filename, spec) {
+                            self.loop_recorder = Some(w);
                         }
                     }
-                    if let Some(ref mut writer) = self.loop_recorder {
-                        let _ = writer.write_sample(lo);
-                        let _ = writer.write_sample(ro);
+                    if let Some(ref mut w) = self.loop_recorder {
+                        let _ = w.write_sample(lo);
+                        let _ = w.write_sample(ro);
                     }
                     *pending = Some(n - 1);
                 }
                 Some(0) => {
-                    // Done, finalize
-                    if let Some(writer) = self.loop_recorder.take() {
-                        let _ = writer.finalize();
-                    }
+                    if let Some(w) = self.loop_recorder.take() { let _ = w.finalize(); }
                     *pending = None;
                 }
                 _ => {}
             }
         }
     }
+}
 
-    /// Simple polyphonic voices (Direct / Orbital modes).
-    fn synth_additive_voices(&mut self) -> (f32, f32) {
-        let gain = self.params.gain;
-        let transpose_ratio = 2.0f32.powf(self.params.transpose_semitones / 12.0);
-        let mut l = 0.0f32;
-        let mut r = 0.0f32;
+// ---------------------------------------------------------------------------
+// Audio engine bootstrap
+// ---------------------------------------------------------------------------
 
-        for i in 0..4 {
-            let target_freq = self.params.freqs[i] * transpose_ratio;
-            let target_amp  = self.params.amps[i] * self.params.voice_levels[i];
-            if target_freq > 10.0 {
-                self.freq_smooth[i] += self.freq_smooth_rate * (target_freq - self.freq_smooth[i]);
-                self.amp_smooth[i]  += 0.005 * (target_amp - self.amp_smooth[i]);
-                self.oscs[i].freq = self.freq_smooth[i];
-                let sig = self.oscs[i].next_sample() * self.amp_smooth[i] * gain;
-                let pan = self.params.pans[i].clamp(-1.0, 1.0);
-                l += sig * (1.0 - pan.max(0.0));
-                r += sig * (1.0 + pan.min(0.0));
+pub struct AudioEngine {
+    _stream: Stream,
+    _input_stream: Option<Stream>,
+}
+
+impl AudioEngine {
+    pub fn start(
+        params_rx: Receiver<[Option<AudioParams>; 3]>,
+        sample_rate: u32,
+        reverb_wet: f32,
+        delay_ms: f32,
+        delay_feedback: f32,
+        master_volume: f32,
+        waveform: Arc<Mutex<Vec<f32>>>,
+        recording: WavRecorder,
+        loop_export: LoopExportPending,
+        meter: VuMeter,
+        clip_buffer: ClipBuffer,
+        sidechain_level: SidechainLevel,
+    ) -> anyhow::Result<(Self, u32)> {
+        let host = cpal::default_host();
+        let device = host.default_output_device()
+            .ok_or_else(|| anyhow::anyhow!("No audio output device"))?;
+        let default_config = device.default_output_config()?;
+        let actual_sr = default_config.sample_rate().0;
+        let fmt = default_config.sample_format();
+        log::info!("Audio: {} Hz, {:?}", actual_sr, fmt);
+
+        let sr = actual_sr as f32;
+        let synth = Arc::new(Mutex::new(
+            SynthState::new(sr, reverb_wet, delay_ms, delay_feedback,
+                            waveform, recording, loop_export, meter, clip_buffer)
+        ));
+        synth.lock().master_volume = master_volume;
+
+        let stream_config = default_config.config();
+
+        // Build a reusable "drain latest params" function as a macro-like closure factory
+        fn drain(rx: &Receiver<[Option<AudioParams>; 3]>) -> [Option<AudioParams>; 3] {
+            let mut latest: [Option<AudioParams>; 3] = [None, None, None];
+            while let Ok(batch) = rx.try_recv() {
+                for i in 0..3 { if batch[i].is_some() { latest[i] = batch[i].clone(); } }
             }
+            latest
         }
 
-        // Chord voices derived from voice[0]
-        let voice0_freq = self.freq_smooth[0];
-        for k in 0..3 {
-            let interval = self.chord_intervals[k];
-            if interval.abs() > 0.001 {
-                let target_chord_freq = voice0_freq * 2.0f32.powf(interval / 12.0);
-                let target_chord_amp = self.params.amps[0] * self.params.voice_levels[0] * 0.7;
-                self.chord_freq_smooth[k] += self.freq_smooth_rate * (target_chord_freq - self.chord_freq_smooth[k]);
-                self.chord_amp_smooth[k]  += 0.005 * (target_chord_amp - self.chord_amp_smooth[k]);
-                self.chord_oscs[k].freq = self.chord_freq_smooth[k];
-                let sig = self.chord_oscs[k].next_sample() * self.chord_amp_smooth[k] * gain;
-                let pan = (k as f32 / 2.0) * 2.0 - 1.0;
-                l += sig * (1.0 - pan.max(0.0));
-                r += sig * (1.0 + pan.min(0.0));
+        let stream = match fmt {
+            SampleFormat::F32 => {
+                let ss = synth.clone();
+                device.build_output_stream(
+                    &stream_config,
+                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                        let latest = drain(&params_rx);
+                        let mut state = ss.lock();
+                        for i in 0..3 { if let Some(p) = latest[i].clone() { state.update_params(i, p); } }
+                        state.render(data);
+                    },
+                    |err| log::error!("Audio stream error: {err}"), None)?
+            }
+            _ => {
+                // For I16/U16: convert via f32 buffer, same drain logic
+                let ss = synth.clone();
+                device.build_output_stream(
+                    &stream_config,
+                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                        let latest = drain(&params_rx);
+                        let mut state = ss.lock();
+                        for i in 0..3 { if let Some(p) = latest[i].clone() { state.update_params(i, p); } }
+                        state.render(data);
+                    },
+                    |err| log::error!("Audio stream error: {err}"), None)?
+            }
+        };
+
+        stream.play()?;
+
+        // Optional sidechain input stream
+        let input_stream = Self::start_input(&host, sidechain_level).ok();
+
+        Ok((Self { _stream: stream, _input_stream: input_stream }, actual_sr))
+    }
+
+    fn start_input(host: &cpal::Host, sidechain_level: SidechainLevel) -> anyhow::Result<Stream> {
+        let device = host.default_input_device()
+            .ok_or_else(|| anyhow::anyhow!("No input device"))?;
+        let config = device.default_input_config()?;
+        let fmt = config.sample_format();
+        let stream_config = config.config();
+
+        // Running RMS accumulator
+        let accumulator = Arc::new(Mutex::new((0.0f64, 0usize))); // (sum_sq, count)
+
+        let make_input_cb = |acc: Arc<Mutex<(f64, usize)>>, sc: SidechainLevel| {
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let sum_sq: f64 = data.iter().map(|&x| (x as f64).powi(2)).sum();
+                let mut a = acc.lock();
+                a.0 += sum_sq;
+                a.1 += data.len();
+                // Emit RMS every ~2048 samples
+                if a.1 >= 2048 {
+                    let rms = (a.0 / a.1 as f64).sqrt() as f32;
+                    if let Some(mut lvl) = sc.try_lock() {
+                        // Smooth the sidechain level
+                        *lvl = *lvl * 0.9 + rms * 0.1;
+                    }
+                    *a = (0.0, 0);
+                }
+            }
+        };
+
+        let stream = match fmt {
+            SampleFormat::F32 => {
+                let cb = make_input_cb(accumulator, sidechain_level);
+                device.build_input_stream(&stream_config, cb,
+                    |err| log::warn!("Input stream error: {err}"), None)?
+            }
+            _ => {
+                // For non-f32 input, just skip sidechain
+                anyhow::bail!("Non-f32 input not supported for sidechain");
+            }
+        };
+        stream.play()?;
+        Ok(stream)
+    }
+}
+
+/// Save the clip buffer to a timestamped WAV file. Returns the filename written.
+pub fn save_clip(clip_buffer: &ClipBuffer, sample_rate: u32) -> anyhow::Result<String> {
+    let samples: Vec<f32> = {
+        let cb = clip_buffer.lock();
+        cb.iter().copied().collect()
+    };
+    if samples.is_empty() {
+        anyhow::bail!("Clip buffer is empty");
+    }
+    let dir = std::path::PathBuf::from("clips");
+    if !dir.exists() { std::fs::create_dir_all(&dir)?; }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_secs();
+    let filename = dir.join(format!("clip_{}.wav", ts));
+    let spec = hound::WavSpec {
+        channels: 2, sample_rate, bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(&filename, spec)?;
+    for s in &samples { writer.write_sample(*s)?; }
+    writer.finalize()?;
+    Ok(filename.to_string_lossy().into_owned())
+}
+
+/// Render the phase portrait trail to a PNG file. Returns filename.
+pub fn save_portrait_png(trail: &[(f32, f32, f32, f32, bool)]) -> anyhow::Result<String> {
+    let size: u32 = 512;
+    let mut pixels = vec![0u8; (size * size * 3) as usize];
+
+    if trail.len() < 2 {
+        anyhow::bail!("Trail too short");
+    }
+
+    // Find bounds
+    let xs: Vec<f32> = trail.iter().map(|p| p.0).collect();
+    let ys: Vec<f32> = trail.iter().map(|p| p.1).collect();
+    let xmin = xs.iter().cloned().fold(f32::INFINITY, f32::min);
+    let xmax = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let ymin = ys.iter().cloned().fold(f32::INFINITY, f32::min);
+    let ymax = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let xr = (xmax - xmin).max(0.001);
+    let yr = (ymax - ymin).max(0.001);
+
+    for (i, &(x, y, _, speed, crossing)) in trail.iter().enumerate() {
+        let px = ((x - xmin) / xr * (size - 1) as f32) as u32;
+        let py = ((y - ymin) / yr * (size - 1) as f32) as u32;
+        let px = px.clamp(0, size - 1);
+        let py = py.clamp(0, size - 1);
+        let idx = ((size - 1 - py) * size + px) as usize * 3;
+        if idx + 2 < pixels.len() {
+            let t = i as f32 / trail.len() as f32;
+            let intensity = (speed * 0.7 + 0.3).min(1.0);
+            if crossing {
+                pixels[idx]     = 255;
+                pixels[idx + 1] = 255;
+                pixels[idx + 2] = 100;
             } else {
-                self.chord_amp_smooth[k] += 0.005 * (0.0 - self.chord_amp_smooth[k]);
+                pixels[idx]     = (t * intensity * 80.0) as u8;
+                pixels[idx + 1] = (intensity * 180.0) as u8;
+                pixels[idx + 2] = (255.0 * intensity) as u8;
             }
         }
-
-        (l * 0.5, r * 0.5)
     }
 
-    /// Additive synthesis from spectral partials.
-    fn synth_spectral(&mut self) -> (f32, f32) {
-        use std::f32::consts::TAU;
-        let base = self.params.partials_base_freq;
-        let gain = self.params.gain;
-        let mut out = 0.0f32;
+    let dir = std::path::PathBuf::from("clips");
+    if !dir.exists() { std::fs::create_dir_all(&dir)?; }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_secs();
+    let filename = dir.join(format!("portrait_{}.png", ts));
+    write_png(&filename, &pixels, size, size)?;
+    Ok(filename.to_string_lossy().into_owned())
+}
 
-        for k in 0..32 {
-            let freq = base * (k + 1) as f32;
-            self.partial_phases[k] =
-                (self.partial_phases[k] + TAU * freq / self.sample_rate) % TAU;
-            out += self.partial_phases[k].sin() * self.params.partials[k];
-        }
-        let mono = out * gain;
-        (mono, mono)
-    }
-
-    /// 2-operator FM synthesis.
-    fn synth_fm(&mut self) -> (f32, f32) {
-        use std::f32::consts::TAU;
-        let carrier_freq = self.params.fm_carrier_freq;
-        let mod_freq = carrier_freq * self.params.fm_mod_ratio;
-        let mod_index = self.params.fm_mod_index;
-        let gain = self.params.gain;
-
-        // Advance modulator phase
-        self.fm_mod_phase = (self.fm_mod_phase + TAU * mod_freq / self.sample_rate).rem_euclid(TAU);
-        // PM-style FM: output = sin(carrier_phase + mod_index * sin(mod_phase))
-        self.fm_phase = (self.fm_phase + TAU * carrier_freq / self.sample_rate).rem_euclid(TAU);
-
-        let out = (self.fm_phase + mod_index * self.fm_mod_phase.sin()).sin() * gain;
-        (out, out)
-    }
+fn write_png(path: &std::path::Path, rgb: &[u8], width: u32, height: u32) -> anyhow::Result<()> {
+    use png::ColorType;
+    let file = std::fs::File::create(path)?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(rgb)?;
+    Ok(())
 }

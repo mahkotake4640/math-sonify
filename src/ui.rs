@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::config::Config;
 use crate::sonification::chord_intervals_for;
 use crate::patches::{PRESETS, load_preset, save_patch, list_patches, load_patch_file};
-use crate::audio::{WavRecorder, LoopExportPending};
+use crate::audio::{WavRecorder, LoopExportPending, VuMeter, SidechainLevel, ClipBuffer, save_clip, save_portrait_png};
 use crate::systems::*;
 use crate::arrangement::{Scene, total_duration, generate_song};
 use hound;
@@ -75,6 +75,59 @@ pub struct AppState {
     pub arp_octaves: usize,
     pub arp_position: usize,
     pub arp_phase: f64,
+    // Multi-layer polyphony
+    pub poly_layers: Vec<PolyLayerDef>,
+    // Layer 0 (main) mix controls
+    pub layer0_level: f32,
+    pub layer0_pan: f32,
+    pub layer0_mute: bool,
+    // ADSR (layer 0)
+    pub adsr_attack_ms: f32,
+    pub adsr_decay_ms: f32,
+    pub adsr_sustain: f32,
+    pub adsr_release_ms: f32,
+    // VU meter (shared with audio thread)
+    pub vu_meter: VuMeter,
+    // Audio sidechain
+    pub sidechain_enabled: bool,
+    pub sidechain_target: String,
+    pub sidechain_amount: f32,
+    pub sidechain_level_shared: SidechainLevel,
+    // Clip buffer (shared with audio thread)
+    pub clip_buffer: ClipBuffer,
+    // Status message for clip save
+    pub clip_status: String,
+}
+
+#[derive(Clone)]
+pub struct PolyLayerDef {
+    pub preset_name: String,
+    pub level: f32,
+    pub pan: f32,
+    pub mute: bool,
+    pub active: bool,
+    pub adsr_attack_ms: f32,
+    pub adsr_decay_ms: f32,
+    pub adsr_sustain: f32,
+    pub adsr_release_ms: f32,
+    pub changed: bool,
+}
+
+impl Default for PolyLayerDef {
+    fn default() -> Self {
+        Self {
+            preset_name: String::new(),
+            level: 0.7,
+            pan: 0.0,
+            mute: false,
+            active: false,
+            adsr_attack_ms: 10.0,
+            adsr_decay_ms: 200.0,
+            adsr_sustain: 0.7,
+            adsr_release_ms: 400.0,
+            changed: false,
+        }
+    }
 }
 
 impl AppState {
@@ -131,6 +184,21 @@ impl AppState {
             arp_octaves: 1,
             arp_position: 0,
             arp_phase: 0.0,
+            poly_layers: vec![PolyLayerDef::default(), PolyLayerDef::default()],
+            layer0_level: 1.0,
+            layer0_pan: 0.0,
+            layer0_mute: false,
+            adsr_attack_ms: 10.0,
+            adsr_decay_ms: 200.0,
+            adsr_sustain: 0.7,
+            adsr_release_ms: 400.0,
+            vu_meter: Arc::new(Mutex::new([0.0; 4])),
+            sidechain_enabled: false,
+            sidechain_target: "speed".into(),
+            sidechain_amount: 0.5,
+            sidechain_level_shared: Arc::new(Mutex::new(0.0)),
+            clip_buffer: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            clip_status: String::new(),
         }
     }
 }
@@ -899,7 +967,7 @@ pub fn draw_ui(
     CentralPanel::default().show(ctx, |ui| {
         // Tab bar row with theme switcher on the right
         ui.horizontal(|ui| {
-            let tabs = ["Phase Portrait", "Waveform", "Note Map", "ARRANGE", "Math View", "Bifurcation"];
+            let tabs = ["Phase Portrait", "Waveform", "Note Map", "ARRANGE", "MIXER", "Math View", "Bifurcation"];
             let mut viz_tab = st.viz_tab;
             for (i, name) in tabs.iter().enumerate() {
                 let selected = viz_tab == i;
@@ -976,7 +1044,7 @@ pub fn draw_ui(
         }
 
         // Bifurcation controls
-        if viz_tab == 5 {
+        if viz_tab == 6 {
             ui.horizontal(|ui| {
                 let params = ["rho", "sigma", "coupling", "c"];
                 let current_bp = st.bifurc_param.clone();
@@ -1056,8 +1124,9 @@ pub fn draw_ui(
             1 => draw_waveform(ui, waveform),
             2 => draw_note_map(ui, &freqs, &voice_levels, &chord_intervals),
             3 => draw_arrange_tab(ui, state, recording),
-            4 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases),
-            5 => draw_bifurc_diagram(ui, bifurc_data),
+            4 => draw_mixer_tab(ui, state, viz_points),
+            5 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases),
+            6 => draw_bifurc_diagram(ui, bifurc_data),
             _ => {}
         }
     });
@@ -1610,6 +1679,206 @@ fn draw_phase_portrait(
             painter.text(pos, Align2::RIGHT_TOP, text, FontId::monospace(10.0), Color32::from_rgba_premultiplied(100, 200, 100, 200));
         }
     }
+}
+
+fn draw_mixer_tab(ui: &mut egui::Ui, state: &crate::ui::SharedState, viz_points: &[(f32, f32, f32, f32, bool)]) {
+    let mc_cyan   = egui::Color32::from_rgb(0, 200, 220);
+    let mc_green  = egui::Color32::from_rgb(0, 220, 100);
+    let mc_orange = egui::Color32::from_rgb(255, 160, 40);
+    let mc_red    = egui::Color32::from_rgb(220, 60, 60);
+    let mc_gray   = egui::Color32::from_rgb(120, 120, 140);
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.add_space(8.0);
+
+        // ── Save Clip button ──────────────────────────────────────────────
+        ui.horizontal(|ui| {
+            if ui.add(egui::Button::new(
+                egui::RichText::new("📸 Save Clip (60s audio + portrait)").color(egui::Color32::BLACK))
+                .fill(egui::Color32::from_rgb(220, 180, 40))
+                .min_size(egui::Vec2::new(280.0, 32.0))
+            ).clicked() {
+                let sr = state.lock().sample_rate;
+                let cb = state.lock().clip_buffer.clone();
+                let trail = viz_points.to_vec();
+                std::thread::spawn(move || {
+                    let wav_result = save_clip(&cb, sr);
+                    let png_result = save_portrait_png(&trail);
+                    match (wav_result, png_result) {
+                        (Ok(wav), Ok(png)) => log::info!("Clip saved: {} + {}", wav, png),
+                        (Err(e), _) => log::error!("Clip save failed: {e}"),
+                        (_, Err(e)) => log::error!("Portrait save failed: {e}"),
+                    }
+                });
+                state.lock().clip_status = "Saving to clips/ folder...".into();
+            }
+            let status = state.lock().clip_status.clone();
+            if !status.is_empty() {
+                ui.label(egui::RichText::new(&status).color(mc_green).size(11.0));
+            }
+        });
+        ui.label(egui::RichText::new("Clips saved to clips/ folder — share-ready WAV + phase portrait PNG").color(mc_gray).size(10.0));
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        // ── VU Meters ─────────────────────────────────────────────────────
+        ui.label(egui::RichText::new("VU Meters").color(mc_cyan).strong());
+        ui.add_space(4.0);
+        let peaks = { *state.lock().vu_meter.lock() };
+        ui.horizontal(|ui| {
+            for (i, &peak) in peaks.iter().enumerate() {
+                let (label, col) = match i {
+                    0 => ("L0", mc_green),
+                    1 => ("L1", mc_cyan),
+                    2 => ("L2", mc_orange),
+                    _ => ("Master", egui::Color32::WHITE),
+                };
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(label).color(col).size(11.0));
+                    let bar_height = 80.0;
+                    let bar_width  = 18.0;
+                    let (resp, painter) = ui.allocate_painter(
+                        egui::Vec2::new(bar_width, bar_height), egui::Sense::hover());
+                    let r = resp.rect;
+                    painter.rect_filled(r, 2.0, egui::Color32::from_rgb(20, 20, 30));
+                    let filled = peak.clamp(0.0, 1.0) * bar_height;
+                    let fill_rect = egui::Rect::from_min_max(
+                        egui::Pos2::new(r.min.x, r.max.y - filled),
+                        r.max,
+                    );
+                    let bar_col = if peak > 0.9 { mc_red } else if peak > 0.7 { mc_orange } else { col };
+                    painter.rect_filled(fill_rect, 1.0, bar_col);
+                    ui.label(egui::RichText::new(format!("{:.0}%", peak * 100.0)).size(9.0).color(mc_gray));
+                });
+                if i < 3 { ui.add_space(8.0); }
+            }
+        });
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        // ── Layer 0 (Main) Controls ───────────────────────────────────────
+        ui.label(egui::RichText::new("Layer 0 — Main System").color(mc_green).strong());
+        ui.horizontal(|ui| {
+            let mut st = state.lock();
+            ui.add(egui::Slider::new(&mut st.layer0_level, 0.0..=1.5).text("Level"));
+            ui.add(egui::Slider::new(&mut st.layer0_pan, -1.0..=1.0).text("Pan"));
+            let mc = if st.layer0_mute { mc_red } else { egui::Color32::from_rgb(40, 60, 40) };
+            if ui.add(egui::Button::new(egui::RichText::new("M").color(egui::Color32::WHITE))
+                .fill(mc).min_size(egui::Vec2::new(28.0, 28.0))).clicked() {
+                st.layer0_mute = !st.layer0_mute;
+            }
+        });
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("ADSR Envelope (triggered by arpeggiator / KS events)").color(mc_cyan).size(11.0));
+        {
+            let mut st = state.lock();
+            ui.horizontal(|ui| {
+                ui.add(egui::Slider::new(&mut st.adsr_attack_ms,  1.0..=2000.0).text("Attack ms").logarithmic(true));
+                ui.add(egui::Slider::new(&mut st.adsr_decay_ms,   1.0..=2000.0).text("Decay ms").logarithmic(true));
+            });
+            ui.horizontal(|ui| {
+                ui.add(egui::Slider::new(&mut st.adsr_sustain,    0.0..=1.0).text("Sustain"));
+                ui.add(egui::Slider::new(&mut st.adsr_release_ms, 10.0..=5000.0).text("Release ms").logarithmic(true));
+            });
+        }
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        // ── Extra Polyphony Layers ────────────────────────────────────────
+        for li in 0..2usize {
+            let label_col = if li == 0 { mc_cyan } else { mc_orange };
+            ui.label(egui::RichText::new(format!("Layer {} — Additional System", li + 1)).color(label_col).strong());
+
+            let (preset_name, active) = {
+                let st = state.lock();
+                let d = &st.poly_layers[li];
+                (d.preset_name.clone(), d.active)
+            };
+
+            ui.horizontal(|ui| {
+                let mut act = active;
+                if ui.checkbox(&mut act, egui::RichText::new("Active").color(egui::Color32::WHITE)).changed() {
+                    let mut st = state.lock();
+                    st.poly_layers[li].active = act;
+                    st.poly_layers[li].changed = true;
+                }
+                egui::ComboBox::new(format!("layer_preset_{}", li), "Preset")
+                    .selected_text(if preset_name.is_empty() { "Select…" } else { &preset_name })
+                    .show_ui(ui, |ui| {
+                        for preset in crate::patches::PRESETS {
+                            if ui.selectable_label(preset_name == preset.name, preset.name).clicked() {
+                                let mut st = state.lock();
+                                st.poly_layers[li].preset_name = preset.name.to_string();
+                                st.poly_layers[li].active = true;
+                                st.poly_layers[li].changed = true;
+                            }
+                        }
+                    });
+            });
+
+            if active {
+                ui.horizontal(|ui| {
+                    let mut st = state.lock();
+                    let d = &mut st.poly_layers[li];
+                    ui.add(egui::Slider::new(&mut d.level, 0.0..=1.5).text("Level"));
+                    ui.add(egui::Slider::new(&mut d.pan,   -1.0..=1.0).text("Pan"));
+                    let mc = if d.mute { mc_red } else { egui::Color32::from_rgb(40, 60, 40) };
+                    if ui.add(egui::Button::new(egui::RichText::new("M").color(egui::Color32::WHITE))
+                        .fill(mc).min_size(egui::Vec2::new(28.0, 28.0))).clicked() {
+                        d.mute = !d.mute;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let mut st = state.lock();
+                    let d = &mut st.poly_layers[li];
+                    ui.add(egui::Slider::new(&mut d.adsr_attack_ms,  1.0..=2000.0).text("A ms").logarithmic(true));
+                    ui.add(egui::Slider::new(&mut d.adsr_decay_ms,   1.0..=2000.0).text("D ms").logarithmic(true));
+                    ui.add(egui::Slider::new(&mut d.adsr_sustain,    0.0..=1.0).text("S"));
+                    ui.add(egui::Slider::new(&mut d.adsr_release_ms, 10.0..=5000.0).text("R ms").logarithmic(true));
+                });
+            }
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(4.0);
+        }
+
+        // ── Audio Sidechain ───────────────────────────────────────────────
+        ui.label(egui::RichText::new("Audio Sidechain Input").color(mc_orange).strong());
+        ui.label(egui::RichText::new("Modulate parameters from mic/line-in audio energy").color(mc_gray).size(10.0));
+        ui.add_space(4.0);
+        {
+            let mut st = state.lock();
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut st.sidechain_enabled, egui::RichText::new("Enable").color(egui::Color32::WHITE));
+                egui::ComboBox::new("sc_target", "Target")
+                    .selected_text(&st.sidechain_target)
+                    .show_ui(ui, |ui| {
+                        for t in &["speed", "reverb", "filter", "sigma", "volume"] {
+                            ui.selectable_value(&mut st.sidechain_target, t.to_string(), *t);
+                        }
+                    });
+                ui.add(egui::Slider::new(&mut st.sidechain_amount, 0.0..=2.0).text("Amount"));
+            });
+            if st.sidechain_enabled {
+                let sc_level = *st.sidechain_level_shared.lock();
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Input:").color(mc_gray).size(11.0));
+                    let (resp, painter) = ui.allocate_painter(
+                        egui::Vec2::new(200.0, 12.0), egui::Sense::hover());
+                    let r = resp.rect;
+                    painter.rect_filled(r, 2.0, egui::Color32::from_rgb(20, 20, 30));
+                    let filled = sc_level.clamp(0.0, 1.0) * r.width();
+                    if filled > 0.0 {
+                        let fill_r = egui::Rect::from_min_max(r.min, egui::Pos2::new(r.min.x + filled, r.max.y));
+                        painter.rect_filled(fill_r, 1.0, mc_orange);
+                    }
+                });
+            }
+        }
+    });
 }
 
 fn draw_waveform(ui: &mut Ui, waveform: &Arc<Mutex<Vec<f32>>>) {

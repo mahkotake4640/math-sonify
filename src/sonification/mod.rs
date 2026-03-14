@@ -75,6 +75,15 @@ pub struct AudioParams {
     /// Waveshaper parameters
     pub waveshaper_drive: f32,
     pub waveshaper_mix: f32,
+    /// ADSR envelope parameters
+    pub adsr_attack_ms: f32,
+    pub adsr_decay_ms: f32,
+    pub adsr_sustain: f32,
+    pub adsr_release_ms: f32,
+    /// Per-layer mix level (0..1) and pan (-1..1) for polyphony layers
+    pub layer_level: f32,
+    pub layer_pan: f32,
+    pub layer_id: usize,
 }
 
 impl Default for AudioParams {
@@ -115,6 +124,13 @@ impl Default for AudioParams {
             chorus_depth: 3.0,
             waveshaper_drive: 1.0,
             waveshaper_mix: 0.0,
+            adsr_attack_ms: 10.0,
+            adsr_decay_ms: 200.0,
+            adsr_sustain: 0.7,
+            adsr_release_ms: 400.0,
+            layer_level: 1.0,
+            layer_pan: 0.0,
+            layer_id: 0,
         }
     }
 }
