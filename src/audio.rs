@@ -395,7 +395,9 @@ impl SynthState {
         if idx >= 3 { return; }
         // Update master effects from layer 0 params (layer 0 owns the master bus)
         if idx == 0 {
-            self.filter.update_lp(params.filter_cutoff, params.filter_q, self.sample_rate);
+            // Hard floor at 300 Hz — lower cuts too much content and causes perceived silence
+            let safe_cutoff = params.filter_cutoff.max(300.0);
+            self.filter.update_lp(safe_cutoff, params.filter_q, self.sample_rate);
             self.master_volume = params.master_volume;
             self.reverb.wet = params.reverb_wet.clamp(0.0, 1.0);
             self.delay.feedback = params.delay_feedback.clamp(0.0, 0.9);

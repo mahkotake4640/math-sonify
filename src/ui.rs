@@ -609,7 +609,7 @@ pub fn draw_ui(
             }; // lock released here
 
             if is_simple {
-                draw_simple_panel(ui, ctx, state);
+                draw_simple_panel(ui, ctx, state, recording);
             } else {
                 draw_advanced_panel(ui, state, recording, loop_export);
             }
@@ -1731,7 +1731,7 @@ fn draw_tips_content(ui: &mut Ui) {
 // Simple panel — beginner-friendly macro controls
 // ---------------------------------------------------------------------------
 
-fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState) {
+fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState, recording: &WavRecorder) {
     // ---- BIG AUTO button ----
     {
         let (auto_mode, arr_mood) = {
@@ -1800,14 +1800,14 @@ fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState) {
                 .color(AMBER).size(11.0).italics());
         }
 
-        // ---- Play Demo button ----
+        // ---- Play Demo + Save WAV buttons ----
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui.add(
                 Button::new(RichText::new("▶ Play Demo").color(Color32::WHITE).size(12.0))
                     .fill(Color32::from_rgb(80, 60, 140))
-                    .min_size(Vec2::new(120.0, 30.0))
-            ).on_hover_text("Play a hardcoded 3-minute demo piece showcasing the best sounds. Six scenes: atmospheric opening, Kuramoto emergence, Duffing machinery, Glass Harp melody, Cathedral dissolution, and a return.").clicked() {
+                    .min_size(Vec2::new(110.0, 30.0))
+            ).on_hover_text("Play a hardcoded 3-minute demo piece showcasing the best sounds.").clicked() {
                 let mut st = state.lock();
                 st.scenes = demo_arrangement();
                 st.arr_elapsed = 0.0;
@@ -1815,6 +1815,42 @@ fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState) {
                 st.arr_loop = false;
                 st.auto_mode = false;
                 st.paused = false;
+            }
+
+            // Save as WAV: generate a fresh arrangement, record one full pass, auto-stop
+            let save_pending = state.lock().save_gen_pending;
+            let save_label = if save_pending {
+                RichText::new("⏺ Recording…").color(Color32::from_rgb(255, 100, 100)).size(11.0)
+            } else {
+                RichText::new("💾 Save WAV").color(Color32::WHITE).size(11.0)
+            };
+            if ui.add(
+                Button::new(save_label)
+                    .fill(if save_pending { Color32::from_rgb(100, 20, 20) } else { Color32::from_rgb(30, 80, 60) })
+                    .min_size(Vec2::new(90.0, 30.0))
+            ).on_hover_text("Generate a fresh arrangement and record one full pass to a WAV file. Recording stops automatically when the arrangement ends.").clicked() && !save_pending {
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64 ^ (d.subsec_nanos() as u64).wrapping_mul(0x9e3779b97f4a7c15))
+                    .unwrap_or(0xdeadbeef);
+                let mood = state.lock().arr_mood.clone();
+                let new_scenes = generate_song(&mood, seed);
+                let sr = state.lock().sample_rate;
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                let filename = format!("generation_{}.wav", ts);
+                let spec = hound::WavSpec { channels: 2, sample_rate: sr, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
+                if let Ok(writer) = hound::WavWriter::create(&filename, spec) {
+                    if let Some(mut lock) = recording.try_lock() { *lock = Some(writer); }
+                    let mut st = state.lock();
+                    st.scenes = new_scenes;
+                    st.arr_elapsed = 0.0;
+                    st.arr_playing = true;
+                    st.arr_loop = false;
+                    st.save_gen_pending = true;
+                    st.auto_mode = false;
+                    st.paused = false;
+                }
             }
             // Tips "?" button
             let show_tips = state.lock().show_tips_window;

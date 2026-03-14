@@ -678,8 +678,8 @@ fn sim_thread(
                 let mood = { shared.lock().arr_mood.clone() };
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .subsec_nanos() as u64;
+                    .map(|d| d.as_nanos() as u64 ^ (d.subsec_nanos() as u64).wrapping_mul(0x9e3779b97f4a7c15))
+                    .unwrap_or(0xdeadbeef);
                 let mut st = shared.lock();
                 st.scenes = crate::arrangement::generate_song(&mood, seed);
                 st.arr_elapsed = 0.0;
@@ -1326,7 +1326,8 @@ fn sim_thread(
             params.chorus_mix       = macro_space * 0.7;
             params.delay_feedback   = macro_space * 0.7;
             params.adsr_attack_ms   = 200.0 - macro_rhythm * 195.0;
-            params.filter_cutoff    = 8000.0 - macro_warmth * 7800.0;
+            // Warmth slider: 1200 Hz (very warm) to 8000 Hz (bright) — never below 1200
+            params.filter_cutoff    = 1200.0 + (1.0 - macro_warmth) * 6800.0;
             params.waveshaper_drive = 1.0 + macro_warmth * 4.0;
             // Volume slider always wins — arrangement scene volumes are ignored in simple mode
             params.master_volume    = { shared.lock().config.audio.master_volume };
@@ -1334,8 +1335,8 @@ fn sim_thread(
 
         // ── Attractor aging: filter opens fractionally over first hour ────────────
         // aging_t = 0.0 at start, 1.0 after 60 minutes
-        // Base filter at aging_t=0: slightly darker (×0.7). Fully open at aging_t=1: unchanged.
-        let aging_filter_mult = 0.7 + aging_t * 0.3;
+        // Narrow range (0.92-1.0) so it never silences even muffled sources.
+        let aging_filter_mult = 0.92 + aging_t * 0.08;
         params.filter_cutoff *= aging_filter_mult;
         // Also slight harmonic richness increase: waveshaper drive decreases with age (cleaner)
         params.waveshaper_drive = (params.waveshaper_drive * (1.0 - aging_t * 0.15)).max(1.0);
