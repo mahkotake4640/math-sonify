@@ -1604,25 +1604,34 @@ fn sim_thread(
             // Pull voice 1 toward nearest harmonic of voice 0
             if params.freqs[0] > 20.0 && params.freqs[1] > 20.0 {
                 let ratio = (params.freqs[1] / params.freqs[0]).clamp(0.4, 5.0);
-                if let Some(&nearest_r) = harmonic_targets.iter()
-                    .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs()).unwrap()) {
-                    let ideal = params.freqs[0] * nearest_r;
-                    // Only pull if within ±15 cents (ratio ≈ ±0.87%)
-                    let cents_off = (params.freqs[1] / ideal).ln() / (2f32.ln() / 12.0);
-                    if cents_off.abs() < 15.0 {
-                        params.freqs[1] += (ideal - params.freqs[1]) * pull;
+                if ratio.is_finite() {
+                    if let Some(&nearest_r) = harmonic_targets.iter()
+                        .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)) {
+                        let ideal = params.freqs[0] * nearest_r;
+                        if ideal > 0.0 {
+                            let cents_off = (params.freqs[1] / ideal).ln() / (2f32.ln() / 12.0);
+                            if cents_off.is_finite() && cents_off.abs() < 15.0 {
+                                params.freqs[1] += (ideal - params.freqs[1]) * pull;
+                            }
+                        }
                     }
                 }
             }
             // Pull voice 2 toward harmonic of voice 0
             if params.freqs[0] > 20.0 && params.freqs[2] > 20.0 {
                 let ratio = (params.freqs[2] / params.freqs[0]).clamp(0.4, 5.0);
-                if let Some(&nearest_r) = harmonic_targets.iter()
-                    .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs()).unwrap()) {
-                    let ideal = params.freqs[0] * nearest_r;
-                    let cents_off = (params.freqs[2] / ideal).ln() / (2f32.ln() / 12.0);
-                    if cents_off.abs() < 15.0 {
-                        params.freqs[2] += (ideal - params.freqs[2]) * pull;
+                if ratio.is_finite() {
+                    if let Some(&nearest_r) = harmonic_targets.iter()
+                        .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)) {
+                        let ideal = params.freqs[0] * nearest_r;
+                        if ideal > 0.0 {
+                            let cents_off = (params.freqs[2] / ideal).ln() / (2f32.ln() / 12.0);
+                            if cents_off.is_finite() && cents_off.abs() < 15.0 {
+                                params.freqs[2] += (ideal - params.freqs[2]) * pull;
+                            }
+                        }
                     }
                 }
             }
