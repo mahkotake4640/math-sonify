@@ -274,6 +274,158 @@ fn sim_thread(
     // Macro random walk seed
     let mut walk_seed: u64 = 12345;
 
+    // ── Lunar phase (29.5-day cycle, invisible palette influence) ─────────────
+    let lunar_phase: f32 = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        // Known new moon: Jan 6, 2000 = Unix 946684800
+        let days_since_new = (secs.saturating_sub(946684800)) as f64 / 86400.0;
+        let phase = (days_since_new % 29.53058770576) / 29.53058770576;
+        // 0.5 = full moon. Map to 0.0=new 1.0=full 0.0=new via triangle:
+        let triangle = if phase < 0.5 { phase * 2.0 } else { (1.0 - phase) * 2.0 };
+        triangle as f32
+    };
+    // Push to shared state so draw_phase_portrait can use it
+    { shared.lock().lunar_phase = lunar_phase; }
+
+    // ── Attractor aging: instrument warms up over first hour ──────────────────
+    let aging_path = std::path::PathBuf::from("aging.bin");
+    let mut aging_secs: f32 = {
+        if aging_path.exists() {
+            std::fs::read(&aging_path).ok()
+                .and_then(|b| b.get(0..4).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes))
+                .filter(|v| v.is_finite() && *v >= 0.0)
+                .unwrap_or(0.0)
+        } else { 0.0 }
+    };
+    { shared.lock().aging_secs = aging_secs; }
+
+    // ── Entropy accumulation: instrument gains confidence with use ─────────────
+    let entropy_path = std::path::PathBuf::from("entropy.bin");
+    let mut entropy_pool: f32 = {
+        if entropy_path.exists() {
+            std::fs::read(&entropy_path).ok()
+                .and_then(|b| b.get(0..4).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes))
+                .filter(|v| v.is_finite() && *v >= 0.0)
+                .unwrap_or(0.0)
+        } else { 0.0 }
+    };
+    // Sync with AppState (UI may have deposited entropy already)
+    { entropy_pool = entropy_pool.max(shared.lock().entropy_pool); }
+
+    // ── Volume creep: draws listener closer over an hour ──────────────────────
+    // 1.0 → 0.87 over 3600 seconds (≈ -1.2 dB). Reset when user touches volume.
+    let mut volume_creep: f32 = 1.0;
+    let mut volume_creep_last_vol: f32 = { shared.lock().config.audio.master_volume };
+    // Decay rate: reach 0.87 in 3600s * 120Hz = 432000 ticks
+    // 0.87^(1/432000) ≈ 1 - 3.24e-7 per tick
+    const VOLUME_CREEP_RATE: f32 = 3.24e-7;
+    const VOLUME_CREEP_MIN: f32 = 0.87; // floor
+
+    // ── Fingerprint: unique initial conditions on very first ever launch ───────
+    // If no state file exists, seed a unique starting region from machine identity
+    {
+        let state_path_fp = std::path::PathBuf::from("attractor_state.bin");
+        if !state_path_fp.exists() {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+            let pid = std::process::id() as u64;
+            let hostname = std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .unwrap_or_else(|_| "math_sonify".into());
+            let host_hash: u64 = hostname.bytes().fold(0u64, |acc, b| {
+                acc.wrapping_mul(6364136223846793005).wrapping_add(b as u64)
+            });
+            let mut fp = ts ^ pid.wrapping_mul(0xDEAD) ^ host_hash ^ 0xCAFEBABEDEADBEEF;
+            let fp_f = |s: &mut u64| -> f64 {
+                *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((*s >> 33) as f64 / u32::MAX as f64) * 2.0 - 1.0
+            };
+            // Stay within attractor basin
+            let ix = fp_f(&mut fp) * 18.0;
+            let iy = fp_f(&mut fp) * 18.0;
+            let iz = 15.0 + fp_f(&mut fp).abs() * 20.0;
+            system.set_state(&[ix, iy, iz]);
+        }
+    }
+
+    // ── Attractor dreams: system briefly visits a different universe ───────────
+    // After 30+ min idle with Evolve on, switch to another system for 60-90s then morph back
+    let mut dream_active = false;
+    let mut dream_ticks: u64 = 0;
+    let mut dream_total_ticks: u64 = 0;
+    let mut dream_return_config: Option<crate::config::Config> = None;
+    let mut dream_target_config: Option<crate::config::Config> = None;
+    let dream_idle_threshold: u64 = 30 * 60 * 120; // 30 min at 120Hz
+    let mut dream_idle_ticks: u64 = 0; // separate from excursion idle counter
+
+    // ── Typing resonance: keyboard cadence subtly influences Evolve wander ────
+    // Poll OS key state at 10 Hz in a background thread (Windows only).
+    // Count transitions to estimate typing rate without a full hook.
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let typing_rate_atomic = std::sync::Arc::new(AtomicU32::new(0u32));
+    {
+        let typing_arc = typing_rate_atomic.clone();
+        std::thread::spawn(move || {
+            let mut prev_states = [0i16; 128];
+            let mut key_count = 0u32;
+            let mut report_ticks = 0u32;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                // Poll common key codes (letters, numbers, space, return)
+                #[cfg(target_os = "windows")]
+                {
+                    extern "system" { fn GetAsyncKeyState(vKey: i32) -> i16; }
+                    for vk in (65i32..=90).chain(48..=57).chain([32, 13, 8, 9]) {
+                        let idx = vk as usize;
+                        if idx < 128 {
+                            let cur = unsafe { GetAsyncKeyState(vk) };
+                            if (cur & 1) != 0 && (prev_states[idx] & 1) == 0 {
+                                key_count += 1;
+                            }
+                            prev_states[idx] = cur;
+                        }
+                    }
+                }
+                report_ticks += 1;
+                if report_ticks >= 10 { // report every ~1 second
+                    // Store as fixed-point: keys_per_second * 100 as u32
+                    let kps_fixed = (key_count * 10).min(2000); // cap at 20 kps
+                    typing_arc.store(kps_fixed, Ordering::Relaxed);
+                    key_count = 0;
+                    report_ticks = 0;
+                }
+            }
+        });
+    }
+
+    // ── Instance empathy: two copies of Math Sonify on the same machine ────────
+    // whisper chaos level to each other through a local UDP port.
+    use std::sync::atomic::AtomicU32 as AtomicU32Emp;
+    let empathy_rx = std::sync::Arc::new(AtomicU32Emp::new(u32::MAX)); // MAX = no data yet
+    {
+        let rx_arc = empathy_rx.clone();
+        std::thread::spawn(move || {
+            // Try port 47832 first (primary), then 47833 (secondary listens on primary's port)
+            let our_port = 47832u16;
+            // Try to be the listener on our_port
+            if let Ok(sock) = std::net::UdpSocket::bind(format!("127.0.0.1:{}", our_port)) {
+                let _ = sock.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                let mut buf = [0u8; 4];
+                loop {
+                    if let Ok((4, _)) = sock.recv_from(&mut buf) {
+                        let val = u32::from_le_bytes(buf);
+                        rx_arc.store(val, Ordering::Relaxed);
+                    }
+                }
+            }
+            // Port taken — we're a secondary instance. Nothing to do (sender is in sim loop).
+        });
+    }
+    // Sender socket (non-blocking, best effort)
+    let empathy_sender = std::net::UdpSocket::bind("127.0.0.1:47833")
+        .ok(); // None if port taken (primary instance handles this)
+
     // Automation state
     let mut auto_snapshot_timer = 0u64;
     let auto_snapshot_interval = 12u64; // every ~100ms at 120Hz
@@ -319,6 +471,17 @@ fn sim_thread(
         };
 
         if paused { continue; }
+
+        let silence_secs = { shared.lock().last_interaction_time.elapsed().as_secs_f32() };
+        let silence_expanded = silence_secs > 300.0;
+        let entropy_walk_scale = {
+            let e = shared.lock().entropy_pool.max(entropy_pool);
+            entropy_pool = e;
+            0.5 + (e / 1000.0).min(1.0)
+        };
+        let typing_kps = typing_rate_atomic.load(Ordering::Relaxed) as f32 / 100.0;
+        let typing_walk_scale = 0.6 + (typing_kps / 10.0).min(1.0) * 0.8;
+
         if sys_changed  {
             system = if config.system.name == "custom" {
                 let (ex, ey, ez) = {
@@ -550,7 +713,8 @@ fn sim_thread(
                 let night = 1.0 - time_of_day;
                 let tod_rate_mult = 0.6 + time_of_day * 0.8; // 0.6x at midnight, 1.4x at noon
 
-                let step = macro_walk_rate * dt * tidal_scale * tod_rate_mult;
+                let silence_mult = if silence_expanded { 1.8 } else { 1.0 };
+                let step = macro_walk_rate * dt * tidal_scale * tod_rate_mult * silence_mult * entropy_walk_scale * typing_walk_scale;
 
                 // Gravitational memory: find gradient in histogram, apply tiny nudge toward
                 // frequently-visited regions — the instrument learns your taste over sessions
@@ -632,6 +796,109 @@ fn sim_thread(
             // Space → reverb_wet, chorus_mix, portamento_ms, delay_feedback
             // (these will be overwritten into params below after mapping)
             config.sonification.portamento_ms = 10.0 + macro_space * 790.0;
+        }
+
+        // ── Silence awareness: 5-minute idle → expanded walk range ────────────────
+        // Already computed above as silence_expanded.
+
+        // ── Attractor aging: filter warmth increases over first hour ──────────────
+        aging_secs += 1.0 / control_rate_hz as f32;
+        {
+            let mut st = shared.lock();
+            st.aging_secs = aging_secs;
+        }
+        // aging_t: 0.0 at launch, 1.0 after 60 minutes
+        let aging_t = (aging_secs / 3600.0).min(1.0);
+
+        // ── Attractor dreams: 30+ min idle → brief visit to another system ─────────
+        {
+            let walk_on = { shared.lock().macro_walk_enabled };
+            if walk_on {
+                // Track dream-specific idle (reset on any interaction, separate from excursion idle)
+                if silence_secs < 30.0 {
+                    dream_idle_ticks = 0; // user was recently active
+                } else {
+                    dream_idle_ticks += 1;
+                }
+
+                if !dream_active && dream_idle_ticks >= dream_idle_threshold {
+                    // Start a dream: pick a random different system
+                    let cur_sys = config.system.name.clone();
+                    let dream_systems = ["lorenz", "rossler", "halvorsen", "aizawa", "chua",
+                                          "van_der_pol", "duffing", "geodesic_torus"];
+                    let idx = (walk_seed_ex.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 33)
+                        as usize % dream_systems.len();
+                    walk_seed_ex = walk_seed_ex.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    let dream_sys = dream_systems[idx];
+                    if dream_sys != cur_sys.as_str() {
+                        let mut dcfg = config.clone();
+                        dcfg.system.name = dream_sys.to_string();
+                        dream_target_config = Some(dcfg);
+                        dream_return_config = Some(config.clone());
+                        dream_active = true;
+                        dream_ticks = 0;
+                        let duration_r = lcg(&mut walk_seed_ex);
+                        dream_total_ticks = (60 * 120) + (duration_r * 30.0 * 120.0) as u64; // 60-90s
+                        dream_idle_ticks = 0; // reset so we don't immediately re-dream
+                    }
+                }
+
+                if dream_active {
+                    dream_ticks += 1;
+                    let fade_ticks = 15 * 120u64; // 15s morph in/out
+                    let target_cfg = dream_target_config.as_ref().unwrap_or(&config);
+                    let return_cfg = dream_return_config.as_ref().unwrap_or(&config);
+
+                    let dream_config = if dream_ticks < fade_ticks {
+                        // Morphing in
+                        let t = dream_ticks as f32 / fade_ticks as f32;
+                        crate::arrangement::lerp_config(return_cfg, target_cfg, t)
+                    } else if dream_ticks < dream_total_ticks {
+                        // Holding dream state
+                        target_cfg.clone()
+                    } else if dream_ticks < dream_total_ticks + fade_ticks {
+                        // Morphing back
+                        let t = (dream_ticks - dream_total_ticks) as f32 / fade_ticks as f32;
+                        crate::arrangement::lerp_config(target_cfg, return_cfg, t)
+                    } else {
+                        // Dream over
+                        dream_active = false;
+                        dream_idle_ticks = 0;
+                        return_cfg.clone()
+                    };
+
+                    if dream_active {
+                        // Apply dream config on top of current config
+                        config.system.speed   = dream_config.system.speed;
+                        config.lorenz.sigma   = dream_config.lorenz.sigma;
+                        config.lorenz.rho     = dream_config.lorenz.rho;
+                        config.audio.reverb_wet = dream_config.audio.reverb_wet;
+                    }
+                }
+            }
+        }
+
+        // ── Typing resonance: keyboard cadence → Evolve wander rate ───────────────
+        // Already computed as typing_kps and typing_walk_scale above.
+
+        // ── Instance empathy: receive chaos nudge from peer instance ───────────────
+        let empathy_nudge: f32 = {
+            let raw = empathy_rx.load(Ordering::Relaxed);
+            if raw == u32::MAX { 0.0 } else {
+                // Convert fixed-point chaos (0-10000 → 0.0-1.0) to a tiny nudge
+                (raw as f32 / 10000.0 - 0.5) * 0.004 // ±0.002 max nudge per tick
+            }
+        };
+        // Send our chaos level to peer
+        if let Some(ref sock) = empathy_sender {
+            let chaos = { shared.lock().chaos_level };
+            let fixed = (chaos * 10000.0) as u32;
+            let _ = sock.send_to(&fixed.to_le_bytes(), "127.0.0.1:47832");
+        }
+        // Apply empathy nudge to macro_chaos (extremely subtle, only when walk is on)
+        let macro_walk_enabled_emp = { shared.lock().macro_walk_enabled };
+        if macro_walk_enabled_emp && empathy_nudge.abs() > 0.0 {
+            shared.lock().macro_chaos = (shared.lock().macro_chaos + empathy_nudge).clamp(0.05, 0.95);
         }
 
         // Coupled attractor: rebuild if source changed or enabled state changed
@@ -1065,6 +1332,64 @@ fn sim_thread(
             params.master_volume    = { shared.lock().config.audio.master_volume };
         }
 
+        // ── Attractor aging: filter opens fractionally over first hour ────────────
+        // aging_t = 0.0 at start, 1.0 after 60 minutes
+        // Base filter at aging_t=0: slightly darker (×0.7). Fully open at aging_t=1: unchanged.
+        let aging_filter_mult = 0.7 + aging_t * 0.3;
+        params.filter_cutoff *= aging_filter_mult;
+        // Also slight harmonic richness increase: waveshaper drive decreases with age (cleaner)
+        params.waveshaper_drive = (params.waveshaper_drive * (1.0 - aging_t * 0.15)).max(1.0);
+
+        // ── Harmonic gravity: voices drift toward pure intervals ──────────────────
+        // Not hard quantization. A gentle magnetic pull toward consonance.
+        // Dissonance is available but you have to push for it.
+        {
+            let pull = 0.0008f32; // per-tick pull strength (subtle, not jarring)
+            let harmonic_targets = [0.5f32, 2.0/3.0, 3.0/4.0, 4.0/5.0, 5.0/6.0,
+                                     1.0, 5.0/4.0, 4.0/3.0, 3.0/2.0, 5.0/3.0, 2.0, 3.0, 4.0];
+            // Pull voice 1 toward nearest harmonic of voice 0
+            if params.freqs[0] > 20.0 && params.freqs[1] > 20.0 {
+                let ratio = (params.freqs[1] / params.freqs[0]).clamp(0.4, 5.0);
+                if let Some(&nearest_r) = harmonic_targets.iter()
+                    .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs()).unwrap()) {
+                    let ideal = params.freqs[0] * nearest_r;
+                    // Only pull if within ±15 cents (ratio ≈ ±0.87%)
+                    let cents_off = (params.freqs[1] / ideal).ln() / (2f32.ln() / 12.0);
+                    if cents_off.abs() < 15.0 {
+                        params.freqs[1] += (ideal - params.freqs[1]) * pull;
+                    }
+                }
+            }
+            // Pull voice 2 toward harmonic of voice 0
+            if params.freqs[0] > 20.0 && params.freqs[2] > 20.0 {
+                let ratio = (params.freqs[2] / params.freqs[0]).clamp(0.4, 5.0);
+                if let Some(&nearest_r) = harmonic_targets.iter()
+                    .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs()).unwrap()) {
+                    let ideal = params.freqs[0] * nearest_r;
+                    let cents_off = (params.freqs[2] / ideal).ln() / (2f32.ln() / 12.0);
+                    if cents_off.abs() < 15.0 {
+                        params.freqs[2] += (ideal - params.freqs[2]) * pull;
+                    }
+                }
+            }
+        }
+
+        // ── Volume creep: draws listener closer over the course of an hour ─────────
+        {
+            let current_vol = config.audio.master_volume;
+            if (current_vol - volume_creep_last_vol).abs() > 0.005 {
+                // User touched the volume slider
+                volume_creep = 1.0;
+                volume_creep_last_vol = current_vol;
+                shared.lock().volume_creep_factor = 1.0;
+            } else {
+                // Drift downward imperceptibly (floor at VOLUME_CREEP_MIN)
+                volume_creep = (volume_creep * (1.0 - VOLUME_CREEP_RATE)).max(VOLUME_CREEP_MIN);
+                shared.lock().volume_creep_factor = volume_creep;
+            }
+            params.master_volume *= volume_creep;
+        }
+
         // ── Breathing: ~0.3 dB master volume oscillation at human respiratory rate ──
         // 4.5-second cycle, ±0.034 linear gain — subliminal organic warmth.
         // Every acoustic instrument has this. Synthesizers don't. This closes the gap.
@@ -1092,6 +1417,12 @@ fn sim_thread(
             let gravity_bytes: Vec<u8> = gravity_map.iter()
                 .flat_map(|f| (f / g_max).to_le_bytes()).collect();
             let _ = std::fs::write("gravity_map.bin", &gravity_bytes);
+            // Save aging seconds
+            let _ = std::fs::write("aging.bin", &aging_secs.to_le_bytes());
+            // Save entropy pool
+            let ep = shared.lock().entropy_pool.max(entropy_pool);
+            entropy_pool = ep;
+            let _ = std::fs::write("entropy.bin", &entropy_pool.to_le_bytes());
         }
 
         let batch: [Option<AudioParams>; 3] = [Some(params), layer1_params, layer2_params];

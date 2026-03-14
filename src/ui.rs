@@ -187,6 +187,13 @@ pub struct AppState {
     // Over hours the entire reachable set faintly emerges
     pub portrait_ink: Vec<(f32, f32)>,
     pub portrait_ink_sample_counter: u32,
+    // Invisible behavioral fields
+    pub last_interaction_time: std::time::Instant,
+    pub aging_secs: f32,
+    pub volume_creep_factor: f32,
+    pub entropy_pool: f32,
+    pub lunar_phase: f32,
+    pub last_volume_for_creep: f32,
 }
 
 #[derive(Clone)]
@@ -341,6 +348,12 @@ impl AppState {
             portrait_ghost_last_capture: std::time::Instant::now(),
             portrait_ink: Vec::new(),
             portrait_ink_sample_counter: 0,
+            last_interaction_time: std::time::Instant::now(),
+            aging_secs: 0.0,
+            volume_creep_factor: 1.0,
+            entropy_pool: 0.0,
+            lunar_phase: 0.0,
+            last_volume_for_creep: 0.7,
         }
     }
 }
@@ -488,6 +501,25 @@ pub fn draw_ui(
     let theme = state.lock().theme.clone();
     apply_theme(ctx, &theme);
 
+    // Track user interaction — any egui input event resets silence timer
+    // and deposits entropy into the pool
+    if ctx.input(|i| !i.events.is_empty()) {
+        let mut st = state.lock();
+        let now = std::time::Instant::now();
+        let secs_since_last = st.last_interaction_time.elapsed().as_secs_f32();
+        st.last_interaction_time = now;
+        // Each interaction deposits entropy (capped at 1000.0)
+        // More entropy = more adventurous Evolve walk over time
+        let deposit = (0.1 + secs_since_last * 0.02).min(2.0);
+        st.entropy_pool = (st.entropy_pool + deposit).min(1000.0);
+        // If volume was manually moved (not by creep), reset creep factor
+        let current_vol = st.config.audio.master_volume;
+        if (current_vol - st.last_volume_for_creep).abs() > 0.005 {
+            st.volume_creep_factor = 1.0;
+            st.last_volume_for_creep = current_vol;
+        }
+    }
+
     // Keyboard shortcuts (brief lock, then release)
     {
         let mut st = state.lock();
@@ -532,8 +564,9 @@ pub fn draw_ui(
             };
             let (ag, ag_sep) = { let st = state.lock(); (st.anaglyph_3d, st.anaglyph_separation) };
             let (pg, pi) = { let st = state.lock(); (st.portrait_ghosts.clone(), st.portrait_ink.clone()) };
+            let lunar = { state.lock().lunar_phase };
             draw_phase_portrait(ui, viz_points, &system_name, &mode_name,
-                &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, ag, ag_sep, &pg, &pi);
+                &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, ag, ag_sep, &pg, &pi, lunar);
             // Dim hint in corner
             let rect = ui.min_rect();
             ui.painter().text(
@@ -819,13 +852,13 @@ pub fn draw_ui(
                 }
             }
         }
-        let (ghosts, ink) = {
+        let (ghosts, ink, lunar_phase2) = {
             let st = state.lock();
-            (st.portrait_ghosts.clone(), st.portrait_ink.clone())
+            (st.portrait_ghosts.clone(), st.portrait_ink.clone(), st.lunar_phase)
         };
 
         match viz_tab {
-            0 => draw_phase_portrait(ui, viz_points, &system_name, &mode_name, &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, anaglyph_3d, anaglyph_separation, &ghosts, &ink),
+            0 => draw_phase_portrait(ui, viz_points, &system_name, &mode_name, &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, anaglyph_3d, anaglyph_separation, &ghosts, &ink, lunar_phase2),
             1 => draw_mixer_tab(ui, state, viz_points),
             2 => draw_arrange_tab(ui, state, recording),
             3 => draw_waveform(ui, waveform),
@@ -2370,6 +2403,7 @@ fn draw_phase_portrait(
     anaglyph_separation: f32,
     ghosts: &[(Vec<(f32, f32)>, std::time::Instant)],
     ink: &[(f32, f32)],
+    lunar_phase: f32,
 ) {
     let avail = ui.available_size();
     let (response, painter) = ui.allocate_painter(avail, Sense::hover());
@@ -2521,12 +2555,13 @@ fn draw_phase_portrait(
                     (trail_color.g() as f32 * spd_bright).min(255.0) as u8,
                     (trail_color.b() as f32 * spd_bright).min(255.0) as u8,
                 );
+                let moon_alpha = ((alpha as f32) * (0.7 + lunar_phase * 0.6)).min(255.0) as u8;
                 if pass == 0 {
                     let glow_col = Color32::from_rgba_premultiplied(
                         (col.r() as f32 * recency * 0.3) as u8,
                         (col.g() as f32 * recency * 0.3) as u8,
                         (col.b() as f32 * recency * 0.3) as u8,
-                        (alpha as f32 * 0.3) as u8,
+                        ((moon_alpha as f32) * 0.3) as u8,
                     );
                     painter.line_segment([p0, p1], Stroke::new(3.0, glow_col));
                 } else {
@@ -2534,7 +2569,7 @@ fn draw_phase_portrait(
                         (col.r() as f32 * recency) as u8,
                         (col.g() as f32 * recency) as u8,
                         (col.b() as f32 * recency) as u8,
-                        alpha,
+                        moon_alpha,
                     );
                     painter.line_segment([p0, p1], Stroke::new(1.2, col_a));
                 }
