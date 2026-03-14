@@ -9,6 +9,7 @@ pub mod bitcrusher;
 pub mod karplus;
 pub mod chorus;
 pub mod waveshaper;
+pub mod waveguide;
 
 pub use oscillator::{Oscillator, OscShape};
 pub use filter::BiquadFilter;
@@ -21,3 +22,4 @@ pub use bitcrusher::Bitcrusher;
 pub use karplus::KarplusStrong;
 pub use chorus::Chorus;
 pub use waveshaper::Waveshaper;
+pub use waveguide::WaveguideString;

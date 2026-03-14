@@ -3,12 +3,14 @@ pub mod orbital;
 pub mod granular;
 pub mod spectral;
 pub mod fm;
+pub mod vocal;
 
 pub use direct::DirectMapping;
 pub use orbital::OrbitalResonance;
 pub use granular::GranularMapping;
 pub use spectral::SpectralMapping;
 pub use fm::FmMapping;
+pub use vocal::VocalMapping;
 
 use crate::config::SonificationConfig;
 use crate::synth::OscShape;
@@ -84,6 +86,14 @@ pub struct AudioParams {
     pub layer_level: f32,
     pub layer_pan: f32,
     pub layer_id: usize,
+    /// Waveguide physical modeling params
+    pub waveguide_tension: f32,
+    pub waveguide_damping: f32,
+    pub waveguide_excite: bool,
+    /// Spectral freeze
+    pub spectral_freeze_active: bool,
+    pub spectral_freeze_freqs: [f32; 16],
+    pub spectral_freeze_amps: [f32; 16],
 }
 
 impl Default for AudioParams {
@@ -131,6 +141,12 @@ impl Default for AudioParams {
             layer_level: 1.0,
             layer_pan: 0.0,
             layer_id: 0,
+            waveguide_tension: 0.5,
+            waveguide_damping: 0.98,
+            waveguide_excite: false,
+            spectral_freeze_active: false,
+            spectral_freeze_freqs: [0.0; 16],
+            spectral_freeze_amps: [0.0; 16],
         }
     }
 }
@@ -148,7 +164,7 @@ pub fn chord_intervals_for(mode: &str) -> [f32; 3] {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
-pub enum SonifMode { #[default] Direct, Orbital, Granular, Spectral, FM }
+pub enum SonifMode { #[default] Direct, Orbital, Granular, Spectral, FM, Vocal, Waveguide }
 
 impl std::fmt::Display for SonifMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -158,6 +174,8 @@ impl std::fmt::Display for SonifMode {
             Self::Granular => write!(f, "Granular"),
             Self::Spectral => write!(f, "Spectral"),
             Self::FM => write!(f, "FM"),
+            Self::Vocal => write!(f, "Vocal"),
+            Self::Waveguide => write!(f, "Waveguide"),
         }
     }
 }

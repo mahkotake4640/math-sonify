@@ -11,6 +11,22 @@ use crate::systems::*;
 use crate::arrangement::{Scene, total_duration, generate_song};
 use hound;
 
+/// A single looper layer (stereo interleaved samples).
+pub struct LooperLayer {
+    pub samples: Vec<f32>,
+    pub active: bool,
+    pub level: f32,
+    pub playback_pos: usize,
+}
+
+/// A parameter change event for replay recording.
+#[derive(Clone)]
+pub struct ReplayEvent {
+    pub timestamp_ms: u32,
+    pub param_id: u8,
+    pub value: f32,
+}
+
 /// Shared mutable UI state — written by the UI thread, read by the sim thread.
 pub struct AppState {
     pub config: Config,
@@ -109,6 +125,55 @@ pub struct AppState {
     pub simple_mode: bool,
     // AUTO mode (auto-generate + auto-play arrangement)
     pub auto_mode: bool,
+    // Coupled attractor systems
+    pub coupled_enabled: bool,
+    pub coupled_source: String,
+    pub coupled_strength: f32,
+    pub coupled_target: String,
+    pub coupled_x_out: f32,   // live display: main system x output (normalized)
+    pub coupled_src_x_out: f32, // live display: source system x output (normalized)
+    // Performance mode
+    pub perf_mode: bool,
+    // Audio-reactive trail color
+    pub trail_color: egui::Color32,
+    // Custom ODE fields
+    pub custom_ode_x: String,
+    pub custom_ode_y: String,
+    pub custom_ode_z: String,
+    pub custom_ode_error: String,
+    // Spectral freeze
+    pub spectral_freeze_active: bool,
+    pub spectral_freeze_freqs: Vec<f32>,
+    pub spectral_freeze_amps: Vec<f32>,
+    // Fractional Lorenz alpha
+    pub lorenz_alpha: f64,
+    // Arrangement probabilistic
+    pub arr_probabilistic: bool,
+    // MIDI input
+    pub midi_in_enabled: bool,
+    pub midi_in_note_target: String,
+    pub midi_in_vel_target: String,
+    pub midi_in_cc_target: String,
+    pub midi_in_cc_num: u8,
+    pub midi_in_last_note: u8,
+    pub midi_in_last_vel: u8,
+    pub midi_in_last_cc: u8,
+    // Replay
+    pub replay_recording: bool,
+    pub replay_events: Vec<ReplayEvent>,
+    pub replay_start_time: std::time::Instant,
+    pub replay_playing: bool,
+    pub replay_play_pos: usize,
+    pub replay_play_start: std::time::Instant,
+    // Looper
+    pub looper_recording: bool,
+    pub looper_playing: bool,
+    pub looper_bars: u32,
+    pub looper_bpm: f32,
+    pub looper_layers: Vec<LooperLayer>,
+    // Anaglyph 3D
+    pub anaglyph_3d: bool,
+    pub anaglyph_separation: f32,
 }
 
 #[derive(Clone)]
@@ -219,6 +284,44 @@ impl AppState {
             macro_walk_rate: 0.05,
             simple_mode: true,
             auto_mode: false,
+            coupled_enabled: false,
+            coupled_source: "rossler".into(),
+            coupled_strength: 0.3,
+            coupled_target: "rho".into(),
+            coupled_x_out: 0.0,
+            coupled_src_x_out: 0.0,
+            perf_mode: false,
+            trail_color: egui::Color32::from_rgb(0, 220, 255),
+            custom_ode_x: "10.0 * (y - x)".into(),
+            custom_ode_y: "x * (28.0 - z) - y".into(),
+            custom_ode_z: "x * y - 2.667 * z".into(),
+            custom_ode_error: String::new(),
+            spectral_freeze_active: false,
+            spectral_freeze_freqs: vec![0.0; 16],
+            spectral_freeze_amps: vec![0.0; 16],
+            lorenz_alpha: 1.0,
+            arr_probabilistic: false,
+            midi_in_enabled: false,
+            midi_in_note_target: "rho".into(),
+            midi_in_vel_target: "speed".into(),
+            midi_in_cc_target: "reverb_wet".into(),
+            midi_in_cc_num: 1,
+            midi_in_last_note: 0,
+            midi_in_last_vel: 0,
+            midi_in_last_cc: 0,
+            replay_recording: false,
+            replay_events: Vec::new(),
+            replay_start_time: std::time::Instant::now(),
+            replay_playing: false,
+            replay_play_pos: 0,
+            replay_play_start: std::time::Instant::now(),
+            looper_recording: false,
+            looper_playing: false,
+            looper_bars: 4,
+            looper_bpm: 120.0,
+            looper_layers: Vec::new(),
+            anaglyph_3d: false,
+            anaglyph_separation: 0.05,
         }
     }
 }
@@ -281,6 +384,7 @@ fn apply_theme(ctx: &Context, theme: &str) {
 fn system_display_name(s: &str) -> &'static str {
     match s {
         "lorenz" => "Lorenz Attractor",
+        "fractional_lorenz" => "Fractional Lorenz",
         "rossler" => "Rossler Attractor",
         "double_pendulum" => "Double Pendulum",
         "geodesic_torus" => "Geodesic Torus",
@@ -291,6 +395,7 @@ fn system_display_name(s: &str) -> &'static str {
         "halvorsen" => "Halvorsen",
         "aizawa" => "Aizawa",
         "chua" => "Chua's Circuit",
+        "custom" => "Custom ODE",
         _ => "Unknown System",
     }
 }
@@ -298,6 +403,7 @@ fn system_display_name(s: &str) -> &'static str {
 fn system_internal_name(display: &str) -> &'static str {
     match display {
         "Lorenz Attractor" => "lorenz",
+        "Fractional Lorenz" => "fractional_lorenz",
         "Rossler Attractor" => "rossler",
         "Double Pendulum" => "double_pendulum",
         "Geodesic Torus" => "geodesic_torus",
@@ -308,6 +414,7 @@ fn system_internal_name(display: &str) -> &'static str {
         "Halvorsen" => "halvorsen",
         "Aizawa" => "aizawa",
         "Chua's Circuit" => "chua",
+        "Custom ODE" => "custom",
         _ => "lorenz",
     }
 }
@@ -329,6 +436,7 @@ fn mode_tooltip(mode: &str) -> &'static str {
         "granular" => "Speed drives grain density and texture",
         "spectral" => "State vector shapes a 32-harmonic spectrum",
         "fm" => "Frequency modulation — chaos drives the mod index",
+        "vocal" => "Vowel formant synthesis — attractor wanders through vowel space",
         _ => "",
     }
 }
@@ -386,8 +494,37 @@ pub fn draw_ui(
             if i.key_pressed(Key::Num4) { st.viz_tab = 3; }
             if i.key_pressed(Key::Num5) { st.viz_tab = 4; }
             if i.key_pressed(Key::Num6) { st.viz_tab = 5; }
+            if i.key_pressed(Key::F) { st.perf_mode = !st.perf_mode; }
         });
     } // lock released here
+
+    // Performance mode: fullscreen phase portrait only
+    let is_perf_mode = state.lock().perf_mode;
+    if is_perf_mode {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let trail_color = state.lock().trail_color;
+            let (projection, rotation_angle, auto_rotate, system_name, mode_name,
+                 current_state, current_deriv) = {
+                let st = state.lock();
+                (st.viz_projection, st.rotation_angle, st.auto_rotate,
+                 st.config.system.name.clone(), st.config.sonification.mode.clone(),
+                 st.current_state.clone(), st.current_deriv.clone())
+            };
+            let (ag, ag_sep) = { let st = state.lock(); (st.anaglyph_3d, st.anaglyph_separation) };
+            draw_phase_portrait(ui, viz_points, &system_name, &mode_name,
+                &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, ag, ag_sep);
+            // Dim hint in corner
+            let rect = ui.min_rect();
+            ui.painter().text(
+                egui::Pos2::new(rect.left() + 10.0, rect.bottom() - 20.0),
+                egui::Align2::LEFT_BOTTOM,
+                "Press F to exit performance mode",
+                egui::FontId::proportional(12.0),
+                Color32::from_rgba_premultiplied(150, 150, 150, 100),
+            );
+        });
+        return;
+    }
 
     SidePanel::left("controls").min_width(300.0).max_width(340.0).show(ctx, |ui| {
         ScrollArea::vertical().show(ui, |ui| {
@@ -512,6 +649,26 @@ pub fn draw_ui(
                 st.viz_projection = new_proj;
                 st.auto_rotate = new_auto_rot;
                 st.rotation_angle = rot_angle;
+                drop(st);
+
+                // Anaglyph 3D controls
+                let (anaglyph, sep) = {
+                    let st = state.lock();
+                    (st.anaglyph_3d, st.anaglyph_separation)
+                };
+                let ag_color = if anaglyph { Color32::from_rgb(180, 40, 40) } else { Color32::from_rgb(40, 40, 70) };
+                let mut new_anaglyph = anaglyph;
+                let mut new_sep = sep;
+                if ui.add(Button::new(RichText::new("Anaglyph 3D").color(Color32::WHITE))
+                    .fill(ag_color).min_size(Vec2::new(84.0, 22.0))).clicked() {
+                    new_anaglyph = !anaglyph;
+                }
+                if anaglyph {
+                    ui.add(Slider::new(&mut new_sep, 0.0..=0.2).text("Sep"));
+                }
+                let mut st = state.lock();
+                st.anaglyph_3d = new_anaglyph;
+                st.anaglyph_separation = new_sep;
             });
         }
 
@@ -577,7 +734,8 @@ pub fn draw_ui(
 
         let (projection, rotation_angle, auto_rotate, system_name, mode_name,
              freqs, voice_levels, chord_intervals, current_state, current_deriv,
-             chaos_level, order_param, kuramoto_phases) = {
+             chaos_level, order_param, kuramoto_phases, trail_color, perf_mode,
+             anaglyph_3d, anaglyph_separation) = {
             let st = state.lock();
             let proj = st.viz_projection;
             let rot = st.rotation_angle;
@@ -597,11 +755,15 @@ pub fn draw_ui(
             let cl = st.chaos_level;
             let op = st.order_param;
             let kp = st.kuramoto_phases.clone();
-            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp)
+            let tc = st.trail_color;
+            let pm = st.perf_mode;
+            let ag = st.anaglyph_3d;
+            let ag_sep = st.anaglyph_separation;
+            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp, tc, pm, ag, ag_sep)
         };
 
         match viz_tab {
-            0 => draw_phase_portrait(ui, viz_points, &system_name, &mode_name, &current_state, &current_deriv, projection, rotation_angle, auto_rotate),
+            0 => draw_phase_portrait(ui, viz_points, &system_name, &mode_name, &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, anaglyph_3d, anaglyph_separation),
             1 => draw_waveform(ui, waveform),
             2 => draw_note_map(ui, &freqs, &voice_levels, &chord_intervals),
             3 => draw_arrange_tab(ui, state, recording),
@@ -702,7 +864,7 @@ fn draw_advanced_panel(
     // ---- SOUND ----
     collapsing_section(ui, "SOUND", false, |ui| {
         ui.label(RichText::new("Mode").color(GRAY_HINT).size(11.0));
-        let modes = ["direct", "orbital", "granular", "spectral", "fm"];
+        let modes = ["direct", "orbital", "granular", "spectral", "fm", "vocal", "waveguide"];
         let current_mode = st.config.sonification.mode.clone();
         ui.horizontal_wrapped(|ui| {
             for m in &modes {
@@ -819,7 +981,7 @@ fn draw_advanced_panel(
 
     // ---- PHYSICS ENGINE ----
     collapsing_section(ui, "PHYSICS ENGINE", false, |ui| {
-        let systems_internal = ["lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body", "duffing", "van_der_pol", "halvorsen", "aizawa", "chua"];
+        let systems_internal = ["lorenz", "fractional_lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body", "duffing", "van_der_pol", "halvorsen", "aizawa", "chua", "custom"];
         let systems_display: Vec<&str> = systems_internal.iter().map(|s| system_display_name(s)).collect();
         let current_sys = st.config.system.name.clone();
         let current_display = system_display_name(&current_sys);
@@ -848,6 +1010,13 @@ fn draw_advanced_panel(
                         .on_hover_text("Chaos threshold — above ~24 = butterfly attractor");
                     ui.add(Slider::new(&mut st.config.lorenz.beta, 0.5..=5.0).text("beta"))
                         .on_hover_text("Damping — lower = wilder oscillations");
+                }
+                "fractional_lorenz" => {
+                    ui.add(Slider::new(&mut st.lorenz_alpha, 0.5..=1.0).text("α (order)"))
+                        .on_hover_text("Fractional derivative order — 1.0 = classic Lorenz");
+                    ui.add(Slider::new(&mut st.config.lorenz.sigma, 1.0..=20.0).text("sigma"));
+                    ui.add(Slider::new(&mut st.config.lorenz.rho, 10.0..=50.0).text("rho"));
+                    ui.add(Slider::new(&mut st.config.lorenz.beta, 0.5..=5.0).text("beta"));
                 }
                 "rossler" => {
                     ui.add(Slider::new(&mut st.config.rossler.a, 0.01..=0.5).text("a"))
@@ -1192,10 +1361,169 @@ fn draw_advanced_panel(
         }
     });
 
+    // ---- COUPLED SYSTEMS ----
+    drop(st); // release lock before calling collapsing_section (which takes state)
+    collapsing_section(ui, "COUPLED SYSTEMS", false, |ui| {
+        let mut st = state.lock();
+        ui.checkbox(&mut st.coupled_enabled, RichText::new("Enable Coupled Attractor").color(Color32::WHITE));
+        ui.add_space(4.0);
+
+        // Source system dropdown
+        let systems = ["lorenz", "rossler", "duffing", "van_der_pol", "halvorsen",
+                        "aizawa", "chua", "double_pendulum", "geodesic_torus", "kuramoto", "three_body"];
+        let current_src = st.coupled_source.clone();
+        ComboBox::from_label("Source System")
+            .selected_text(&current_src)
+            .show_ui(ui, |ui| {
+                for s in &systems {
+                    if ui.selectable_label(current_src == *s, *s).clicked() {
+                        st.coupled_source = s.to_string();
+                    }
+                }
+            });
+
+        // Coupling strength slider
+        ui.add(Slider::new(&mut st.coupled_strength, 0.0..=1.0).text("Coupling Strength"));
+
+        // Target parameter dropdown
+        let target_params = ["rho", "sigma", "speed", "a", "c", "coupling"];
+        let current_target = st.coupled_target.clone();
+        ComboBox::from_label("Target Parameter")
+            .selected_text(&current_target)
+            .show_ui(ui, |ui| {
+                for p in &target_params {
+                    if ui.selectable_label(current_target == *p, *p).clicked() {
+                        st.coupled_target = p.to_string();
+                    }
+                }
+            });
+
+        ui.add_space(6.0);
+        // Live bar meters
+        let main_x = st.coupled_x_out;
+        let src_x = st.coupled_src_x_out;
+        drop(st);
+        ui.label(RichText::new("Live Output (x):").color(GRAY_HINT).size(11.0));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Main:").color(Color32::WHITE).size(11.0));
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(120.0, 14.0), Sense::hover());
+            ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(20, 20, 40));
+            let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * main_x, rect.height()));
+            ui.painter().rect_filled(bar, 2.0, Color32::from_rgb(0, 160, 200));
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Src: ").color(Color32::WHITE).size(11.0));
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(120.0, 14.0), Sense::hover());
+            ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(20, 20, 40));
+            let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * src_x, rect.height()));
+            ui.painter().rect_filled(bar, 2.0, Color32::from_rgb(200, 100, 0));
+        });
+    });
+
+    // ---- CUSTOM ODE ----
+    collapsing_section(ui, "CUSTOM ODE", false, |ui| {
+        ui.label(RichText::new("Define your own 3D ODE system").color(GRAY_HINT).size(11.0));
+        ui.label(RichText::new("Variables: x, y, z, t  |  Functions: sin, cos, exp, abs, sqrt").color(GRAY_HINT).size(10.0));
+        ui.add_space(4.0);
+
+        let (mut ex, mut ey, mut ez, err) = {
+            let st = state.lock();
+            (st.custom_ode_x.clone(), st.custom_ode_y.clone(), st.custom_ode_z.clone(), st.custom_ode_error.clone())
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("dx/dt =").color(Color32::WHITE).size(12.0));
+            if ui.text_edit_singleline(&mut ex).changed() {
+                state.lock().custom_ode_x = ex.clone();
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("dy/dt =").color(Color32::WHITE).size(12.0));
+            if ui.text_edit_singleline(&mut ey).changed() {
+                state.lock().custom_ode_y = ey.clone();
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("dz/dt =").color(Color32::WHITE).size(12.0));
+            if ui.text_edit_singleline(&mut ez).changed() {
+                state.lock().custom_ode_z = ez.clone();
+            }
+        });
+        ui.add_space(4.0);
+        if ui.button(RichText::new("Apply Custom ODE").color(Color32::WHITE).strong()).clicked() {
+            use crate::systems::validate_exprs;
+            let mut st = state.lock();
+            match validate_exprs(&st.custom_ode_x, &st.custom_ode_y, &st.custom_ode_z) {
+                Ok(()) => {
+                    st.custom_ode_error.clear();
+                    st.config.system.name = "custom".into();
+                    st.system_changed = true;
+                }
+                Err(e) => {
+                    st.custom_ode_error = e;
+                }
+            }
+        }
+        if !err.is_empty() {
+            ui.colored_label(Color32::from_rgb(255, 80, 80), &err);
+        }
+        ui.add_space(4.0);
+        ui.label(RichText::new("Example (Lorenz): 10*(y-x) | x*(28-z)-y | x*y-2.667*z")
+            .italics().size(10.0).color(GRAY_HINT));
+    });
+
+    // ---- MIDI INPUT ----
+    collapsing_section(ui, "MIDI INPUT", false, |ui| {
+        let mut st = state.lock();
+        ui.checkbox(&mut st.midi_in_enabled, RichText::new("Enable MIDI Input").color(Color32::WHITE));
+        if st.midi_in_enabled {
+            let targets = ["rho", "sigma", "speed", "coupling", "base_freq"];
+            let cur_note = st.midi_in_note_target.clone();
+            ComboBox::from_label("Note Target")
+                .selected_text(&cur_note)
+                .show_ui(ui, |ui| {
+                    for t in &targets {
+                        if ui.selectable_label(cur_note == *t, *t).clicked() {
+                            st.midi_in_note_target = t.to_string();
+                        }
+                    }
+                });
+            let cur_vel = st.midi_in_vel_target.clone();
+            ComboBox::from_label("Vel Target")
+                .selected_text(&cur_vel)
+                .show_ui(ui, |ui| {
+                    for t in &targets {
+                        if ui.selectable_label(cur_vel == *t, *t).clicked() {
+                            st.midi_in_vel_target = t.to_string();
+                        }
+                    }
+                });
+            let mut cc_num = st.midi_in_cc_num as u32;
+            if ui.add(DragValue::new(&mut cc_num).clamp_range(0u32..=127).prefix("CC#")).changed() {
+                st.midi_in_cc_num = cc_num as u8;
+            }
+            let cur_cc = st.midi_in_cc_target.clone();
+            ComboBox::from_label("CC Target")
+                .selected_text(&cur_cc)
+                .show_ui(ui, |ui| {
+                    for t in &targets {
+                        if ui.selectable_label(cur_cc == *t, *t).clicked() {
+                            st.midi_in_cc_target = t.to_string();
+                        }
+                    }
+                });
+            ui.add_space(4.0);
+            ui.label(RichText::new(format!(
+                "Note: {}  Vel: {}  CC: {}",
+                st.midi_in_last_note, st.midi_in_last_vel, st.midi_in_last_cc
+            )).color(CYAN).size(11.0));
+        }
+    });
+
     // Keyboard shortcuts hint
     ui.add_space(10.0);
     ui.separator();
-    ui.label(RichText::new("Space: pause  ↑↓: vol  ←→: speed  1-6: tabs")
+    ui.label(RichText::new("Space: pause  ↑↓: vol  ←→: speed  1-6: tabs  F: perf mode")
         .size(10.0)
         .color(GRAY_HINT));
     ui.add_space(4.0);
@@ -1237,6 +1565,7 @@ fn draw_simple_panel(ui: &mut Ui, state: &SharedState) {
                 st.arr_playing = true;
                 st.arr_loop = true;
                 st.auto_mode = true;
+                st.paused = false; // always unpause when AUTO starts
             }
         }
         ui.add_space(8.0);
@@ -1272,13 +1601,21 @@ fn draw_simple_panel(ui: &mut Ui, state: &SharedState) {
         ui.label(RichText::new("VOLUME").color(Color32::WHITE).strong());
         ui.add(Slider::new(&mut st.config.audio.master_volume, 0.0..=1.0).text("Volume"));
         ui.add_space(6.0);
-        let pause_label = if st.paused { "▶  RESUME" } else { "⏸  PAUSE" };
-        let pause_color = if st.paused { Color32::from_rgb(0, 140, 50) } else { Color32::from_rgb(0, 90, 160) };
-        if ui.add(Button::new(RichText::new(pause_label).color(Color32::WHITE).strong())
-            .fill(pause_color)
-            .min_size(Vec2::new(ui.available_width(), 36.0))).clicked() {
-            st.paused = !st.paused;
-        }
+        ui.horizontal(|ui| {
+            let pause_label = if st.paused { "▶  RESUME" } else { "⏸  PAUSE" };
+            let pause_color = if st.paused { Color32::from_rgb(0, 140, 50) } else { Color32::from_rgb(0, 90, 160) };
+            if ui.add(Button::new(RichText::new(pause_label).color(Color32::WHITE).strong())
+                .fill(pause_color)
+                .min_size(Vec2::new(200.0, 36.0))).clicked() {
+                st.paused = !st.paused;
+            }
+            let perf_color = if st.perf_mode { Color32::from_rgb(180, 80, 0) } else { Color32::from_rgb(40, 40, 70) };
+            if ui.add(Button::new(RichText::new("PERF").color(Color32::WHITE).strong())
+                .fill(perf_color)
+                .min_size(Vec2::new(60.0, 36.0))).clicked() {
+                st.perf_mode = !st.perf_mode;
+            }
+        });
     }
     ui.add_space(8.0);
     ui.separator();
@@ -1477,6 +1814,14 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
         let total_mins = (total / 60.0) as u32;
         let total_secs = (total % 60.0) as u32;
         ui.label(RichText::new(format!("  Duration: {}:{:02}", total_mins, total_secs)).color(CYAN));
+
+        // Probabilistic mode
+        let mut st = state.lock();
+        let prob_col = if st.arr_probabilistic { Color32::from_rgb(180, 80, 20) } else { Color32::from_rgb(40, 40, 60) };
+        if ui.add(Button::new(RichText::new("Probabilistic").color(Color32::WHITE))
+            .fill(prob_col).min_size(Vec2::new(100.0, 28.0))).clicked() {
+            st.arr_probabilistic = !st.arr_probabilistic;
+        }
     });
 
     // Progress bar
@@ -1540,6 +1885,15 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
             let mut morph_v = morph;
             if ui.add(DragValue::new(&mut morph_v).clamp_range(0.0..=60.0f32).suffix("s").speed(0.1)).changed() {
                 state.lock().scenes[i].morph_secs = morph_v;
+            }
+
+            // Probability weight (shown when probabilistic mode is on)
+            let arr_prob = state.lock().arr_probabilistic;
+            if arr_prob {
+                let mut prob_v = state.lock().scenes[i].transition_prob;
+                if ui.add(DragValue::new(&mut prob_v).clamp_range(0.0..=3.0f32).prefix("P:").speed(0.05)).changed() {
+                    state.lock().scenes[i].transition_prob = prob_v;
+                }
             }
 
             // Capture button
@@ -1726,6 +2080,9 @@ fn draw_phase_portrait(
     projection: usize,
     rotation_angle: f32,
     auto_rotate: bool,
+    trail_color: Color32,
+    anaglyph_3d: bool,
+    anaglyph_separation: f32,
 ) {
     let avail = ui.available_size();
     let (response, painter) = ui.allocate_painter(avail, Sense::hover());
@@ -1792,37 +2149,58 @@ fn draw_phase_portrait(
     let n = proj_pts.len();
 
     // Draw trail — glow pass first, then bright core pass
-    for (idx, w) in proj_pts.windows(2).enumerate() {
-        let (x0, y0, s0, _) = w[0];
-        let (x1, y1, _, _) = w[1];
-        let p0 = to_screen(x0, y0);
-        let p1 = to_screen(x1, y1);
-        let recency = idx as f32 / n as f32;
-        let alpha = (recency * 255.0) as u8;
-        let col = speed_color(s0);
-        let glow_col = Color32::from_rgba_premultiplied(
-            (col.r() as f32 * recency * 0.3) as u8,
-            (col.g() as f32 * recency * 0.3) as u8,
-            (col.b() as f32 * recency * 0.3) as u8,
-            (alpha as f32 * 0.3) as u8,
-        );
-        painter.line_segment([p0, p1], Stroke::new(3.0, glow_col));
-    }
-    for (idx, w) in proj_pts.windows(2).enumerate() {
-        let (x0, y0, s0, _) = w[0];
-        let (x1, y1, _, _) = w[1];
-        let p0 = to_screen(x0, y0);
-        let p1 = to_screen(x1, y1);
-        let recency = idx as f32 / n as f32;
-        let alpha = (recency * 255.0) as u8;
-        let col = speed_color(s0);
-        let col_a = Color32::from_rgba_premultiplied(
-            (col.r() as f32 * recency) as u8,
-            (col.g() as f32 * recency) as u8,
-            (col.b() as f32 * recency) as u8,
-            alpha,
-        );
-        painter.line_segment([p0, p1], Stroke::new(1.2, col_a));
+    // Use audio-reactive trail_color (blended with speed for local brightness variation)
+    // Anaglyph 3D: render left eye (red) and right eye (cyan) with horizontal parallax
+    let sep_px = anaglyph_separation * rect.width();
+
+    for pass in 0..2 {
+        for (idx, w) in proj_pts.windows(2).enumerate() {
+            let (x0, y0, s0, _) = w[0];
+            let (x1, y1, _, _) = w[1];
+            let recency = idx as f32 / n as f32;
+            let alpha = (recency * 255.0) as u8;
+            let spd_bright = 0.5 + s0 * 0.5;
+
+            if anaglyph_3d {
+                // Left eye (red channel)
+                let p0l = Pos2::new(to_screen(x0, y0).x - sep_px, to_screen(x0, y0).y);
+                let p1l = Pos2::new(to_screen(x1, y1).x - sep_px, to_screen(x1, y1).y);
+                // Right eye (cyan channel)
+                let p0r = Pos2::new(to_screen(x0, y0).x + sep_px, to_screen(x0, y0).y);
+                let p1r = Pos2::new(to_screen(x1, y1).x + sep_px, to_screen(x1, y1).y);
+                let a = if pass == 0 { (alpha as f32 * 0.3) as u8 } else { alpha };
+                let w_px = if pass == 0 { 3.0 } else { 1.2 };
+                let r_col = Color32::from_rgba_premultiplied((255.0 * recency * spd_bright) as u8, 0, 0, a);
+                let c_col = Color32::from_rgba_premultiplied(0, (200.0 * recency * spd_bright) as u8, (255.0 * recency * spd_bright) as u8, a);
+                painter.line_segment([p0l, p1l], Stroke::new(w_px, r_col));
+                painter.line_segment([p0r, p1r], Stroke::new(w_px, c_col));
+            } else {
+                let p0 = to_screen(x0, y0);
+                let p1 = to_screen(x1, y1);
+                let col = Color32::from_rgb(
+                    (trail_color.r() as f32 * spd_bright).min(255.0) as u8,
+                    (trail_color.g() as f32 * spd_bright).min(255.0) as u8,
+                    (trail_color.b() as f32 * spd_bright).min(255.0) as u8,
+                );
+                if pass == 0 {
+                    let glow_col = Color32::from_rgba_premultiplied(
+                        (col.r() as f32 * recency * 0.3) as u8,
+                        (col.g() as f32 * recency * 0.3) as u8,
+                        (col.b() as f32 * recency * 0.3) as u8,
+                        (alpha as f32 * 0.3) as u8,
+                    );
+                    painter.line_segment([p0, p1], Stroke::new(3.0, glow_col));
+                } else {
+                    let col_a = Color32::from_rgba_premultiplied(
+                        (col.r() as f32 * recency) as u8,
+                        (col.g() as f32 * recency) as u8,
+                        (col.b() as f32 * recency) as u8,
+                        alpha,
+                    );
+                    painter.line_segment([p0, p1], Stroke::new(1.2, col_a));
+                }
+            }
+        }
     }
 
     // Poincaré section dots
@@ -2097,7 +2475,181 @@ fn draw_mixer_tab(ui: &mut egui::Ui, state: &crate::ui::SharedState, viz_points:
                 });
             }
         }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        // ── Spectral Freeze ───────────────────────────────────────────────
+        ui.label(egui::RichText::new("Spectral Freeze").color(egui::Color32::from_rgb(100, 200, 255)).strong());
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let mut st = state.lock();
+            let freeze_active = st.spectral_freeze_active;
+            let freeze_color = if freeze_active { egui::Color32::from_rgb(40, 140, 220) } else { egui::Color32::from_rgb(40, 40, 70) };
+            if ui.add(egui::Button::new(egui::RichText::new("FREEZE").color(egui::Color32::WHITE))
+                .fill(freeze_color).min_size(egui::Vec2::new(80.0, 28.0))).clicked() {
+                // Capture current attractor frequencies and harmonics
+                let base = st.config.sonification.base_frequency as f32;
+                let mut freqs = vec![0.0f32; 16];
+                let mut amps = vec![0.0f32; 16];
+                // First 4: base freq harmonics, next 12: additional harmonics
+                for i in 0..16 {
+                    freqs[i] = base * (i + 1) as f32;
+                    amps[i] = 1.0 / (i + 1) as f32 * 0.5;
+                }
+                st.spectral_freeze_freqs = freqs;
+                st.spectral_freeze_amps = amps;
+                st.spectral_freeze_active = true;
+            }
+            if ui.add(egui::Button::new(egui::RichText::new("CLEAR").color(egui::Color32::WHITE))
+                .fill(egui::Color32::from_rgb(80, 40, 40)).min_size(egui::Vec2::new(60.0, 28.0))).clicked() {
+                st.spectral_freeze_active = false;
+            }
+            let status = if freeze_active { "FROZEN" } else { "Off" };
+            ui.label(egui::RichText::new(status).color(if freeze_active { mc_cyan } else { mc_gray }).size(12.0));
+        });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        // ── Replay Recording ──────────────────────────────────────────────
+        ui.label(egui::RichText::new("Replay Recording").color(egui::Color32::from_rgb(220, 120, 40)).strong());
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let mut st = state.lock();
+            let rec = st.replay_recording;
+            let play = st.replay_playing;
+            let rec_color = if rec { mc_red } else { egui::Color32::from_rgb(140, 60, 60) };
+            if ui.add(egui::Button::new(egui::RichText::new(if rec { "STOP REC" } else { "REC" }).color(egui::Color32::WHITE))
+                .fill(rec_color).min_size(egui::Vec2::new(70.0, 28.0))).clicked() {
+                if rec {
+                    st.replay_recording = false;
+                    // Auto-save to replays/latest.msr
+                    let events = st.replay_events.clone();
+                    std::thread::spawn(move || {
+                        let _ = save_replay_file(&events, "replays/latest.msr");
+                    });
+                } else {
+                    st.replay_events.clear();
+                    st.replay_recording = true;
+                    st.replay_start_time = std::time::Instant::now();
+                }
+            }
+            let play_color = if play { mc_green } else { egui::Color32::from_rgb(40, 100, 40) };
+            if ui.add(egui::Button::new(egui::RichText::new(if play { "STOP" } else { "PLAY FILE" }).color(egui::Color32::WHITE))
+                .fill(play_color).min_size(egui::Vec2::new(80.0, 28.0))).clicked() {
+                if play {
+                    st.replay_playing = false;
+                    st.replay_play_pos = 0;
+                } else {
+                    // Load from replays/latest.msr
+                    if let Ok(events) = load_replay_file("replays/latest.msr") {
+                        st.replay_events = events;
+                        st.replay_play_pos = 0;
+                        st.replay_playing = true;
+                        st.replay_play_start = std::time::Instant::now();
+                    }
+                }
+            }
+            let n = st.replay_events.len();
+            ui.label(egui::RichText::new(format!("{n} events")).color(mc_gray).size(11.0));
+        });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        // ── Looper ────────────────────────────────────────────────────────
+        ui.label(egui::RichText::new("Looper").color(egui::Color32::from_rgb(200, 100, 255)).strong());
+        ui.add_space(4.0);
+        {
+            let mut st = state.lock();
+            ui.horizontal(|ui| {
+                let rec = st.looper_recording;
+                let rec_color = if rec { mc_red } else { egui::Color32::from_rgb(140, 60, 60) };
+                if ui.add(egui::Button::new(egui::RichText::new(if rec { "STOP" } else { "REC" }).color(egui::Color32::WHITE))
+                    .fill(rec_color).min_size(egui::Vec2::new(60.0, 28.0))).clicked() {
+                    st.looper_recording = !rec;
+                }
+                ui.label(egui::RichText::new("Bars:").color(mc_gray));
+                for bars in [1u32, 2, 4, 8] {
+                    let sel = st.looper_bars == bars;
+                    let c = if sel { mc_cyan } else { egui::Color32::from_rgb(40, 40, 70) };
+                    if ui.add(egui::Button::new(egui::RichText::new(bars.to_string()).color(egui::Color32::WHITE))
+                        .fill(c).min_size(egui::Vec2::new(28.0, 24.0))).clicked() {
+                        st.looper_bars = bars;
+                    }
+                }
+                ui.add(egui::Slider::new(&mut st.looper_bpm, 60.0..=200.0).text("BPM").integer());
+            });
+            ui.add_space(4.0);
+            // Layer list
+            let n_layers = st.looper_layers.len();
+            for i in 0..n_layers {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("L{}", i + 1)).color(mc_gray).size(11.0));
+                    let active = st.looper_layers[i].active;
+                    let ac = if active { mc_green } else { egui::Color32::from_rgb(40, 40, 70) };
+                    if ui.add(egui::Button::new(egui::RichText::new(if active { "ON" } else { "OFF" }).color(egui::Color32::WHITE))
+                        .fill(ac).min_size(egui::Vec2::new(36.0, 22.0))).clicked() {
+                        st.looper_layers[i].active = !active;
+                    }
+                    ui.add(egui::Slider::new(&mut st.looper_layers[i].level, 0.0..=1.0).text("Vol"));
+                    if ui.add(egui::Button::new(egui::RichText::new("X").color(egui::Color32::WHITE))
+                        .fill(mc_red).min_size(egui::Vec2::new(22.0, 22.0))).clicked() {
+                        st.looper_layers.remove(i);
+                        // Break since we modified the vec
+                        return;
+                    }
+                });
+            }
+            if ui.add(egui::Button::new(egui::RichText::new("CLEAR ALL").color(egui::Color32::WHITE))
+                .fill(egui::Color32::from_rgb(80, 40, 40)).min_size(egui::Vec2::new(90.0, 24.0))).clicked() {
+                st.looper_layers.clear();
+            }
+        }
     });
+}
+
+fn save_replay_file(events: &[crate::ui::ReplayEvent], path: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("."));
+    if !dir.exists() { std::fs::create_dir_all(dir)?; }
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+    // Header: sample_rate u32, version u8
+    f.write_all(&44100u32.to_le_bytes())?;
+    f.write_all(&1u8.to_le_bytes())?;
+    // Records: timestamp_ms u32, param_id u8, value f32
+    for ev in events {
+        f.write_all(&ev.timestamp_ms.to_le_bytes())?;
+        f.write_all(&ev.param_id.to_le_bytes())?;
+        f.write_all(&ev.value.to_le_bytes())?;
+    }
+    Ok(())
+}
+
+fn load_replay_file(path: &str) -> anyhow::Result<Vec<crate::ui::ReplayEvent>> {
+    use std::io::Read;
+    let mut f = std::io::BufReader::new(std::fs::File::open(path)?);
+    let mut buf4 = [0u8; 4];
+    let mut buf1 = [0u8; 1];
+    // Skip header (5 bytes)
+    f.read_exact(&mut buf4)?; // sample_rate
+    f.read_exact(&mut buf1)?; // version
+    let mut events = Vec::new();
+    loop {
+        let mut ts_buf = [0u8; 4];
+        if f.read_exact(&mut ts_buf).is_err() { break; }
+        let timestamp_ms = u32::from_le_bytes(ts_buf);
+        if f.read_exact(&mut buf1).is_err() { break; }
+        let param_id = buf1[0];
+        if f.read_exact(&mut buf4).is_err() { break; }
+        let value = f32::from_le_bytes(buf4);
+        events.push(crate::ui::ReplayEvent { timestamp_ms, param_id, value });
+    }
+    Ok(events)
 }
 
 fn draw_waveform(ui: &mut Ui, waveform: &Arc<Mutex<Vec<f32>>>) {

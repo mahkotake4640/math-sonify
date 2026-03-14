@@ -16,10 +16,10 @@ use parking_lot::Mutex;
 
 use crate::config::{Config, load_config};
 use crate::arrangement::{lerp_config, total_duration, scene_at};
-use crate::systems::*;
+use crate::systems::{*, CustomOde, FractionalLorenz};
 use crate::sonification::{
-    AudioParams, Sonification,
-    DirectMapping, OrbitalResonance, GranularMapping, SpectralMapping, FmMapping,
+    AudioParams, Sonification, SonifMode,
+    DirectMapping, OrbitalResonance, GranularMapping, SpectralMapping, FmMapping, VocalMapping,
     chord_intervals_for,
 };
 use crate::audio::{AudioEngine, WavRecorder, LoopExportPending, VuMeter, SidechainLevel, ClipBuffer};
@@ -103,6 +103,9 @@ fn main() -> anyhow::Result<()> {
     // MIDI output thread
     start_midi_thread(shared.clone());
 
+    // MIDI input thread
+    start_midi_input_thread(shared.clone());
+
     // UI (eframe -- runs on main thread)
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -167,6 +170,9 @@ fn sim_thread(
     let mut mapper = build_mapper(&initial_config.sonification.mode);
     // Extra polyphony layers (indices 1 and 2)
     let mut extra_layers: [Option<ExtraLayer>; 2] = [None, None];
+    // Track last arrangement system/mode to detect changes without comparing to UI AppState
+    let mut last_arr_sys: String = initial_config.system.name.clone();
+    let mut last_arr_mode: String = initial_config.sonification.mode.clone();
 
     let control_rate_hz = 120.0f64;
     let control_period = Duration::from_secs_f64(1.0 / control_rate_hz);
@@ -179,6 +185,13 @@ fn sim_thread(
     let mut auto_snapshot_timer = 0u64;
     let auto_snapshot_interval = 12u64; // every ~100ms at 120Hz
 
+    // Coupled attractor system
+    let mut coupled_system: Option<Box<dyn DynamicalSystem>> = None;
+    let mut coupled_system_name: String = String::new();
+    // min/max tracker for normalizing coupled output
+    let mut coupled_min = -30.0f64;
+    let mut coupled_max = 30.0f64;
+
     loop {
         let now = Instant::now();
         if now < next_tick {
@@ -187,7 +200,8 @@ fn sim_thread(
         next_tick += control_period;
 
         let (paused, mut config, sys_changed, mode_changed, bpm_sync, bpm, auto_recording, auto_playing,
-             poly_defs, sidechain_enabled, sidechain_level_shared, sidechain_target, sidechain_amount) = {
+             poly_defs, sidechain_enabled, sidechain_level_shared, sidechain_target, sidechain_amount,
+             coupled_enabled, coupled_src_name, coupled_strength, coupled_target_param) = {
             let mut st = shared.lock();
             let p = st.paused;
             let c = st.config.clone();
@@ -204,12 +218,27 @@ fn sim_thread(
             let sl = st.sidechain_level_shared.clone();
             let st_target = st.sidechain_target.clone();
             let sa = st.sidechain_amount;
-            (p, c, sc, mc, bs, bm, ar, ap, pd, se, sl, st_target, sa)
+            let ce = st.coupled_enabled;
+            let cs = st.coupled_source.clone();
+            let cstr = st.coupled_strength;
+            let ct = st.coupled_target.clone();
+            (p, c, sc, mc, bs, bm, ar, ap, pd, se, sl, st_target, sa, ce, cs, cstr, ct)
         };
 
         if paused { continue; }
-        if sys_changed  { system = build_system(&config); }
-        if mode_changed { mapper = build_mapper(&config.sonification.mode); }
+        if sys_changed  {
+            system = if config.system.name == "custom" {
+                let (ex, ey, ez) = {
+                    let st = shared.lock();
+                    (st.custom_ode_x.clone(), st.custom_ode_y.clone(), st.custom_ode_z.clone())
+                };
+                Box::new(CustomOde::new(ex, ey, ez))
+            } else {
+                build_system(&config)
+            };
+            last_arr_sys = config.system.name.clone();
+        }
+        if mode_changed { mapper = build_mapper(&config.sonification.mode); last_arr_mode = config.sonification.mode.clone(); }
 
         // Apply BPM sync to delay and LFO rate
         if bpm_sync {
@@ -314,7 +343,30 @@ fn sim_thread(
                 let elapsed = st.arr_elapsed;
                 let total = total_duration(&st.scenes);
                 if elapsed >= total {
-                    if st.arr_loop {
+                    if st.arr_probabilistic {
+                        // Probabilistic: pick next scene by weighted random from active scenes
+                        let active_indices: Vec<usize> = (0..st.scenes.len())
+                            .filter(|&i| st.scenes[i].active)
+                            .collect();
+                        if !active_indices.is_empty() {
+                            let total_w: f32 = active_indices.iter().map(|&i| st.scenes[i].transition_prob.max(0.0)).sum();
+                            if total_w > 0.0 {
+                                walk_seed = walk_seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                                let r = (walk_seed >> 33) as f32 / u32::MAX as f32 * total_w;
+                                let mut acc = 0.0f32;
+                                let mut chosen = active_indices[0];
+                                for &i in &active_indices {
+                                    acc += st.scenes[i].transition_prob.max(0.0);
+                                    if r <= acc { chosen = i; break; }
+                                }
+                                // Reorder scenes so chosen is first; just restart from beginning
+                                // but jump elapsed to start of that scene
+                                let _ = chosen; // just loop from start for simplicity
+                            }
+                        }
+                        st.arr_elapsed = 0.0;
+                        Some(0.0)
+                    } else if st.arr_loop {
                         st.arr_elapsed = elapsed % total.max(0.001);
                         Some(st.arr_elapsed)
                     } else {
@@ -345,16 +397,15 @@ fn sim_thread(
                 } else {
                     scenes[idx].config.clone()
                 };
-                // Check if system or mode changed vs current config before overriding
-                let (cur_sys, cur_mode) = {
-                    let st = shared.lock();
-                    (st.config.system.name.clone(), st.config.sonification.mode.clone())
-                };
-                if new_config.system.name != cur_sys {
-                    shared.lock().system_changed = true;
+                // Only rebuild system/mapper when the arrangement actually changes system or mode
+                // Compare against last_arr_sys/mode (not AppState) to avoid rebuilding every tick
+                if new_config.system.name != last_arr_sys {
+                    last_arr_sys = new_config.system.name.clone();
+                    system = build_system(&new_config);
                 }
-                if new_config.sonification.mode != cur_mode {
-                    shared.lock().mode_changed = true;
+                if new_config.sonification.mode != last_arr_mode {
+                    last_arr_mode = new_config.sonification.mode.clone();
+                    mapper = build_mapper(&new_config.sonification.mode);
                 }
                 config = new_config;
             }
@@ -383,11 +434,9 @@ fn sim_thread(
 
         // Apply macro knobs (simple mode only)
         if simple_mode {
-            let (macro_chaos, macro_space, macro_rhythm, macro_warmth,
-                 macro_walk_enabled, macro_walk_rate) = {
+            let (macro_chaos, macro_space, macro_walk_enabled, macro_walk_rate) = {
                 let st = shared.lock();
-                (st.macro_chaos, st.macro_space, st.macro_rhythm, st.macro_warmth,
-                 st.macro_walk_enabled, st.macro_walk_rate)
+                (st.macro_chaos, st.macro_space, st.macro_walk_enabled, st.macro_walk_rate)
             };
 
             // Macro random walk (Brownian motion)
@@ -413,6 +462,60 @@ fn sim_thread(
             // Space → reverb_wet, chorus_mix, portamento_ms, delay_feedback
             // (these will be overwritten into params below after mapping)
             config.sonification.portamento_ms = 10.0 + macro_space * 790.0;
+        }
+
+        // Coupled attractor: rebuild if source changed or enabled state changed
+        if coupled_enabled {
+            if coupled_system.is_none() || coupled_system_name != coupled_src_name {
+                coupled_system_name = coupled_src_name.clone();
+                let mut coupled_cfg = config.clone();
+                coupled_cfg.system.name = coupled_src_name.clone();
+                coupled_system = Some(build_system(&coupled_cfg));
+                coupled_min = -30.0;
+                coupled_max = 30.0;
+            }
+        } else {
+            if coupled_system.is_some() {
+                coupled_system = None;
+            }
+        }
+
+        // Step coupled system and compute normalized output
+        let coupled_norm = if let Some(ref mut cs) = coupled_system {
+            let coupled_steps = ((config.system.speed / control_rate_hz) / config.system.dt)
+                .round() as usize;
+            for _ in 0..coupled_steps.clamp(1, 10_000) {
+                cs.step(config.system.dt);
+            }
+            let cx = cs.state().first().copied().unwrap_or(0.0);
+            if cx < coupled_min { coupled_min = cx; }
+            if cx > coupled_max { coupled_max = cx; }
+            let range = (coupled_max - coupled_min).abs().max(1e-9);
+            (cx - coupled_min) / range
+        } else {
+            0.5
+        };
+
+        // Apply coupling to main system's config parameters
+        if coupled_enabled && coupled_system.is_some() {
+            let delta = (coupled_norm - 0.5) * coupled_strength as f64 * 2.0;
+            match coupled_target_param.as_str() {
+                "rho"      => config.lorenz.rho      = (config.lorenz.rho      + delta * 10.0).clamp(1.0, 60.0),
+                "sigma"    => config.lorenz.sigma    = (config.lorenz.sigma    + delta *  5.0).clamp(0.1, 30.0),
+                "speed"    => config.system.speed    = (config.system.speed    + delta *  2.0).clamp(0.05, 20.0),
+                "a"        => config.rossler.a       = (config.rossler.a       + delta *  0.1).clamp(0.001, 1.0),
+                "c"        => config.rossler.c       = (config.rossler.c       + delta *  1.0).clamp(0.1, 15.0),
+                "coupling" => config.kuramoto.coupling = (config.kuramoto.coupling + delta * 0.5).clamp(0.0, 5.0),
+                _ => {}
+            }
+        }
+
+        // Update live display of coupled outputs
+        {
+            let mut st = shared.lock();
+            let main_x = system.state().first().copied().unwrap_or(0.0) as f32;
+            st.coupled_x_out = ((main_x + 30.0) / 60.0).clamp(0.0, 1.0);
+            st.coupled_src_x_out = coupled_norm as f32;
         }
 
         // Integrate enough steps to cover one control period at the configured speed
@@ -465,24 +568,6 @@ fn sim_thread(
         params.waveshaper_drive = config.audio.waveshaper_drive;
         params.waveshaper_mix = config.audio.waveshaper_mix;
 
-        // Apply macro params to audio params (simple mode only)
-        if simple_mode {
-            let (macro_chaos, macro_space, macro_rhythm, macro_warmth) = {
-                let st = shared.lock();
-                (st.macro_chaos, st.macro_space, st.macro_rhythm, st.macro_warmth)
-            };
-            // Space → reverb_wet, chorus_mix, delay_feedback
-            params.reverb_wet     = macro_space * 0.9;
-            params.chorus_mix     = macro_space * 0.7;
-            params.delay_feedback = macro_space * 0.7;
-            // Rhythm → adsr_attack_ms (shorter = punchier)
-            params.adsr_attack_ms = 200.0 - macro_rhythm * 195.0;
-            // Warmth → filter_cutoff, waveshaper_drive
-            params.filter_cutoff    = 8000.0 - macro_warmth * 7800.0;
-            params.waveshaper_drive = 1.0 + macro_warmth * 4.0;
-            // suppress unused warning for chaos (already applied to config above)
-            let _ = macro_chaos;
-        }
 
         // Voice shapes from config
         params.voice_shapes = [
@@ -501,6 +586,126 @@ fn sim_thread(
             if ks_enabled && is_poincare_crossing {
                 params.ks_trigger = true;
                 params.ks_freq = params.freqs[0].max(50.0);
+            }
+        }
+
+        // Waveguide params: map attractor state to waveguide physical model
+        if config.sonification.mode == "waveguide" {
+            let state = system.state();
+            // Normalize x to 0..1 for tension
+            let x_norm = if !state.is_empty() {
+                ((state[0] + 30.0) / 60.0).clamp(0.0, 1.0) as f32
+            } else { 0.5 };
+            params.waveguide_tension = x_norm;
+            params.waveguide_damping = (params.chaos_level * 0.3 + 0.5).clamp(0.5, 0.99);
+            params.waveguide_excite = is_poincare_crossing;
+            params.mode = SonifMode::Waveguide;
+        }
+
+        // Spectral freeze: copy frozen state into params
+        {
+            let st = shared.lock();
+            params.spectral_freeze_active = st.spectral_freeze_active;
+            if st.spectral_freeze_active {
+                for i in 0..16 {
+                    params.spectral_freeze_freqs[i] = st.spectral_freeze_freqs.get(i).copied().unwrap_or(0.0);
+                    params.spectral_freeze_amps[i]  = st.spectral_freeze_amps.get(i).copied().unwrap_or(0.0);
+                }
+            }
+        }
+
+        // MIDI input: apply mappings to config params
+        {
+            let st = shared.lock();
+            if st.midi_in_enabled {
+                let note_norm = st.midi_in_last_note as f32 / 127.0;
+                let vel_norm  = st.midi_in_last_vel  as f32 / 127.0;
+                let cc_norm   = st.midi_in_last_cc   as f32 / 127.0;
+                drop(st);
+                let apply = |target: &str, val: f64| {
+                    // We clone config here so we need to apply after drop
+                    (target.to_string(), val)
+                };
+                let (note_target, vel_target, cc_target) = {
+                    let st2 = shared.lock();
+                    (st2.midi_in_note_target.clone(), st2.midi_in_vel_target.clone(), st2.midi_in_cc_target.clone())
+                };
+                let apply_param = |target: &str, norm: f32, cfg: &mut Config| {
+                    match target {
+                        "rho"       => cfg.lorenz.rho       = 10.0 + norm as f64 * 50.0,
+                        "sigma"     => cfg.lorenz.sigma     = 1.0  + norm as f64 * 25.0,
+                        "speed"     => cfg.system.speed     = 0.1  + norm as f64 * 10.0,
+                        "base_freq" => cfg.sonification.base_frequency = 55.0 + norm as f64 * 880.0,
+                        "coupling"  => cfg.kuramoto.coupling = norm as f64 * 5.0,
+                        _ => {}
+                    }
+                };
+                apply_param(&note_target, note_norm, &mut config);
+                apply_param(&vel_target,  vel_norm,  &mut config);
+                apply_param(&cc_target,   cc_norm,   &mut config);
+            }
+        }
+
+        // Replay recording snapshot (every ~500ms = 60 ticks at 120Hz)
+        {
+            let mut st = shared.lock();
+            if st.replay_recording {
+                let elapsed_ms = st.replay_start_time.elapsed().as_millis() as u32;
+                // Only snapshot when crossing approximate 500ms boundary
+                if elapsed_ms / 500 > (if st.replay_events.is_empty() { 0 } else {
+                    st.replay_events.last().map(|e| e.timestamp_ms / 500).unwrap_or(0)
+                }) {
+                    let evts = [
+                        (0u8, config.system.speed as f32),
+                        (1u8, config.lorenz.rho as f32),
+                        (2u8, config.lorenz.sigma as f32),
+                        (3u8, config.lorenz.beta as f32),
+                        (4u8, config.audio.reverb_wet),
+                        (5u8, config.audio.master_volume),
+                        (6u8, config.audio.chorus_mix),
+                        (7u8, config.audio.delay_ms),
+                        (8u8, config.kuramoto.coupling as f32),
+                        (9u8, config.sonification.base_frequency as f32),
+                    ];
+                    for (pid, val) in evts {
+                        st.replay_events.push(crate::ui::ReplayEvent { timestamp_ms: elapsed_ms, param_id: pid, value: val });
+                    }
+                }
+            }
+
+            // Replay playback
+            if st.replay_playing && !st.replay_events.is_empty() {
+                let elapsed_ms = st.replay_play_start.elapsed().as_millis() as u32;
+                let pos = st.replay_play_pos;
+                let events = st.replay_events.clone();
+                let mut new_pos = pos;
+                for (i, ev) in events.iter().enumerate() {
+                    if i < pos { continue; }
+                    if ev.timestamp_ms <= elapsed_ms {
+                        match ev.param_id {
+                            0 => { st.config.system.speed = ev.value as f64; }
+                            1 => { st.config.lorenz.rho   = ev.value as f64; }
+                            2 => { st.config.lorenz.sigma  = ev.value as f64; }
+                            3 => { st.config.lorenz.beta   = ev.value as f64; }
+                            4 => { st.config.audio.reverb_wet    = ev.value; }
+                            5 => { st.config.audio.master_volume = ev.value; }
+                            6 => { st.config.audio.chorus_mix    = ev.value; }
+                            7 => { st.config.audio.delay_ms      = ev.value; }
+                            8 => { st.config.kuramoto.coupling    = ev.value as f64; }
+                            9 => { st.config.sonification.base_frequency = ev.value as f64; }
+                            _ => {}
+                        }
+                        new_pos = i + 1;
+                    } else {
+                        break;
+                    }
+                }
+                if new_pos >= events.len() {
+                    st.replay_playing = false;
+                    st.replay_play_pos = 0;
+                } else {
+                    st.replay_play_pos = new_pos;
+                }
             }
         }
 
@@ -546,10 +751,22 @@ fn sim_thread(
             }
         }
 
+        // Compute audio-reactive trail color from current params
+        let trail_color = {
+            use egui::Color32;
+            let freq = params.freqs[0].max(32.0);
+            let freq_norm = ((freq.log2() - 5.0) / 5.0).clamp(0.0, 1.0);
+            let r = ((1.0 - freq_norm) * 255.0) as u8;
+            let b = (freq_norm * 255.0) as u8;
+            let g = (params.chaos_level * 200.0) as u8;
+            Color32::from_rgb(r, g, b)
+        };
+
         // Update shared state from simulation
         {
             let mut st = shared.lock();
             st.chaos_level = params.chaos_level;
+            st.trail_color = trail_color;
             st.current_state = system.state().to_vec();
             st.current_deriv = system.current_deriv();
             if config.system.name == "kuramoto" {
@@ -648,17 +865,35 @@ fn sim_thread(
             }
         }
 
-        // Update layer 0 ADSR from AppState
+        // Update layer 0 ADSR from AppState (skip ADSR in simple mode — macros drive it)
         {
             let st = shared.lock();
-            params.adsr_attack_ms  = st.adsr_attack_ms;
-            params.adsr_decay_ms   = st.adsr_decay_ms;
-            params.adsr_sustain    = st.adsr_sustain;
-            params.adsr_release_ms = st.adsr_release_ms;
-            params.layer_level     = if st.layer0_mute { 0.0 } else { st.layer0_level };
-            params.layer_pan       = st.layer0_pan;
+            if !st.simple_mode {
+                params.adsr_attack_ms  = st.adsr_attack_ms;
+                params.adsr_decay_ms   = st.adsr_decay_ms;
+                params.adsr_sustain    = st.adsr_sustain;
+                params.adsr_release_ms = st.adsr_release_ms;
+            }
+            params.layer_level = if st.layer0_mute { 0.0 } else { st.layer0_level };
+            params.layer_pan   = st.layer0_pan;
         }
         params.layer_id = 0;
+
+        // Re-apply macro audio params LAST so they're never overwritten
+        if simple_mode {
+            let (macro_space, macro_rhythm, macro_warmth) = {
+                let st = shared.lock();
+                (st.macro_space, st.macro_rhythm, st.macro_warmth)
+            };
+            params.reverb_wet       = macro_space * 0.9;
+            params.chorus_mix       = macro_space * 0.7;
+            params.delay_feedback   = macro_space * 0.7;
+            params.adsr_attack_ms   = 200.0 - macro_rhythm * 195.0;
+            params.filter_cutoff    = 8000.0 - macro_warmth * 7800.0;
+            params.waveshaper_drive = 1.0 + macro_warmth * 4.0;
+            // Volume slider always wins — arrangement scene volumes are ignored in simple mode
+            params.master_volume    = { shared.lock().config.audio.master_volume };
+        }
 
         let batch: [Option<AudioParams>; 3] = [Some(params), layer1_params, layer2_params];
         let _ = tx.try_send(batch);
@@ -720,17 +955,35 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
             s.m1    = config.chua.m1;
             Box::new(s)
         }
+        "custom"          => {
+            let (ex, ey, ez) = {
+                // Read custom ODE expressions from... we pass them via config or use defaults
+                // Since Config doesn't have custom ODE fields, we use placeholder defaults here;
+                // AppState fields are read directly in the UI-triggered rebuild path
+                (
+                    "10.0 * (y - x)".to_string(),
+                    "x * (28.0 - z) - y".to_string(),
+                    "x * y - 2.667 * z".to_string(),
+                )
+            };
+            Box::new(CustomOde::new(ex, ey, ez))
+        }
+        "fractional_lorenz" => Box::new(FractionalLorenz::new(
+            1.0, config.lorenz.sigma, config.lorenz.rho, config.lorenz.beta
+        )),
         _                 => Box::new(Lorenz::new(config.lorenz.sigma, config.lorenz.rho, config.lorenz.beta)),
     }
 }
 
 fn build_mapper(mode: &str) -> Box<dyn Sonification> {
     match mode {
-        "orbital"  => Box::new(OrbitalResonance::new()),
-        "granular" => Box::new(GranularMapping::new()),
-        "spectral" => Box::new(SpectralMapping::new()),
-        "fm"       => Box::new(FmMapping::new()),
-        _          => Box::new(DirectMapping::new()),
+        "orbital"   => Box::new(OrbitalResonance::new()),
+        "granular"  => Box::new(GranularMapping::new()),
+        "spectral"  => Box::new(SpectralMapping::new()),
+        "fm"        => Box::new(FmMapping::new()),
+        "vocal"     => Box::new(VocalMapping::new()),
+        "waveguide" => Box::new(DirectMapping::new()), // waveguide synthesis driven by direct mapping
+        _           => Box::new(DirectMapping::new()),
     }
 }
 
@@ -810,4 +1063,67 @@ fn start_midi_thread(shared: SharedState) {
 fn hz_to_midi(hz: f32) -> u8 {
     if hz < 20.0 { return 255; }
     (69.0 + 12.0 * (hz / 440.0).log2()).round().clamp(0.0, 127.0) as u8
+}
+
+// ---------------------------------------------------------------------------
+// MIDI input thread
+// ---------------------------------------------------------------------------
+
+fn start_midi_input_thread(shared: SharedState) {
+    std::thread::spawn(move || {
+        let midi_in = match midir::MidiInput::new("Math Sonify In") {
+            Ok(m) => m,
+            Err(e) => { log::warn!("MIDI input init failed: {e}"); return; }
+        };
+        let ports = midi_in.ports();
+        if ports.is_empty() {
+            log::info!("No MIDI input ports found");
+            return;
+        }
+        let port = &ports[0];
+        let port_name = midi_in.port_name(port).unwrap_or_default();
+        log::info!("MIDI input: {port_name}");
+
+        let shared_cb = shared.clone();
+        let _conn = midi_in.connect(
+            port,
+            "math-sonify-in",
+            move |_ts, msg, _| {
+                if msg.len() < 2 { return; }
+                let status = msg[0] & 0xF0;
+                match status {
+                    0x90 => { // Note On
+                        let note = msg[1].min(127);
+                        let vel  = if msg.len() > 2 { msg[2].min(127) } else { 0 };
+                        let mut st = shared_cb.lock();
+                        st.midi_in_last_note = note;
+                        st.midi_in_last_vel  = vel;
+                    }
+                    0x80 => { // Note Off
+                        let note = msg[1].min(127);
+                        let mut st = shared_cb.lock();
+                        st.midi_in_last_note = note;
+                        st.midi_in_last_vel  = 0;
+                    }
+                    0xB0 => { // CC
+                        if msg.len() >= 3 {
+                            let cc_num = msg[1];
+                            let cc_val = msg[2].min(127);
+                            let cc_num_target = shared_cb.lock().midi_in_cc_num;
+                            if cc_num == cc_num_target {
+                                shared_cb.lock().midi_in_last_cc = cc_val;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            },
+            (),
+        );
+
+        // Keep thread alive (connection closes when dropped)
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    });
 }

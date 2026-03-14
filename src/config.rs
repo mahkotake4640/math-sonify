@@ -253,7 +253,9 @@ impl Default for ChuaConfig {
 impl From<&str> for SonifMode {
     fn from(s: &str) -> Self {
         match s { "orbital" => Self::Orbital, "granular" => Self::Granular,
-                  "spectral" => Self::Spectral, "fm" => Self::FM, _ => Self::Direct }
+                  "spectral" => Self::Spectral, "fm" => Self::FM,
+                  "vocal" => Self::Vocal, "waveguide" => Self::Waveguide,
+                  _ => Self::Direct }
     }
 }
 

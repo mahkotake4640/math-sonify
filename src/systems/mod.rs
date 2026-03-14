@@ -1,4 +1,6 @@
 pub mod lorenz;
+pub mod custom_ode;
+pub mod fractional_lorenz;
 pub mod rossler;
 pub mod double_pendulum;
 pub mod geodesic_torus;
@@ -11,6 +13,8 @@ pub mod aizawa;
 pub mod chua;
 
 pub use lorenz::Lorenz;
+pub use custom_ode::{CustomOde, validate_exprs};
+pub use fractional_lorenz::FractionalLorenz;
 pub use rossler::Rossler;
 pub use double_pendulum::DoublePendulum;
 pub use geodesic_torus::GeodesicTorus;

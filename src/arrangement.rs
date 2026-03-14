@@ -8,6 +8,7 @@ pub struct Scene {
     pub hold_secs: f32,    // how long to stay at this scene's params
     pub morph_secs: f32,   // how long to morph FROM previous scene TO this one
     pub active: bool,
+    pub transition_prob: f32,  // relative probability weight for transitioning TO this scene
 }
 
 impl Scene {
@@ -18,6 +19,7 @@ impl Scene {
             hold_secs: 30.0,
             morph_secs: 8.0,
             active: false,
+            transition_prob: 1.0,
         }
     }
 }
@@ -125,104 +127,145 @@ fn lcg(seed: &mut u64) -> f64 {
 fn make_scene(name: &str, preset: &str, hold: f32, morph: f32, tweaks: impl FnOnce(&mut Config)) -> Scene {
     let mut cfg = load_preset(preset);
     tweaks(&mut cfg);
-    Scene { name: name.to_string(), config: cfg, hold_secs: hold, morph_secs: morph, active: true }
+    Scene { name: name.to_string(), config: cfg, hold_secs: hold, morph_secs: morph, active: true, transition_prob: 1.0 }
 }
 
 /// Generate a full arrangement for a given mood.
-/// Morphs are the feature — hold times are short (15-22s to establish),
-/// morph times are long (22-35s — that's where the music lives).
+/// Every call produces a unique combination of presets, modes, scales, and effects.
+/// Morphs are the feature — time is spent in transition, not in stasis.
 pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
     let mut rng = seed ^ 0xdeadbeef_cafebabe;
-    let jitter = |base: f32, rng: &mut u64| -> f32 { base + (lcg(rng) as f32 - 0.5) * base * 0.2 };
 
-    let scenes: Vec<Scene> = match mood {
-
-        "rhythmic" => vec![
-            make_scene("Pulse", "Duffing Rhythm", jitter(18.0, &mut rng), 0.0, |c| {
-                c.system.speed = 1.4;
-                c.audio.reverb_wet = 0.25;
-            }),
-            make_scene("Build", "Pendulum Rhythm", jitter(18.0, &mut rng), jitter(28.0, &mut rng), |c| {
-                c.system.speed = 2.0;
-                c.audio.chorus_mix = 0.3;
-                c.audio.delay_ms = 250.0;
-            }),
-            make_scene("Lock", "Kuramoto Sync", jitter(20.0, &mut rng), jitter(32.0, &mut rng), |c| {
-                c.kuramoto.coupling = 1.5;
-                c.system.speed = 1.2;
-                c.audio.reverb_wet = 0.4;
-            }),
-            make_scene("Scatter", "FM Chaos", jitter(16.0, &mut rng), jitter(30.0, &mut rng), |c| {
-                c.system.speed = 1.8;
-                c.audio.waveshaper_mix = 0.4;
-                c.audio.waveshaper_drive = 3.0;
-            }),
-            make_scene("Ground", "Torus Drone", jitter(22.0, &mut rng), jitter(28.0, &mut rng), |c| {
-                c.audio.reverb_wet = 0.65;
-                c.audio.chorus_mix = 0.5;
-                c.system.speed = 0.6;
-            }),
-        ],
-
-        "experimental" => vec![
-            make_scene("Strange", "Chua Grit", jitter(16.0, &mut rng), 0.0, |c| {
-                c.audio.bit_depth = 10.0;
-                c.system.speed = 1.5;
-            }),
-            make_scene("Scatter", "Halvorsen Spiral", jitter(18.0, &mut rng), jitter(35.0, &mut rng), |c| {
-                c.sonification.mode = "spectral".into();
-                c.audio.reverb_wet = 0.5;
-            }),
-            make_scene("Warp", "FM Chaos", jitter(16.0, &mut rng), jitter(30.0, &mut rng), |c| {
-                c.audio.waveshaper_mix = 0.6;
-                c.audio.waveshaper_drive = 5.0;
-                c.audio.rate_crush = 0.3;
-            }),
-            make_scene("Dissolve", "Rössler Drift", jitter(20.0, &mut rng), jitter(35.0, &mut rng), |c| {
-                c.sonification.mode = "granular".into();
-                c.audio.reverb_wet = 0.7;
-                c.system.speed = 0.5;
-            }),
-            make_scene("Void", "Torus Drone", jitter(20.0, &mut rng), jitter(30.0, &mut rng), |c| {
-                c.audio.reverb_wet = 0.8;
-                c.audio.delay_feedback = 0.6;
-                c.system.speed = 0.4;
-            }),
-        ],
-
-        // "ambient" — default
-        _ => vec![
-            make_scene("Intro", "Torus Drone", jitter(20.0, &mut rng), 0.0, |c| {
-                c.system.speed = 0.5;
-                c.audio.master_volume = 0.55;
-                c.audio.reverb_wet = 0.75;
-            }),
-            make_scene("Emerge", "Lorenz Ambience", jitter(18.0, &mut rng), jitter(30.0, &mut rng), |c| {
-                c.audio.chorus_mix = 0.35;
-                c.sonification.portamento_ms = 350.0;
-            }),
-            make_scene("Drift", "Pendulum Meditation", jitter(20.0, &mut rng), jitter(32.0, &mut rng), |c| {
-                c.audio.reverb_wet = 0.7;
-                c.audio.delay_ms = 600.0;
-            }),
-            make_scene("Rise", "Halvorsen Spiral", jitter(18.0, &mut rng), jitter(28.0, &mut rng), |c| {
-                c.system.speed = 1.1;
-                c.audio.chorus_mix = 0.4;
-                c.audio.reverb_wet = 0.6;
-            }),
-            make_scene("Return", "Torus Drone", jitter(22.0, &mut rng), jitter(30.0, &mut rng), |c| {
-                c.system.speed = 0.45;
-                c.audio.reverb_wet = 0.85;
-                c.audio.master_volume = 0.5;
-                c.sonification.portamento_ms = 500.0;
-            }),
-        ],
+    // LCG helpers
+    let rf = |rng: &mut u64| -> f32 { lcg(rng) as f32 };              // 0..1
+    let ri = |rng: &mut u64, n: usize| -> usize {                      // 0..n
+        (lcg(rng) * n as f64) as usize % n
+    };
+    let rrange = |rng: &mut u64, lo: f32, hi: f32| -> f32 {           // lo..hi
+        lo + rf(rng) * (hi - lo)
     };
 
-    // Pad unused slots with empty scenes
-    let mut result = scenes;
-    while result.len() < 8 {
-        result.push(Scene::empty(result.len()));
+    // Pick from a slice randomly
+    let pick = |rng: &mut u64, choices: &[&str]| -> String {
+        choices[ri(rng, choices.len())].to_string()
+    };
+
+    // Preset pools per mood (large enough that repeats are rare across 6 scenes)
+    let ambient_pool: &[&str] = &[
+        "Torus Drone", "Lorenz Ambience", "Pendulum Meditation", "Halvorsen Spiral",
+        "Deep Space Lorenz", "Nebula Torus", "Aizawa Nebula", "Halvorsen Void",
+        "Rössler Aurora", "Torus Om", "Rössler Tanpura", "Halvorsen Ohm",
+        "Torus Strings", "Aizawa Overture", "Three-Body Ballad",
+    ];
+    let rhythmic_pool: &[&str] = &[
+        "Duffing Rhythm", "Pendulum Rhythm", "Kuramoto Sync", "FM Chaos",
+        "Duffing Techno", "Van Der Pol Stomp", "Aizawa Dark Rave",
+        "Lorenz Arp", "Duffing Arp", "Kuramoto Arp", "Aizawa Cascade",
+        "Industrial Lorenz", "Chua Factory", "Duffing Bass",
+    ];
+    let experimental_pool: &[&str] = &[
+        "Chua Grit", "Halvorsen Spiral", "FM Chaos", "Rössler Drift",
+        "Lorenz Glitch", "Duffing Splice", "Chua Corrupt", "Pendulum Stutter", "Van Der Pol Mangle",
+        "Torus FM", "Lorenz Granular Cloud", "Chua Spectral Web",
+        "Pendulum Orbital Funk", "Three-Body Microtonal", "Three-Body Jazz",
+    ];
+
+    let pool = match mood {
+        "rhythmic"     => rhythmic_pool,
+        "experimental" => experimental_pool,
+        _              => ambient_pool,
+    };
+
+    // Sonification modes weighted by mood
+    let modes_ambient:       &[&str] = &["direct", "direct", "orbital", "spectral", "granular"];
+    let modes_rhythmic:      &[&str] = &["direct", "direct", "granular", "fm", "orbital"];
+    let modes_experimental:  &[&str] = &["spectral", "fm", "granular", "orbital", "direct"];
+    let mode_pool = match mood {
+        "rhythmic"     => modes_rhythmic,
+        "experimental" => modes_experimental,
+        _              => modes_ambient,
+    };
+
+    // Scale pools per mood
+    let scales_ambient:      &[&str] = &["pentatonic", "pentatonic", "just_intonation", "chromatic"];
+    let scales_rhythmic:     &[&str] = &["pentatonic", "chromatic", "chromatic", "just_intonation"];
+    let scales_experimental: &[&str] = &["microtonal", "chromatic", "just_intonation", "pentatonic"];
+    let scale_pool = match mood {
+        "rhythmic"     => scales_rhythmic,
+        "experimental" => scales_experimental,
+        _              => scales_ambient,
+    };
+
+    // Hold / morph time ranges per mood (morphs intentionally longer)
+    let (hold_lo, hold_hi, morph_lo, morph_hi) = match mood {
+        "rhythmic"     => (12.0f32, 20.0, 20.0f32, 32.0),
+        "experimental" => (10.0f32, 18.0, 25.0f32, 40.0),
+        _              => (15.0f32, 25.0, 25.0f32, 38.0),
+    };
+
+    // Pick 6 scenes with no two adjacent presets the same
+    let n_scenes = 6;
+    let mut chosen_presets: Vec<String> = Vec::with_capacity(n_scenes);
+    for _ in 0..n_scenes {
+        let mut attempts = 0;
+        loop {
+            let candidate = pick(&mut rng, pool);
+            let last = chosen_presets.last().map(|s| s.as_str()).unwrap_or("");
+            if candidate != last || attempts > 8 { chosen_presets.push(candidate); break; }
+            attempts += 1;
+        }
     }
-    result
+
+    // Scene name banks
+    let names_ambient:      &[&str] = &["Drift", "Emerge", "Float", "Breathe", "Dissolve", "Return", "Expand", "Recede"];
+    let names_rhythmic:     &[&str] = &["Pulse", "Build", "Lock", "Scatter", "Drive", "Release", "Surge", "Drop"];
+    let names_experimental: &[&str] = &["Fracture", "Warp", "Corrupt", "Scatter", "Void", "Strange", "Collapse", "Mutate"];
+    let name_pool = match mood {
+        "rhythmic"     => names_rhythmic,
+        "experimental" => names_experimental,
+        _              => names_ambient,
+    };
+
+    let mut scenes: Vec<Scene> = chosen_presets.iter().enumerate().map(|(i, preset)| {
+        let hold  = rrange(&mut rng, hold_lo, hold_hi);
+        let morph = if i == 0 { 0.0 } else { rrange(&mut rng, morph_lo, morph_hi) };
+        let mode  = pick(&mut rng, mode_pool);
+        let scale = pick(&mut rng, scale_pool);
+        // Randomize effects per scene
+        let reverb   = rrange(&mut rng, 0.35, 0.85);
+        let chorus   = rrange(&mut rng, 0.0, 0.55);
+        let delay_fb = rrange(&mut rng, 0.0, 0.6);
+        let delay_ms = rrange(&mut rng, 80.0, 700.0);
+        let porta    = rrange(&mut rng, 30.0, 600.0);
+        let speed_mult = rrange(&mut rng, 0.6, 1.8);
+        let name_idx = (i + ri(&mut rng, 3)) % name_pool.len();
+        let name = name_pool[name_idx];
+
+        make_scene(name, preset, hold, morph, move |c| {
+            c.sonification.mode  = mode;
+            c.sonification.scale = scale;
+            c.system.speed      *= speed_mult as f64;
+            c.audio.reverb_wet   = reverb;
+            c.audio.chorus_mix   = chorus;
+            c.audio.delay_feedback = delay_fb;
+            c.audio.delay_ms     = delay_ms;
+            c.sonification.portamento_ms = porta;
+        })
+    }).collect();
+
+    // For rhythmic mood, randomly enable bitcrusher on 1-2 scenes for texture
+    if mood == "rhythmic" || mood == "experimental" {
+        for scene in scenes.iter_mut() {
+            if rf(&mut rng) > 0.65 {
+                scene.config.audio.bit_depth  = rrange(&mut rng, 6.0, 14.0);
+                scene.config.audio.rate_crush = rrange(&mut rng, 0.0, 0.4);
+            }
+        }
+    }
+
+    // Pad to 8 slots
+    while scenes.len() < 8 {
+        scenes.push(Scene::empty(scenes.len()));
+    }
+    scenes
 }

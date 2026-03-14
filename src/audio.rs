@@ -12,7 +12,7 @@ use crossbeam_channel::Receiver;
 use crate::sonification::{AudioParams, SonifMode};
 use crate::synth::{
     Oscillator, OscShape, BiquadFilter, Freeverb, DelayLine, Limiter,
-    GrainEngine, Bitcrusher, KarplusStrong, Chorus, Waveshaper, Adsr,
+    GrainEngine, Bitcrusher, KarplusStrong, Chorus, Waveshaper, Adsr, WaveguideString,
 };
 
 pub type WavRecorder     = Arc<Mutex<Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>>>;
@@ -51,6 +51,14 @@ struct LayerSynth {
     level: f32,
     pan: f32,
     peak: f32,
+    // Vocal mode: 3 bandpass formant filters + noise phase
+    formant_filters: [BiquadFilter; 3],
+    noise_phase: f32,
+    vocal_osc_phase: f32,
+    // Waveguide physical model
+    waveguide: WaveguideString,
+    // Spectral freeze oscillators (up to 16 partials)
+    freeze_oscs: Vec<Oscillator>,
 }
 
 impl LayerSynth {
@@ -58,6 +66,13 @@ impl LayerSynth {
         Self {
             sr,
             oscs: std::array::from_fn(|i| Oscillator::new(110.0 * (i + 1) as f32, OscShape::Sine, sr)),
+            formant_filters: [
+                BiquadFilter::band_pass(800.0, 8.0, sr),
+                BiquadFilter::band_pass(1200.0, 8.0, sr),
+                BiquadFilter::band_pass(2500.0, 10.0, sr),
+            ],
+            noise_phase: 0.0,
+            vocal_osc_phase: 0.0,
             chord_oscs: [
                 Oscillator::new(220.0, OscShape::Sine, sr),
                 Oscillator::new(330.0, OscShape::Sine, sr),
@@ -80,6 +95,8 @@ impl LayerSynth {
             level: 1.0,
             pan: 0.0,
             peak: 0.0,
+            waveguide: WaveguideString::new(sr),
+            freeze_oscs: (0..16).map(|i| Oscillator::new(220.0 * (i + 1) as f32, OscShape::Sine, sr)).collect(),
         }
     }
 
@@ -114,6 +131,24 @@ impl LayerSynth {
             }
         }
         self.ks.volume = p.ks_volume;
+
+        // Waveguide update
+        self.waveguide.tension = p.waveguide_tension;
+        self.waveguide.damping = p.waveguide_damping;
+        if p.waveguide_excite && p.ks_freq > 20.0 {
+            self.waveguide.set_freq(p.ks_freq);
+            self.waveguide.excite = true;
+            self.waveguide.excite_pos = 0.3;
+        }
+
+        // Spectral freeze: update oscillator frequencies
+        if p.spectral_freeze_active {
+            for i in 0..16 {
+                if p.spectral_freeze_freqs[i] > 10.0 {
+                    self.freeze_oscs[i].freq = p.spectral_freeze_freqs[i];
+                }
+            }
+        }
     }
 
     /// Render one stereo sample for this layer (no master effects yet).
@@ -123,6 +158,26 @@ impl LayerSynth {
             SonifMode::Granular => self.grains.next_sample(),
             SonifMode::Spectral => self.synth_spectral(p),
             SonifMode::FM       => self.synth_fm(p),
+            SonifMode::Vocal    => self.synth_vocal(p),
+            SonifMode::Waveguide => {
+                let s = self.waveguide.next_sample() * p.gain;
+                (s, s)
+            }
+        };
+
+        // Spectral freeze: mix in frozen partials
+        let (raw_l, raw_r) = if p.spectral_freeze_active {
+            let mut freeze_sum = 0.0f32;
+            for i in 0..16 {
+                if p.spectral_freeze_freqs[i] > 10.0 {
+                    let s = self.freeze_oscs[i].next_sample() * p.spectral_freeze_amps[i];
+                    freeze_sum += s;
+                }
+            }
+            let freeze_out = freeze_sum * p.gain * 0.5;
+            (raw_l * 0.5 + freeze_out, raw_r * 0.5 + freeze_out)
+        } else {
+            (raw_l, raw_r)
         };
 
         // Karplus-Strong mixed before per-layer waveshaper
@@ -212,6 +267,39 @@ impl LayerSynth {
         self.fm_phase     = (self.fm_phase     + TAU * carrier  / self.sr).rem_euclid(TAU);
         let out = (self.fm_phase + p.fm_mod_index * self.fm_mod_phase.sin()).sin() * p.gain;
         (out, out)
+    }
+
+    fn synth_vocal(&mut self, p: &AudioParams) -> (f32, f32) {
+        use std::f32::consts::TAU;
+        // Glottal source: sawtooth at ~120 Hz (vocal fundamental)
+        let fundamental = 120.0f32;
+        self.vocal_osc_phase = (self.vocal_osc_phase + TAU * fundamental / self.sr).rem_euclid(TAU);
+        // Sawtooth wave as glottal source
+        let source = 1.0 - self.vocal_osc_phase / std::f32::consts::PI;
+
+        // Breathiness: noise mixed in (amps[3] encodes breathiness)
+        let breathiness = p.amps[3].clamp(0.0, 1.0);
+        // Simple pseudo-noise using phase accumulator trick
+        self.noise_phase += 1.0;
+        let noise_val = ((self.noise_phase * 1234.5678).sin() * 31.41).sin();
+        let excitation = source * (1.0 - breathiness) + noise_val * breathiness;
+
+        // Update formant filters to current formant frequencies
+        let q = 8.0f32;
+        let sr = self.sr;
+        for (i, freq) in [p.freqs[0], p.freqs[1], p.freqs[2]].iter().enumerate() {
+            let f = freq.clamp(100.0, sr * 0.45);
+            let new_filter = BiquadFilter::band_pass(f, q, sr);
+            self.formant_filters[i] = new_filter;
+        }
+
+        // Run excitation through each formant filter and mix with amplitude weighting
+        let f1_out = self.formant_filters[0].process(excitation) * p.amps[0];
+        let f2_out = self.formant_filters[1].process(excitation) * p.amps[1];
+        let f3_out = self.formant_filters[2].process(excitation) * p.amps[2];
+
+        let mono = (f1_out + f2_out + f3_out) * p.gain;
+        (mono, mono)
     }
 }
 
