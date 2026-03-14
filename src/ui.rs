@@ -149,6 +149,57 @@ fn apply_theme(ctx: &Context, theme: &str) {
     ctx.set_visuals(visuals);
 }
 
+fn system_display_name(s: &str) -> &'static str {
+    match s {
+        "lorenz" => "Lorenz Attractor",
+        "rossler" => "Rossler Attractor",
+        "double_pendulum" => "Double Pendulum",
+        "geodesic_torus" => "Geodesic Torus",
+        "kuramoto" => "Kuramoto Oscillators",
+        "three_body" => "Three-Body Problem",
+        _ => "Unknown System",
+    }
+}
+
+fn system_internal_name(display: &str) -> &'static str {
+    match display {
+        "Lorenz Attractor" => "lorenz",
+        "Rossler Attractor" => "rossler",
+        "Double Pendulum" => "double_pendulum",
+        "Geodesic Torus" => "geodesic_torus",
+        "Kuramoto Oscillators" => "kuramoto",
+        "Three-Body Problem" => "three_body",
+        _ => "lorenz",
+    }
+}
+
+fn scale_description(scale: &str) -> &'static str {
+    match scale {
+        "pentatonic" => "5 notes — always sounds musical",
+        "chromatic" => "All 12 semitones — more dissonant",
+        "just_intonation" => "Pure harmonic ratios — warm and consonant",
+        "microtonal" => "Quarter-tones — alien and otherworldly",
+        _ => "",
+    }
+}
+
+fn mode_tooltip(mode: &str) -> &'static str {
+    match mode {
+        "direct" => "Maps attractor position directly to pitch",
+        "orbital" => "Angular velocity = pitch, chaos = inharmonicity",
+        "granular" => "Speed drives grain density and texture",
+        "spectral" => "State vector shapes a 32-harmonic spectrum",
+        "fm" => "Frequency modulation — chaos drives the mod index",
+        _ => "",
+    }
+}
+
+fn section_header(ui: &mut Ui, label: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(label).size(13.0).color(Color32::from_rgb(120, 180, 255)).strong());
+    ui.add_space(2.0);
+}
+
 /// Draw the full UI. Called each egui frame.
 pub fn draw_ui(
     ctx: &Context,
@@ -204,138 +255,130 @@ pub fn draw_ui(
             });
 
             ui.separator();
+            ui.add_space(4.0);
+
+            // ---- ALWAYS VISIBLE: Volume + Chaos + Pause ----
+            ui.add(Slider::new(&mut st.config.audio.master_volume, 0.0..=1.0).text("Volume"));
+
+            let chaos = st.chaos_level;
+            let chaos_color = lerp_color(
+                Color32::from_rgb(0, 80, 180),
+                Color32::from_rgb(220, 40, 40),
+                chaos,
+            );
+            ui.add(
+                ProgressBar::new(chaos)
+                    .text(format!("Chaos Level  {:.0}%", chaos * 100.0))
+                    .fill(chaos_color)
+            );
+
+            let pause_label = if st.paused { "▶  Resume" } else { "⏸  Pause" };
+            let btn = Button::new(pause_label)
+                .fill(Color32::from_rgb(0, 90, 160))
+                .min_size(Vec2::new(ui.available_width(), 26.0));
+            if ui.add(btn).clicked() {
+                st.paused = !st.paused;
+            }
+
+            ui.add_space(6.0);
+            ui.separator();
 
             // ---- PRESETS ----
-            CollapsingHeader::new("PRESETS").default_open(true).show(ui, |ui| {
-                let preset_names: Vec<&str> = PRESETS.iter().map(|p| p.name).collect();
-                let sel = st.selected_preset.clone();
-                ComboBox::from_label("Preset")
-                    .selected_text(&sel)
-                    .show_ui(ui, |ui| {
-                        for name in &preset_names {
-                            if ui.selectable_label(sel == *name, *name).clicked() {
-                                st.selected_preset = name.to_string();
-                            }
-                        }
+            CollapsingHeader::new(
+                RichText::new("PRESETS").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(true).show(ui, |ui| {
+                ui.colored_label(Color32::from_rgb(180, 160, 80), "▶ Click a preset below to begin");
+                ui.add_space(4.0);
+
+                let selected = st.selected_preset.clone();
+                for preset in PRESETS.iter() {
+                    let is_selected = selected == preset.name;
+                    let border_color = if is_selected {
+                        Color32::from_rgb(0, 180, 255)
+                    } else {
+                        Color32::from_rgb(40, 40, 70)
+                    };
+                    let bg_color = if is_selected {
+                        Color32::from_rgb(0, 40, 80)
+                    } else {
+                        Color32::from_rgb(22, 22, 38)
+                    };
+
+                    let frame = egui::Frame::none()
+                        .fill(bg_color)
+                        .stroke(egui::Stroke::new(if is_selected { 2.0 } else { 1.0 }, border_color))
+                        .inner_margin(egui::Margin::same(6.0))
+                        .outer_margin(egui::Margin::symmetric(0.0, 2.0))
+                        .rounding(egui::Rounding::same(4.0));
+
+                    let response = frame.show(ui, |ui| {
+                        ui.set_min_width(ui.available_width() - 4.0);
+                        ui.label(RichText::new(preset.name).strong().size(12.0));
+                        ui.label(RichText::new(preset.description).italics().small().color(Color32::from_rgb(140, 160, 200)));
                     });
-                if ui.button("Load Preset").clicked() {
-                    st.config = load_preset(&st.selected_preset.clone());
-                    st.system_changed = true;
-                    st.mode_changed = true;
-                }
-                if let Some(p) = PRESETS.iter().find(|p| p.name == st.selected_preset.as_str()) {
-                    ui.label(egui::RichText::new(p.description).italics().color(Color32::from_rgb(140, 160, 200)));
+
+                    if response.response.interact(Sense::click()).clicked() {
+                        st.selected_preset = preset.name.to_string();
+                        st.config = load_preset(preset.name);
+                        st.system_changed = true;
+                        st.mode_changed = true;
+                    }
                 }
             });
 
+            ui.add_space(6.0);
             ui.separator();
 
-            // ---- PATCHES ----
-            CollapsingHeader::new("PATCHES").default_open(false).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(TextEdit::singleline(&mut st.patch_name_input).desired_width(140.0).hint_text("Patch name..."));
-                    if ui.button("Save").clicked() {
-                        let name = st.patch_name_input.clone();
-                        if !name.is_empty() {
-                            save_patch(&name, &st.config);
-                            st.patch_list = list_patches();
+            // ---- SOUND ----
+            CollapsingHeader::new(
+                RichText::new("SOUND").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(true).show(ui, |ui| {
+
+                // Mode buttons with tooltips
+                ui.label(RichText::new("Sonification Mode").small().color(Color32::from_rgb(160, 170, 200)));
+                let modes = ["direct", "orbital", "granular", "spectral", "fm"];
+                let current_mode = st.config.sonification.mode.clone();
+                ui.horizontal_wrapped(|ui| {
+                    for m in &modes {
+                        let selected = current_mode == *m;
+                        let color = if selected { Color32::from_rgb(0, 150, 220) } else { Color32::from_rgb(40, 40, 70) };
+                        let resp = ui.add(Button::new(*m).fill(color).min_size(Vec2::new(55.0, 22.0)));
+                        if resp.clicked() {
+                            st.config.sonification.mode = m.to_string();
+                            st.mode_changed = true;
                         }
+                        resp.on_hover_text(mode_tooltip(m));
                     }
                 });
                 ui.add_space(4.0);
-                let patches = st.patch_list.clone();
-                if patches.is_empty() {
-                    ui.label(RichText::new("No patches saved yet").color(Color32::from_rgb(100, 100, 120)).small());
-                } else {
-                    for patch_name in &patches {
-                        if ui.button(patch_name).clicked() {
-                            if let Some(cfg) = load_patch_file(patch_name) {
-                                st.config = cfg;
-                                st.system_changed = true;
-                                st.mode_changed = true;
-                            }
-                        }
-                    }
-                }
-            });
 
-            ui.separator();
-
-            // ---- SYSTEM ----
-            CollapsingHeader::new("SYSTEM").default_open(true).show(ui, |ui| {
-                let systems = ["lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body"];
-                let current_sys = st.config.system.name.clone();
-                ComboBox::from_label("System")
-                    .selected_text(&current_sys)
+                // Scale
+                let scales = ["pentatonic", "chromatic", "just_intonation", "microtonal"];
+                let current_scale = st.config.sonification.scale.clone();
+                ComboBox::from_label("Scale")
+                    .selected_text(&current_scale)
                     .show_ui(ui, |ui| {
-                        for s in &systems {
-                            if ui.selectable_label(current_sys == *s, *s).clicked() {
-                                st.config.system.name = s.to_string();
-                                st.system_changed = true;
+                        for s in &scales {
+                            if ui.selectable_label(current_scale == *s, *s).clicked() {
+                                st.config.sonification.scale = s.to_string();
                             }
                         }
                     });
-
-                ui.add(Slider::new(&mut st.config.system.dt, 0.0001..=0.01).text("dt").logarithmic(true));
-                ui.add(Slider::new(&mut st.config.system.speed, 0.1..=10.0).text("Speed"));
-
-                CollapsingHeader::new("System Parameters").default_open(false).show(ui, |ui| {
-                    match st.config.system.name.as_str() {
-                        "lorenz" => {
-                            ui.add(Slider::new(&mut st.config.lorenz.sigma, 1.0..=20.0).text("σ"));
-                            ui.add(Slider::new(&mut st.config.lorenz.rho,   10.0..=50.0).text("ρ"));
-                            ui.add(Slider::new(&mut st.config.lorenz.beta,  0.5..=5.0).text("β"));
-                        }
-                        "rossler" => {
-                            ui.add(Slider::new(&mut st.config.rossler.a, 0.01..=0.5).text("a"));
-                            ui.add(Slider::new(&mut st.config.rossler.b, 0.01..=0.5).text("b"));
-                            ui.add(Slider::new(&mut st.config.rossler.c, 1.0..=15.0).text("c"));
-                        }
-                        "double_pendulum" => {
-                            ui.add(Slider::new(&mut st.config.double_pendulum.m1, 0.1..=5.0).text("m₁"));
-                            ui.add(Slider::new(&mut st.config.double_pendulum.m2, 0.1..=5.0).text("m₂"));
-                            ui.add(Slider::new(&mut st.config.double_pendulum.l1, 0.1..=3.0).text("l₁"));
-                            ui.add(Slider::new(&mut st.config.double_pendulum.l2, 0.1..=3.0).text("l₂"));
-                        }
-                        "geodesic_torus" => {
-                            ui.add(Slider::new(&mut st.config.geodesic_torus.big_r, 1.0..=8.0).text("R"));
-                            ui.add(Slider::new(&mut st.config.geodesic_torus.r,     0.1..=3.0).text("r"));
-                        }
-                        "kuramoto" => {
-                            ui.add(Slider::new(&mut st.config.kuramoto.coupling, 0.0..=5.0).text("K (coupling)"));
-                        }
-                        _ => {}
-                    }
-                });
-
-                // Randomize button
-                if ui.button("🎲 Randomize").clicked() {
-                    let mut seed = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .subsec_nanos() as u64;
-                    let vary = |v: f64, s: &mut u64| v * (0.8 + lcg_rand(s) * 0.4);
-                    match st.config.system.name.as_str() {
-                        "lorenz" => {
-                            st.config.lorenz.sigma = vary(st.config.lorenz.sigma, &mut seed).clamp(1.0, 20.0);
-                            st.config.lorenz.rho   = vary(st.config.lorenz.rho,   &mut seed).clamp(10.0, 50.0);
-                            st.config.lorenz.beta  = vary(st.config.lorenz.beta,  &mut seed).clamp(0.5, 5.0);
-                        }
-                        "rossler" => {
-                            st.config.rossler.a = vary(st.config.rossler.a, &mut seed).clamp(0.01, 0.5);
-                            st.config.rossler.b = vary(st.config.rossler.b, &mut seed).clamp(0.01, 0.5);
-                            st.config.rossler.c = vary(st.config.rossler.c, &mut seed).clamp(1.0, 15.0);
-                        }
-                        "kuramoto" => {
-                            st.config.kuramoto.coupling = vary(st.config.kuramoto.coupling, &mut seed).clamp(0.0, 5.0);
-                        }
-                        _ => {}
-                    }
-                    st.system_changed = true;
+                // Scale description below combo
+                let desc = scale_description(&current_scale);
+                if !desc.is_empty() {
+                    ui.label(RichText::new(desc).italics().small().color(Color32::from_rgb(130, 160, 130)));
                 }
 
-                // LFO / Auto-Wander
-                CollapsingHeader::new("Auto-Wander (LFO)").default_open(false).show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.add(Slider::new(&mut st.config.sonification.base_frequency, 55.0..=880.0)
+                    .text("Root Hz").logarithmic(true));
+                ui.add(Slider::new(&mut st.config.sonification.octave_range, 1.0..=6.0).text("Octave Range"));
+
+                ui.add_space(6.0);
+
+                // ---- AUTO-WANDER inside SOUND ----
+                CollapsingHeader::new("AUTO-WANDER").default_open(false).show(ui, |ui| {
                     ui.checkbox(&mut st.lfo_enabled, "Enable LFO");
                     ui.add(Slider::new(&mut st.lfo_rate, 0.01..=2.0).text("Rate Hz").logarithmic(true));
                     ui.add(Slider::new(&mut st.lfo_depth, 0.0..=1.0).text("Depth"));
@@ -353,44 +396,13 @@ pub fn draw_ui(
                 });
             });
 
+            ui.add_space(6.0);
             ui.separator();
 
-            // ---- SONIFICATION ----
-            CollapsingHeader::new("SONIFICATION").default_open(true).show(ui, |ui| {
-                let modes = ["direct", "orbital", "granular", "spectral", "fm"];
-                let current_mode = st.config.sonification.mode.clone();
-                ui.horizontal_wrapped(|ui| {
-                    for m in &modes {
-                        let selected = current_mode == *m;
-                        let color = if selected { Color32::from_rgb(0, 150, 220) } else { Color32::from_rgb(40, 40, 70) };
-                        if ui.add(Button::new(*m).fill(color).min_size(Vec2::new(55.0, 22.0))).clicked() {
-                            st.config.sonification.mode = m.to_string();
-                            st.mode_changed = true;
-                        }
-                    }
-                });
-
-                let scales = ["pentatonic", "chromatic", "just_intonation", "microtonal"];
-                let current_scale = st.config.sonification.scale.clone();
-                ComboBox::from_label("Scale")
-                    .selected_text(&current_scale)
-                    .show_ui(ui, |ui| {
-                        for s in &scales {
-                            if ui.selectable_label(current_scale == *s, *s).clicked() {
-                                st.config.sonification.scale = s.to_string();
-                            }
-                        }
-                    });
-
-                ui.add(Slider::new(&mut st.config.sonification.base_frequency, 55.0..=880.0)
-                    .text("Root Hz").logarithmic(true));
-                ui.add(Slider::new(&mut st.config.sonification.octave_range, 1.0..=6.0).text("Octave Range"));
-            });
-
-            ui.separator();
-
-            // ---- HARMONY ----
-            CollapsingHeader::new("HARMONY").default_open(true).show(ui, |ui| {
+            // ---- MELODY & CHORDS ----
+            CollapsingHeader::new(
+                RichText::new("MELODY & CHORDS").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(true).show(ui, |ui| {
                 let chord_modes = ["none", "major", "minor", "power", "sus2", "octave", "dom7"];
                 let current_chord = st.config.sonification.chord_mode.clone();
                 ComboBox::from_label("Chord Mode")
@@ -436,10 +448,13 @@ pub fn draw_ui(
                 }
             });
 
+            ui.add_space(6.0);
             ui.separator();
 
-            // ---- EFFECTS ----
-            CollapsingHeader::new("EFFECTS").default_open(false).show(ui, |ui| {
+            // ---- EFFECTS & TEXTURE ----
+            CollapsingHeader::new(
+                RichText::new("EFFECTS & TEXTURE").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(false).show(ui, |ui| {
                 ui.add(Slider::new(&mut st.config.audio.reverb_wet, 0.0..=1.0).text("Reverb"));
                 ui.add(Slider::new(&mut st.config.audio.delay_ms, 0.0..=1000.0).text("Delay ms"));
                 ui.add(Slider::new(&mut st.config.audio.delay_feedback, 0.0..=0.95).text("Delay FB"));
@@ -465,26 +480,109 @@ pub fn draw_ui(
                 ui.add(Slider::new(&mut st.config.audio.rate_crush, 0.0..=1.0).text("Rate Crush"));
             });
 
+            ui.add_space(6.0);
             ui.separator();
 
-            // ---- MASTER ----
-            CollapsingHeader::new("MASTER").default_open(true).show(ui, |ui| {
-                ui.add(Slider::new(&mut st.config.audio.master_volume, 0.0..=1.0).text("Volume"));
+            // ---- PHYSICS ENGINE ----
+            CollapsingHeader::new(
+                RichText::new("PHYSICS ENGINE").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(true).show(ui, |ui| {
+                let systems_internal = ["lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body"];
+                let systems_display: Vec<&str> = systems_internal.iter().map(|s| system_display_name(s)).collect();
+                let current_sys = st.config.system.name.clone();
+                let current_display = system_display_name(&current_sys);
+                ComboBox::from_label("System")
+                    .selected_text(current_display)
+                    .show_ui(ui, |ui| {
+                        for disp in &systems_display {
+                            let internal = system_internal_name(disp);
+                            if ui.selectable_label(current_sys == internal, *disp).clicked() {
+                                st.config.system.name = internal.to_string();
+                                st.system_changed = true;
+                            }
+                        }
+                    });
 
-                let pause_label = if st.paused { "▶  Resume" } else { "⏸  Pause" };
-                let btn = Button::new(pause_label)
-                    .fill(Color32::from_rgb(0, 90, 160))
-                    .min_size(Vec2::new(200.0, 32.0));
-                if ui.add(btn).clicked() {
-                    st.paused = !st.paused;
+                ui.add(Slider::new(&mut st.config.system.dt, 0.0001..=0.01).text("dt").logarithmic(true));
+                ui.add(Slider::new(&mut st.config.system.speed, 0.1..=10.0).text("Speed"));
+
+                CollapsingHeader::new("System Parameters").default_open(false).show(ui, |ui| {
+                    match st.config.system.name.as_str() {
+                        "lorenz" => {
+                            let r = ui.add(Slider::new(&mut st.config.lorenz.sigma, 1.0..=20.0).text("σ"));
+                            r.on_hover_text("Turbulence — higher = more chaotic");
+                            let r = ui.add(Slider::new(&mut st.config.lorenz.rho, 10.0..=50.0).text("ρ"));
+                            r.on_hover_text("Chaos threshold — above ~24 = butterfly attractor");
+                            let r = ui.add(Slider::new(&mut st.config.lorenz.beta, 0.5..=5.0).text("β"));
+                            r.on_hover_text("Damping — lower = wilder oscillations");
+                        }
+                        "rossler" => {
+                            let r = ui.add(Slider::new(&mut st.config.rossler.a, 0.01..=0.5).text("a"));
+                            r.on_hover_text("Spiral tightness");
+                            ui.add(Slider::new(&mut st.config.rossler.b, 0.01..=0.5).text("b"));
+                            let r = ui.add(Slider::new(&mut st.config.rossler.c, 1.0..=15.0).text("c"));
+                            r.on_hover_text("Chaos onset — above ~5.7 = chaotic");
+                        }
+                        "double_pendulum" => {
+                            ui.add(Slider::new(&mut st.config.double_pendulum.m1, 0.1..=5.0).text("m₁"));
+                            ui.add(Slider::new(&mut st.config.double_pendulum.m2, 0.1..=5.0).text("m₂"));
+                            ui.add(Slider::new(&mut st.config.double_pendulum.l1, 0.1..=3.0).text("l₁"));
+                            ui.add(Slider::new(&mut st.config.double_pendulum.l2, 0.1..=3.0).text("l₂"));
+                        }
+                        "geodesic_torus" => {
+                            let r = ui.add(Slider::new(&mut st.config.geodesic_torus.big_r, 1.0..=8.0).text("R"));
+                            r.on_hover_text("Torus major radius");
+                            let r = ui.add(Slider::new(&mut st.config.geodesic_torus.r, 0.1..=3.0).text("r"));
+                            r.on_hover_text("Torus tube radius");
+                        }
+                        "kuramoto" => {
+                            let r = ui.add(Slider::new(&mut st.config.kuramoto.coupling, 0.0..=5.0).text("K (coupling)"));
+                            r.on_hover_text("Coupling — drag up from 0 to hear synchronization happen");
+                        }
+                        _ => {}
+                    }
+                });
+
+                // Randomize button
+                if ui.button("🎲 Randomize").clicked() {
+                    let mut seed = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos() as u64;
+                    let vary = |v: f64, s: &mut u64| v * (0.8 + lcg_rand(s) * 0.4);
+                    match st.config.system.name.as_str() {
+                        "lorenz" => {
+                            st.config.lorenz.sigma = vary(st.config.lorenz.sigma, &mut seed).clamp(1.0, 20.0);
+                            st.config.lorenz.rho   = vary(st.config.lorenz.rho,   &mut seed).clamp(10.0, 50.0);
+                            st.config.lorenz.beta  = vary(st.config.lorenz.beta,  &mut seed).clamp(0.5, 5.0);
+                        }
+                        "rossler" => {
+                            st.config.rossler.a = vary(st.config.rossler.a, &mut seed).clamp(0.01, 0.5);
+                            st.config.rossler.b = vary(st.config.rossler.b, &mut seed).clamp(0.01, 0.5);
+                            st.config.rossler.c = vary(st.config.rossler.c, &mut seed).clamp(1.0, 15.0);
+                        }
+                        "kuramoto" => {
+                            st.config.kuramoto.coupling = vary(st.config.kuramoto.coupling, &mut seed).clamp(0.0, 5.0);
+                        }
+                        _ => {}
+                    }
+                    st.system_changed = true;
                 }
+            });
 
+            ui.add_space(6.0);
+            ui.separator();
+
+            // ---- OUTPUT & RECORD ----
+            CollapsingHeader::new(
+                RichText::new("OUTPUT & RECORD").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(true).show(ui, |ui| {
                 ui.add_space(4.0);
 
                 // Record WAV button
                 let st_sample_rate = st.sample_rate;
                 let is_recording = recording.try_lock().map(|r| r.is_some()).unwrap_or(false);
-                let rec_label = if is_recording { "⏹  Stop Recording" } else { "⏺  Record WAV" };
+                let rec_label = if is_recording { "⏹  Stop & Save" } else { "⏺  Start Recording" };
                 let rec_color = if is_recording { Color32::from_rgb(180, 30, 30) } else { Color32::from_rgb(30, 120, 30) };
                 if ui.add(Button::new(rec_label).fill(rec_color).min_size(Vec2::new(200.0, 32.0))).clicked() {
                     if is_recording {
@@ -528,13 +626,16 @@ pub fn draw_ui(
                         });
 
                     let is_exporting = loop_export.try_lock().map(|p| p.is_some()).unwrap_or(false);
-                    let export_label = if is_exporting { "Exporting..." } else { "Export Loop" };
+                    let export_label = if is_exporting {
+                        "Exporting...".to_string()
+                    } else {
+                        format!("Export {}-Bar Loop", st.loop_bars)
+                    };
                     let export_color = if is_exporting { Color32::from_rgb(180, 120, 0) } else { Color32::from_rgb(0, 100, 100) };
                     if !is_exporting && ui.add(Button::new(export_label).fill(export_color)).clicked() {
                         let bars = st.loop_bars;
                         let bpm = st.bpm;
                         let sr = st.sample_rate;
-                        // total samples = bars * beats_per_bar(4) * seconds_per_beat * sample_rate
                         let total_samples = ((bars as f64 * 4.0 * 60.0 / bpm as f64) * sr as f64) as u64;
                         if let Some(mut lock) = loop_export.try_lock() {
                             *lock = Some(total_samples);
@@ -544,8 +645,29 @@ pub fn draw_ui(
 
                 ui.add_space(4.0);
 
+                // Save Config button
+                if ui.add(Button::new("💾  Save as Default").fill(Color32::from_rgb(40, 60, 40)).min_size(Vec2::new(200.0, 28.0))).clicked() {
+                    let toml_str = toml::to_string_pretty(&st.config).unwrap_or_default();
+                    let _ = std::fs::write("config.toml", toml_str);
+                }
+
+                ui.add_space(4.0);
+
+                ui.label(RichText::new("Space: pause  |  ↑↓: volume  |  ←→: speed  |  1-5: tabs")
+                    .small()
+                    .color(Color32::from_rgb(90, 100, 130)));
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+
+            // ---- PERFORMANCE (Automation + MIDI) ----
+            CollapsingHeader::new(
+                RichText::new("PERFORMANCE").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(false).show(ui, |ui| {
+
                 // Automation
-                CollapsingHeader::new("Automate").default_open(false).show(ui, |ui| {
+                CollapsingHeader::new("Automation Rec/Play").default_open(false).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let rec_color = if st.auto_recording { Color32::from_rgb(180, 30, 30) } else { Color32::from_rgb(60, 40, 40) };
                         if ui.add(Button::new("⏺ Rec").fill(rec_color).min_size(Vec2::new(50.0, 24.0))).clicked() {
@@ -583,38 +705,49 @@ pub fn draw_ui(
 
                 ui.add_space(4.0);
 
-                // Save Config button
-                if ui.add(Button::new("💾  Save Config").fill(Color32::from_rgb(40, 60, 40)).min_size(Vec2::new(200.0, 28.0))).clicked() {
-                    let toml_str = toml::to_string_pretty(&st.config).unwrap_or_default();
-                    let _ = std::fs::write("config.toml", toml_str);
-                }
-
-                ui.add_space(4.0);
-
-                // MIDI toggle
-                ui.checkbox(&mut st.midi_enabled, "MIDI Output");
-                if st.midi_enabled {
-                    ui.label(RichText::new("Sending to first MIDI port").small().color(Color32::from_rgb(100, 200, 100)));
-                }
-
-                ui.add_space(8.0);
-                let chaos = st.chaos_level;
-                let chaos_color = lerp_color(
-                    Color32::from_rgb(0, 80, 180),
-                    Color32::from_rgb(220, 40, 40),
-                    chaos,
-                );
-                ui.add(
-                    ProgressBar::new(chaos)
-                        .text(format!("Chaos  {:.0}%", chaos * 100.0))
-                        .fill(chaos_color)
-                );
-
-                ui.add_space(4.0);
-                ui.label(RichText::new("Space: pause  |  ↑↓: volume  |  ←→: speed  |  1-5: tabs")
-                    .small()
-                    .color(Color32::from_rgb(90, 100, 130)));
+                // MIDI
+                CollapsingHeader::new("MIDI").default_open(false).show(ui, |ui| {
+                    ui.checkbox(&mut st.midi_enabled, "MIDI Output");
+                    if st.midi_enabled {
+                        ui.label(RichText::new("Sending to first MIDI port").small().color(Color32::from_rgb(100, 200, 100)));
+                    }
+                });
             });
+
+            ui.add_space(6.0);
+            ui.separator();
+
+            // ---- MY PATCHES ----
+            CollapsingHeader::new(
+                RichText::new("MY PATCHES").size(13.0).color(Color32::from_rgb(120, 180, 255)).strong()
+            ).default_open(false).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(TextEdit::singleline(&mut st.patch_name_input).desired_width(140.0).hint_text("Patch name..."));
+                    if ui.button("Save").clicked() {
+                        let name = st.patch_name_input.clone();
+                        if !name.is_empty() {
+                            save_patch(&name, &st.config);
+                            st.patch_list = list_patches();
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                let patches = st.patch_list.clone();
+                if patches.is_empty() {
+                    ui.label(RichText::new("No patches saved yet").color(Color32::from_rgb(100, 100, 120)).small());
+                } else {
+                    for patch_name in &patches {
+                        if ui.button(patch_name).clicked() {
+                            if let Some(cfg) = load_patch_file(patch_name) {
+                                st.config = cfg;
+                                st.system_changed = true;
+                                st.mode_changed = true;
+                            }
+                        }
+                    }
+                }
+            });
+
         });
     });
 
@@ -672,7 +805,6 @@ pub fn draw_ui(
                 let compute_color = if computing { Color32::from_rgb(100, 60, 0) } else { Color32::from_rgb(0, 80, 120) };
                 if !computing && ui.add(Button::new("Compute").fill(compute_color)).clicked() {
                     st.bifurc_computing = true;
-                    // Start computation in background thread
                     let param = st.bifurc_param.clone();
                     let sys_name = st.config.system.name.clone();
                     let lorenz_cfg = st.config.lorenz.clone();
@@ -687,9 +819,7 @@ pub fn draw_ui(
                         for i in 0..steps {
                             let pval = pmin + (pmax - pmin) * i as f64 / (steps - 1) as f64;
                             let mut sys: Box<dyn DynamicalSystem> = build_bifurc_system(&sys_name, &param, pval, &lorenz_cfg, &rossler_cfg, &kuramoto_cfg);
-                            // Warmup
                             for _ in 0..2000 { sys.step(0.005); }
-                            // Record
                             for _ in 0..100 {
                                 sys.step(0.005);
                                 let state_v = sys.state();
