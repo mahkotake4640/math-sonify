@@ -1138,7 +1138,8 @@ fn sim_thread(
         // Apply empathy nudge to macro_chaos (extremely subtle, only when walk is on)
         let macro_walk_enabled_emp = { shared.lock().macro_walk_enabled };
         if macro_walk_enabled_emp && empathy_nudge.abs() > 0.0 {
-            shared.lock().macro_chaos = (shared.lock().macro_chaos + empathy_nudge).clamp(0.05, 0.95);
+            let mut st = shared.lock();
+            st.macro_chaos = (st.macro_chaos + empathy_nudge).clamp(0.05, 0.95);
         }
 
         // Coupled attractor: rebuild if source changed or enabled state changed
@@ -1228,11 +1229,16 @@ fn sim_thread(
                 }
                 let speed_norm = (system.speed() as f32 / 100.0).clamp(0.0, 1.0);
                 let z = if state.len() >= 3 { state[2] as f32 } else { 0.0 };
-                let prev_z = vh.last().map(|p| p.2).unwrap_or(0.0);
-                let mean_z_approx = 25.0f32;
-                let is_crossing = prev_z < mean_z_approx && z >= mean_z_approx;
-                is_poincare_crossing = is_crossing;
-                vh.push((state[0] as f32, state[1] as f32, z, speed_norm, is_crossing));
+                let sx = state[0] as f32;
+                let sy = state[1] as f32;
+                // NaN/inf guard: skip viz push if state diverged
+                if sx.is_finite() && sy.is_finite() {
+                    let prev_z = vh.last().map(|p| p.2).unwrap_or(0.0);
+                    let mean_z_approx = 25.0f32;
+                    let is_crossing = prev_z < mean_z_approx && z >= mean_z_approx;
+                    is_poincare_crossing = is_crossing;
+                    vh.push((sx, sy, z, speed_norm, is_crossing));
+                }
             }
         }
 
