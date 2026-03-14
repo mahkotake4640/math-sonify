@@ -130,6 +130,26 @@ fn make_scene(name: &str, preset: &str, hold: f32, morph: f32, tweaks: impl FnOn
     Scene { name: name.to_string(), config: cfg, hold_secs: hold, morph_secs: morph, active: true, transition_prob: 1.0 }
 }
 
+/// A hardcoded 3-minute demo piece showcasing the best sounds.
+pub fn demo_arrangement() -> Vec<Scene> {
+    let mut scenes: Vec<Scene> = vec![
+        make_scene("Opening",         "Midnight Approach",    25.0, 0.0,  |_| {}),
+        make_scene("The Emergence",   "The Phase Transition", 20.0, 30.0, |c| {
+            c.kuramoto.coupling = 1.0;
+        }),
+        make_scene("Turbulence",      "Frozen Machinery",     15.0, 25.0, |_| {}),
+        make_scene("The Turn",        "Glass Harp",           20.0, 28.0, |_| {}),
+        make_scene("Dissolution",     "Collapsing Cathedral", 25.0, 30.0, |_| {}),
+        make_scene("Return",          "Midnight Approach",    20.0, 25.0, |c| {
+            c.audio.reverb_wet = (c.audio.reverb_wet + 0.08).min(0.95);
+        }),
+    ];
+    while scenes.len() < 8 {
+        scenes.push(Scene::empty(scenes.len()));
+    }
+    scenes
+}
+
 /// Generate a full arrangement for a given mood.
 /// Every call produces a unique combination of presets, modes, scales, and effects.
 /// Morphs are the feature — time is spent in transition, not in stasis.
@@ -152,22 +172,23 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
 
     // Preset pools per mood (large enough that repeats are rare across 6 scenes)
     let ambient_pool: &[&str] = &[
-        "Torus Drone", "Lorenz Ambience", "Pendulum Meditation", "Halvorsen Spiral",
-        "Deep Space Lorenz", "Nebula Torus", "Aizawa Nebula", "Halvorsen Void",
-        "Rössler Aurora", "Torus Om", "Rössler Tanpura", "Halvorsen Ohm",
-        "Torus Strings", "Aizawa Overture", "Three-Body Ballad",
+        "Midnight Approach", "The Irrational Winding", "Breathing Galaxy",
+        "Memory of Water", "Monk's Bell", "Deep Hypnosis",
+        "Aurora Borealis", "The Synchronization", "Last Light",
+        "Cathedral Organ", "Collapsing Cathedral", "The Butterfly's Aria",
+        "Siren Call", "Throat of the Storm",
     ];
     let rhythmic_pool: &[&str] = &[
-        "Duffing Rhythm", "Pendulum Rhythm", "Kuramoto Sync", "FM Chaos",
-        "Duffing Techno", "Van Der Pol Stomp", "Aizawa Dark Rave",
-        "Lorenz Arp", "Duffing Arp", "Kuramoto Arp", "Aizawa Cascade",
-        "Industrial Lorenz", "Chua Factory", "Duffing Bass",
+        "Frozen Machinery", "The Phase Transition", "Clockwork Insect",
+        "Planetary Clockwork", "Industrial Heartbeat", "Bone Structure",
+        "Dissociation", "Neon Labyrinth", "Tungsten Filament", "The Double Scroll",
+        "Solar Wind", "Electric Kelp", "Möbius Lead",
     ];
     let experimental_pool: &[&str] = &[
-        "Chua Grit", "Halvorsen Spiral", "FM Chaos", "Rössler Drift",
-        "Lorenz Glitch", "Duffing Splice", "Chua Corrupt", "Pendulum Stutter", "Van Der Pol Mangle",
-        "Torus FM", "Lorenz Granular Cloud", "Chua Spectral Web",
-        "Pendulum Orbital Funk", "Three-Body Microtonal", "Three-Body Jazz",
+        "Neon Labyrinth", "Dissociation", "Tungsten Filament", "The Double Scroll",
+        "Bone Structure", "Clockwork Insect", "Ancient Algorithm",
+        "Seismic Event", "Frozen Machinery", "The Phase Transition",
+        "Electric Kelp", "Solar Wind", "Collapsing Cathedral",
     ];
 
     let pool = match mood {

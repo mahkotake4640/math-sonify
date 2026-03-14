@@ -8,7 +8,7 @@ use crate::sonification::chord_intervals_for;
 use crate::patches::{PRESETS, load_preset, save_patch, list_patches, load_patch_file};
 use crate::audio::{WavRecorder, LoopExportPending, VuMeter, SidechainLevel, ClipBuffer, save_clip, save_portrait_png};
 use crate::systems::*;
-use crate::arrangement::{Scene, total_duration, scene_at, generate_song};
+use crate::arrangement::{Scene, total_duration, scene_at, generate_song, demo_arrangement};
 use hound;
 
 /// A single looper layer (stereo interleaved samples).
@@ -174,6 +174,10 @@ pub struct AppState {
     // Anaglyph 3D
     pub anaglyph_3d: bool,
     pub anaglyph_separation: f32,
+    // Tips window
+    pub show_tips_window: bool,
+    // Simple panel preset expansion
+    pub simple_show_all_presets: bool,
 }
 
 #[derive(Clone)]
@@ -216,7 +220,7 @@ impl AppState {
             mode_changed: false,
             viz_projection: 0,
             viz_tab: 0,
-            selected_preset: "Lorenz Ambience".into(),
+            selected_preset: "Midnight Approach".into(),
             chaos_level: 0.0,
             current_state: Vec::new(),
             current_deriv: Vec::new(),
@@ -322,6 +326,8 @@ impl AppState {
             looper_layers: Vec::new(),
             anaglyph_3d: false,
             anaglyph_separation: 0.05,
+            show_tips_window: false,
+            simple_show_all_presets: false,
         }
     }
 }
@@ -553,7 +559,7 @@ pub fn draw_ui(
             }; // lock released here
 
             if is_simple {
-                draw_simple_panel(ui, state);
+                draw_simple_panel(ui, ctx, state);
             } else {
                 draw_advanced_panel(ui, state, recording, loop_export);
             }
@@ -833,7 +839,15 @@ fn draw_advanced_panel(
         ui.add_space(6.0);
 
         let selected = st.selected_preset.clone();
+        let mut last_cat = "";
         for preset in PRESETS.iter() {
+            if preset.category != last_cat {
+                last_cat = preset.category;
+                ui.add_space(4.0);
+                ui.label(RichText::new(format!("— {} —", preset.category.to_uppercase()))
+                    .color(GRAY_HINT).size(10.0));
+                ui.add_space(2.0);
+            }
             let is_selected = selected == preset.name;
             let pc = preset.color;
             let (stroke_color, bg_color) = if is_selected {
@@ -1540,6 +1554,11 @@ fn draw_advanced_panel(
         }
     });
 
+    // ---- SOUND DESIGN TIPS ----
+    collapsing_section(ui, "SOUND DESIGN TIPS", false, |ui| {
+        draw_tips_content(ui);
+    });
+
     // ---- KEYBOARD SHORTCUTS ----
     collapsing_section(ui, "KEYBOARD SHORTCUTS", false, |ui| {
         let shortcuts = [
@@ -1567,10 +1586,55 @@ fn draw_advanced_panel(
 }
 
 // ---------------------------------------------------------------------------
+// Shared tips content
+// ---------------------------------------------------------------------------
+
+fn draw_tips_content(ui: &mut Ui) {
+    let tips: &[(&str, &str)] = &[
+        (
+            "Hear synchronization emerge",
+            "Load 'The Synchronization'. Set coupling K to 0.5 (all noise). Slowly drag K to 3.0. You're watching a mathematical phase transition in real time. That's the Kuramoto model.",
+        ),
+        (
+            "Build a 3-layer ambient piece",
+            "In the MIXER tab: Layer 0 = 'Midnight Approach' (pad, reverb 0.8). Layer 1 = 'Glass Harp' (melody, reverb 0.5). Layer 2 = 'Monk's Bell' (rhythm, dry). Three different attractors, one mix.",
+        ),
+        (
+            "Find sounds that exist for 15 seconds",
+            "In Simple mode, hit AUTO (Ambient mood). Wait for the morph to begin. The 30-second transition between 'Breathing Galaxy' and 'Collapsing Cathedral' exists exactly once. Hit FREEZE in MIXER to capture it.",
+        ),
+        (
+            "The chaos boundary",
+            "Load 'The Butterfly's Aria'. Slowly drag ρ (rho) from 24 to 25. The system crosses the Hopf bifurcation at ρ=24.74. Below: stable spiral. Above: chaos. You can hear the moment the universe becomes unpredictable.",
+        ),
+        (
+            "Type your own mathematics",
+            "In the PHYSICS ENGINE section, select 'Custom ODE'. Type: dx/dt = y, dy/dt = -x + y*(1-x*x), dz/dt = 0.5*z. That's the Van der Pol oscillator from scratch. Press Apply and hear it.",
+        ),
+        (
+            "Two attractors in conversation",
+            "In COUPLED SYSTEMS (Advanced): Source = Rössler, Target = rho, Strength = 0.6. The Rössler's x-output is now modulating the Lorenz's chaos threshold in real time. This coupling behavior has barely been studied.",
+        ),
+        (
+            "Create evolving textures without touching anything",
+            "In Simple mode, enable Evolve. Set Walk speed to 0.08. Leave the app running. In 10 minutes you'll have sounds you couldn't have designed manually — the random walk explores regions of parameter space you'd never find.",
+        ),
+    ];
+    for (title, body) in tips.iter() {
+        CollapsingHeader::new(RichText::new(*title).color(AMBER).size(11.0).strong())
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label(RichText::new(*body).color(GRAY_HINT).size(11.0).italics());
+            });
+        ui.add_space(2.0);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Simple panel — beginner-friendly macro controls
 // ---------------------------------------------------------------------------
 
-fn draw_simple_panel(ui: &mut Ui, state: &SharedState) {
+fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState) {
     // ---- BIG AUTO button ----
     {
         let (auto_mode, arr_mood) = {
@@ -1639,7 +1703,47 @@ fn draw_simple_panel(ui: &mut Ui, state: &SharedState) {
                 .color(AMBER).size(11.0).italics());
         }
 
+        // ---- Play Demo button ----
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.add(
+                Button::new(RichText::new("▶ Play Demo").color(Color32::WHITE).size(12.0))
+                    .fill(Color32::from_rgb(80, 60, 140))
+                    .min_size(Vec2::new(120.0, 30.0))
+            ).on_hover_text("Play a hardcoded 3-minute demo piece showcasing the best sounds. Six scenes: atmospheric opening, Kuramoto emergence, Duffing machinery, Glass Harp melody, Cathedral dissolution, and a return.").clicked() {
+                let mut st = state.lock();
+                st.scenes = demo_arrangement();
+                st.arr_elapsed = 0.0;
+                st.arr_playing = true;
+                st.arr_loop = false;
+                st.auto_mode = false;
+                st.paused = false;
+            }
+            // Tips "?" button
+            let show_tips = state.lock().show_tips_window;
+            let tips_color = if show_tips { Color32::from_rgb(100, 80, 180) } else { Color32::from_rgb(40, 40, 70) };
+            if ui.add(
+                Button::new(RichText::new("?").color(Color32::WHITE).size(14.0).strong())
+                    .fill(tips_color)
+                    .min_size(Vec2::new(30.0, 30.0))
+            ).on_hover_text("Sound design tips and recipes").clicked() {
+                let mut st = state.lock();
+                st.show_tips_window = !st.show_tips_window;
+            }
+        });
+
         ui.add_space(8.0);
+
+        // ---- Tips window ----
+        let show_tips = state.lock().show_tips_window;
+        if show_tips {
+            egui::Window::new("Sound Design Tips")
+                .open(&mut state.lock().show_tips_window)
+                .default_width(360.0)
+                .show(ctx, |ui| {
+                    draw_tips_content(ui);
+                });
+        }
 
         // ---- Mood selector ----
         ui.label(RichText::new("Arrangement Mood").color(CYAN).size(11.0));
@@ -1730,13 +1834,25 @@ fn draw_simple_panel(ui: &mut Ui, state: &SharedState) {
     ui.separator();
     ui.add_space(4.0);
 
-    // ---- PRESETS (reused) ----
+    // ---- PRESETS ----
     collapsing_section(ui, "PRESETS", false, |ui| {
-        let mut st = state.lock();
+        let (selected, show_all) = {
+            let st = state.lock();
+            (st.selected_preset.clone(), st.simple_show_all_presets)
+        };
         ui.colored_label(AMBER, "Click a preset to start");
         ui.add_space(4.0);
-        let selected = st.selected_preset.clone();
-        for preset in PRESETS.iter() {
+
+        let show_count = if show_all { PRESETS.len() } else { 12 };
+        let mut last_cat = "";
+        for preset in PRESETS.iter().take(show_count) {
+            if preset.category != last_cat {
+                last_cat = preset.category;
+                ui.add_space(2.0);
+                ui.label(RichText::new(format!("— {} —", preset.category.to_uppercase()))
+                    .color(GRAY_HINT).size(10.0));
+                ui.add_space(2.0);
+            }
             let is_selected = selected == preset.name;
             let pc = preset.color;
             let (stroke_color, bg_color) = if is_selected {
@@ -1755,12 +1871,33 @@ fn draw_simple_panel(ui: &mut Ui, state: &SharedState) {
                 ui.label(RichText::new(preset.description).italics().color(GRAY_HINT).size(10.0));
             }).response;
             if response.interact(Sense::click()).clicked() {
+                let mut st = state.lock();
                 st.selected_preset = preset.name.to_string();
                 st.config = load_preset(preset.name);
                 st.system_changed = true;
                 st.mode_changed = true;
             }
             ui.add_space(2.0);
+        }
+
+        if !show_all {
+            ui.add_space(4.0);
+            if ui.add(Button::new(RichText::new(format!("Show all {}...", PRESETS.len()))
+                .color(CYAN).size(11.0))
+                .fill(Color32::from_rgb(25, 25, 45))
+                .min_size(Vec2::new(ui.available_width(), 26.0))
+            ).clicked() {
+                state.lock().simple_show_all_presets = true;
+            }
+        } else {
+            ui.add_space(4.0);
+            if ui.add(Button::new(RichText::new("Show less")
+                .color(GRAY_HINT).size(11.0))
+                .fill(Color32::from_rgb(25, 25, 45))
+                .min_size(Vec2::new(ui.available_width(), 26.0))
+            ).clicked() {
+                state.lock().simple_show_all_presets = false;
+            }
         }
     });
 

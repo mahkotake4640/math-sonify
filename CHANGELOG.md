@@ -1,0 +1,58 @@
+# Math Sonify — Changelog
+
+## v0.9.1 — The Polish
+*The boring work that separates a project from a product.*
+
+Every control now has a tooltip. Every preset is audible at launch. The AUTO button shows what it's doing in real time. The fractional Lorenz system no longer crashes. The VST identifies itself correctly to your DAW.
+
+---
+
+## v0.9 — The Attractor Speaks
+*Everything on the roadmap, all at once.*
+
+**The attractor speaks.** New vocal synthesis mode maps the trajectory to vowel formant positions. The chaotic system wanders through vowel space — /a/ /e/ /i/ /o/ /u/ — producing evolving textures that sound human and inhuman simultaneously. Stack with chorus and reverb for ghostly choir textures from pure math.
+
+**Physical modeling.** Waveguide synthesis where the attractor modulates the string's tension, damping, and length in real-time. A violin string whose tension is chaotic. A tube whose bore is being reshaped by a three-body orbit. Sounds that are acoustically realistic in texture but physically impossible in behavior.
+
+**Fractional calculus.** The Lorenz system with derivative order α ∈ [0.5, 1.0]. Below 1.0, the system depends on its entire history. This is genuinely active research territory — the sonic character of fractional-order dynamics has barely been studied.
+
+**Type any equation.** Write your own ODE system in three text fields. Any attractor from any paper, sonified in seconds. A mathematician publishes a new system — you type it, you hear it.
+
+**Two attractors in conversation.** Coupled systems let two attractors co-evolve. The Rössler's x-output modulates the Lorenz's ρ in real-time. The interaction produces dynamics neither system contains alone.
+
+**Live looper.** Record, loop, layer. Four tracks. Build a full arrangement in real time, on stage, from nothing.
+
+**The piece is non-deterministic.** Probabilistic scene transitions let you assign weights to each scene. The structure of the piece becomes random at the macro level while remaining deterministic within each moment.
+
+**MIDI in.** Connect a keyboard. Map velocity to ρ, pitch to coupling, aftertouch to FM index. Navigate a chaotic parameter space with muscle memory you already have.
+
+**Red-blue glasses.** Anaglyph 3D phase portrait rendering. The attractor becomes a volumetric object floating in front of you.
+
+---
+
+## v0.8 — Simple
+*Someone who has never heard of a Lorenz attractor should be able to make something beautiful in under a minute.*
+
+Four macro knobs replace thirty parameters. Chaos. Space. Rhythm. Warmth. Each maps to the underlying physics in ways that always sound musical.
+
+The AUTO button generates a full 8-scene arrangement matched to your mood and starts playing it. One click.
+
+Evolve mode runs a random walk on all four macros simultaneously. Leave it running. In ten minutes you'll have sounds you couldn't have designed manually.
+
+---
+
+## v0.7.2 — Multi-Layer + Plugin
+*Three attractors running simultaneously. Math Sonify as a DAW instrument.*
+
+Multi-layer polyphony: up to three independent attractor systems with independent mix, pan, and ADSR. All three feed one shared effects chain.
+
+VST3/CLAP plugin: 17 automatable parameters. Full MIDI note-on/off with velocity-sensitive envelopes.
+
+30 presets across 6 evocative categories. Save Clip: one button captures the last 60 seconds of audio as WAV plus a 512×512 phase portrait PNG.
+
+---
+
+## v0.1 — It Makes Sound
+*Differential equations running in real time, mapped to audio.*
+
+The Lorenz attractor. Pentatonic scale. RK4 integration at 120Hz. The butterfly spiral sounds like itself.
