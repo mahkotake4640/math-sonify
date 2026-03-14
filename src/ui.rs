@@ -194,6 +194,8 @@ pub struct AppState {
     pub entropy_pool: f32,
     pub lunar_phase: f32,
     pub last_volume_for_creep: f32,
+    /// True while we're recording a single-pass render of the generated arrangement
+    pub save_gen_pending: bool,
 }
 
 #[derive(Clone)]
@@ -354,6 +356,7 @@ impl AppState {
             entropy_pool: 0.0,
             lunar_phase: 0.0,
             last_volume_for_creep: 0.7,
+            save_gen_pending: false,
         }
     }
 }
@@ -829,9 +832,9 @@ pub fn draw_ui(
                 // Add the current trail tip to the ink
                 let (x, y, _, _, _) = viz_points[viz_points.len() - 1];
                 st.portrait_ink.push((x, y));
-                // Cap ink at ~18000 points (~5 hours of session data)
-                if st.portrait_ink.len() > 18000 {
-                    st.portrait_ink.drain(0..1000);
+                // Cap ink at 3000 points — each point = 1 draw call; more causes crash
+                if st.portrait_ink.len() > 3000 {
+                    st.portrait_ink.drain(0..300);
                 }
             }
             // Ghost capture: every 10-15 minutes (at 30fps = ~18000-27000 frames)
@@ -1753,8 +1756,8 @@ fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState) {
                 let mood = st.arr_mood.clone();
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .subsec_nanos() as u64;
+                    .map(|d| d.as_nanos() as u64 ^ (d.subsec_nanos() as u64).wrapping_mul(0x9e3779b97f4a7c15))
+                    .unwrap_or(0xdeadbeef);
                 st.scenes = generate_song(&mood, seed);
                 st.arr_elapsed = 0.0;
                 st.arr_playing = true;
@@ -2035,6 +2038,21 @@ fn param_range(param: &str) -> (f64, f64) {
 }
 
 fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
+    // Save-generation auto-stop: when arrangement finishes a single pass, stop recording
+    {
+        let (pending, elapsed, playing) = {
+            let st = state.lock();
+            (st.save_gen_pending, st.arr_elapsed, st.arr_playing)
+        };
+        if pending && !playing {
+            // arr_loop was false, arrangement reached end and stopped — finalize recording
+            if let Some(mut lock) = recording.try_lock() { *lock = None; }
+            state.lock().save_gen_pending = false;
+        }
+        // Also stop if somehow elapsed went past total (shouldn't happen but be safe)
+        let _ = elapsed;
+    }
+
     // Auto-record detection: detect arr_playing transitions
     {
         let mut st = state.lock();
@@ -2102,7 +2120,7 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
             .fill(Color32::from_rgb(220, 180, 40)).min_size(Vec2::new(90.0, 26.0))).clicked() {
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
+                .map(|d| d.as_nanos() as u64 ^ (d.subsec_nanos() as u64).wrapping_mul(0x9e3779b97f4a7c15))
                 .unwrap_or(seed_base);
             let mood = state.lock().arr_mood.clone();
             let new_scenes = generate_song(&mood, seed);
@@ -2110,6 +2128,41 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
             st.scenes = new_scenes;
             st.arr_playing = false;
             st.arr_elapsed = 0.0;
+            st.save_gen_pending = false;
+        }
+
+        // Save Generation: record one full pass of the arrangement to WAV
+        let save_pending = state.lock().save_gen_pending;
+        let save_label = if save_pending {
+            RichText::new("⏺ Recording…").color(Color32::from_rgb(255, 80, 80)).size(11.0)
+        } else {
+            RichText::new("💾 Save as WAV").color(Color32::WHITE).size(11.0)
+        };
+        if ui.add(Button::new(save_label)
+            .fill(if save_pending { Color32::from_rgb(100, 20, 20) } else { Color32::from_rgb(30, 80, 60) })
+            .min_size(Vec2::new(110.0, 26.0))).clicked() && !save_pending {
+            // Generate fresh, reset playback, start recording, no loop
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64 ^ (d.subsec_nanos() as u64).wrapping_mul(0x9e3779b97f4a7c15))
+                .unwrap_or(seed_base);
+            let mood = state.lock().arr_mood.clone();
+            let new_scenes = generate_song(&mood, seed);
+            let sr = state.lock().sample_rate;
+            let secs_ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let filename = format!("generation_{}.wav", secs_ts);
+            let spec = hound::WavSpec { channels: 2, sample_rate: sr, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
+            if let Ok(writer) = hound::WavWriter::create(&filename, spec) {
+                if let Some(mut lock) = recording.try_lock() { *lock = Some(writer); }
+                let mut st = state.lock();
+                st.scenes = new_scenes;
+                st.arr_elapsed = 0.0;
+                st.arr_playing = true;
+                st.arr_loop = false;
+                st.save_gen_pending = true;
+                st.paused = false;
+            }
         }
     });
     ui.add_space(6.0);
@@ -2514,20 +2567,29 @@ fn draw_phase_portrait(
     // The live trail is bright. The ink is almost invisible.
     // After hours of use, the entire reachable set faintly emerges as a palimpsest.
     if !ink.is_empty() {
-        // Ink points use the same coordinate space as the live trail
-        // (raw attractor x/y values), so we reuse min/max from current projection
-        let ink_alpha = 6u8; // near-invisible, 6/255 ≈ 2.4% opacity
+        // Batch all ink dots into a single mesh to avoid per-call tessellation overhead.
         let ink_col = Color32::from_rgba_premultiplied(
             trail_color.r() / 6,
             trail_color.g() / 6,
             trail_color.b() / 6,
-            ink_alpha,
+            6, // near-invisible
         );
+        let mut mesh = egui::Mesh::default();
         for &(ix, iy) in ink {
             let sp = to_screen(ix, iy);
             if rect.contains(sp) {
-                painter.circle_filled(sp, 1.2, ink_col);
+                // Each dot = 2 triangles (axis-aligned 2×2 pixel square)
+                let base = mesh.vertices.len() as u32;
+                let half = 1.0f32;
+                mesh.vertices.push(egui::epaint::Vertex { pos: sp + egui::vec2(-half, -half), uv: egui::epaint::WHITE_UV, color: ink_col });
+                mesh.vertices.push(egui::epaint::Vertex { pos: sp + egui::vec2( half, -half), uv: egui::epaint::WHITE_UV, color: ink_col });
+                mesh.vertices.push(egui::epaint::Vertex { pos: sp + egui::vec2( half,  half), uv: egui::epaint::WHITE_UV, color: ink_col });
+                mesh.vertices.push(egui::epaint::Vertex { pos: sp + egui::vec2(-half,  half), uv: egui::epaint::WHITE_UV, color: ink_col });
+                mesh.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
             }
+        }
+        if !mesh.vertices.is_empty() {
+            painter.add(egui::Shape::mesh(mesh));
         }
     }
 
