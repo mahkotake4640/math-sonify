@@ -11,7 +11,7 @@ use crossbeam_channel::Receiver;
 
 use crate::sonification::{AudioParams, SonifMode};
 use crate::synth::{
-    Oscillator, OscShape, BiquadFilter, Freeverb, DelayLine, Limiter,
+    Oscillator, OscShape, BiquadFilter, FdnReverb, DelayLine, Limiter,
     GrainEngine, Bitcrusher, KarplusStrong, Chorus, Waveshaper, Adsr, WaveguideString,
 };
 
@@ -59,6 +59,9 @@ struct LayerSynth {
     waveguide: WaveguideString,
     // Spectral freeze oscillators (up to 16 partials)
     freeze_oscs: Vec<Oscillator>,
+    // Vocoder filter bank: 16 bandpass channels covering 80 Hz to 8 kHz
+    vocoder_filters: Vec<BiquadFilter>,
+    vocoder_buzz_phase: f32,
 }
 
 impl LayerSynth {
@@ -97,6 +100,14 @@ impl LayerSynth {
             peak: 0.0,
             waveguide: WaveguideString::new(sr),
             freeze_oscs: (0..16).map(|i| Oscillator::new(220.0 * (i + 1) as f32, OscShape::Sine, sr)).collect(),
+            vocoder_filters: {
+                // 16 bandpass filters geometrically spaced 80 Hz to 8000 Hz
+                (0..16).map(|i| {
+                    let freq = 80.0f32 * (8000.0f32 / 80.0f32).powf(i as f32 / 15.0);
+                    BiquadFilter::band_pass(freq, 3.0, sr)
+                }).collect()
+            },
+            vocoder_buzz_phase: 0.0,
         }
     }
 
@@ -257,19 +268,52 @@ impl LayerSynth {
                 self.chord_amp_smooth[k] += 0.005 * (0.0 - self.chord_amp_smooth[k]);
             }
         }
-        (l * 0.5, r * 0.5)
+        // Attractor-modulated stereo spread via mid-side encoding.
+        // Low chaos = near-mono; high chaos = wide stereo field.
+        // width 1.0 = unity, 2.0 = fully separated.
+        let width = 1.0 + p.chaos_level.clamp(0.0, 1.0) * 1.2;
+        let mid  = (l + r) * 0.5;
+        let side = (l - r) * 0.5 * width;
+        ((mid + side) * 0.5, (mid - side) * 0.5)
     }
 
     fn synth_spectral(&mut self, p: &AudioParams) -> (f32, f32) {
         use std::f32::consts::TAU;
-        let mut out = 0.0f32;
+        // Vocoder-style filter bank: buzz/saw excitation through 16 bandpass filters.
+        // This gives a vocal-adjacent, "air through tubes" texture vs additive sinusoids.
+        let buzz_freq = p.partials_base_freq.max(40.0);
+        self.vocoder_buzz_phase = (self.vocoder_buzz_phase + TAU * buzz_freq / self.sr).rem_euclid(TAU);
+        // Sawtooth excitation (rich harmonic content for the filter bank to carve)
+        let buzz = 1.0 - self.vocoder_buzz_phase / std::f32::consts::PI;
+
+        // Also blend in the legacy additive partial sum (mix 40% additive / 60% vocoder)
+        let mut additive = 0.0f32;
         for k in 0..32 {
             let freq = p.partials_base_freq * (k + 1) as f32;
             self.partial_phases[k] = (self.partial_phases[k] + TAU * freq / self.sr) % TAU;
-            out += self.partial_phases[k].sin() * p.partials[k];
+            additive += self.partial_phases[k].sin() * p.partials[k];
         }
-        let mono = out * p.gain;
-        (mono, mono)
+        let excitation = buzz * 0.6 + additive * 0.4;
+
+        // Run excitation through each bandpass channel; amplitude = corresponding partial
+        // Use every other partial (16 bands from 32 partials) for band amplitude
+        let mut out_l = 0.0f32;
+        let mut out_r = 0.0f32;
+        let num_bands = self.vocoder_filters.len();
+        for i in 0..num_bands {
+            let partial_idx = (i * 2).min(31);
+            let amp = p.partials[partial_idx];
+            if amp > 0.001 {
+                let filtered = self.vocoder_filters[i].process(excitation) * amp;
+                // Pan bands across stereo field: even = slight left, odd = slight right
+                let pan = (i as f32 / (num_bands - 1) as f32) * 2.0 - 1.0; // -1..1
+                out_l += filtered * (1.0 - pan.max(0.0));
+                out_r += filtered * (1.0 + pan.min(0.0));
+            }
+        }
+
+        let scale = 1.0 / (num_bands as f32).sqrt();
+        (out_l * p.gain * scale, out_r * p.gain * scale)
     }
 
     fn synth_fm(&mut self, p: &AudioParams) -> (f32, f32) {
@@ -326,7 +370,7 @@ struct SynthState {
     layers: [LayerSynth; 3],
     // Shared master effects chain
     filter: BiquadFilter,
-    reverb: Freeverb,
+    reverb: FdnReverb,
     delay: DelayLine,
     limiter: Limiter,
     chorus: Chorus,
@@ -360,7 +404,7 @@ impl SynthState {
         meter: VuMeter,
         clip_buffer: ClipBuffer,
     ) -> Self {
-        let mut reverb = Freeverb::new(sr);
+        let mut reverb = FdnReverb::new(sr);
         reverb.wet = reverb_wet;
         let mut delay = DelayLine::new(2000.0, sr);
         delay.set_delay_ms(delay_ms, sr);

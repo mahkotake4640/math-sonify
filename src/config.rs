@@ -18,6 +18,8 @@ pub struct Config {
     pub halvorsen: HalvorsenConfig,
     pub aizawa: AizawaConfig,
     pub chua: ChuaConfig,
+    pub hindmarsh_rose: HindmarshRoseConfig,
+    pub coupled_map_lattice: CmlConfig,
 }
 
 impl Default for Config {
@@ -37,6 +39,8 @@ impl Default for Config {
             halvorsen: HalvorsenConfig::default(),
             aizawa: AizawaConfig::default(),
             chua: ChuaConfig::default(),
+            hindmarsh_rose: HindmarshRoseConfig::default(),
+            coupled_map_lattice: CmlConfig::default(),
         }
     }
 }
@@ -246,6 +250,26 @@ pub struct ChuaConfig {
 }
 impl Default for ChuaConfig {
     fn default() -> Self { Self { alpha: 15.6, beta: 28.0, m0: -1.143, m1: -0.714 } }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct HindmarshRoseConfig {
+    pub current_i: f64, // external drive current — main control parameter
+    pub r: f64,         // slow adaptation timescale
+}
+impl Default for HindmarshRoseConfig {
+    fn default() -> Self { Self { current_i: 3.0, r: 0.006 } }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CmlConfig {
+    pub r: f64,   // logistic growth rate (3.7–4.0 for chaos)
+    pub eps: f64, // coupling strength (0=independent, 1=synchrony)
+}
+impl Default for CmlConfig {
+    fn default() -> Self { Self { r: 3.9, eps: 0.35 } }
 }
 
 // --- Conversions from string config to enums ---

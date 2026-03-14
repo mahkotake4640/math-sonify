@@ -1803,6 +1803,12 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
         "fractional_lorenz" => Box::new(FractionalLorenz::new(
             1.0, config.lorenz.sigma, config.lorenz.rho, config.lorenz.beta
         )),
+        "hindmarsh_rose"  => Box::new(HindmarshRose::new(
+            config.hindmarsh_rose.current_i, config.hindmarsh_rose.r,
+        )),
+        "coupled_map_lattice" => Box::new(CoupledMapLattice::new(
+            config.coupled_map_lattice.r, config.coupled_map_lattice.eps,
+        )),
         _                 => Box::new(Lorenz::new(config.lorenz.sigma, config.lorenz.rho, config.lorenz.beta)),
     }
 }

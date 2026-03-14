@@ -441,6 +441,8 @@ fn system_display_name(s: &str) -> &'static str {
         "halvorsen" => "Halvorsen",
         "aizawa" => "Aizawa",
         "chua" => "Chua's Circuit",
+        "hindmarsh_rose" => "Hindmarsh-Rose Neuron",
+        "coupled_map_lattice" => "Coupled Map Lattice",
         "custom" => "Custom ODE",
         _ => "Unknown System",
     }
@@ -460,6 +462,8 @@ fn system_internal_name(display: &str) -> &'static str {
         "Halvorsen" => "halvorsen",
         "Aizawa" => "aizawa",
         "Chua's Circuit" => "chua",
+        "Hindmarsh-Rose Neuron" => "hindmarsh_rose",
+        "Coupled Map Lattice" => "coupled_map_lattice",
         "Custom ODE" => "custom",
         _ => "lorenz",
     }
@@ -1117,7 +1121,7 @@ fn draw_advanced_panel(
 
     // ---- PHYSICS ENGINE ----
     collapsing_section(ui, "PHYSICS ENGINE", false, |ui| {
-        let systems_internal = ["lorenz", "fractional_lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body", "duffing", "van_der_pol", "halvorsen", "aizawa", "chua", "custom"];
+        let systems_internal = ["lorenz", "fractional_lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body", "duffing", "van_der_pol", "halvorsen", "aizawa", "chua", "hindmarsh_rose", "coupled_map_lattice", "custom"];
         let systems_display: Vec<&str> = systems_internal.iter().map(|s| system_display_name(s)).collect();
         let current_sys = st.config.system.name.clone();
         let current_display = system_display_name(&current_sys);
@@ -3501,6 +3505,8 @@ fn dim_names(system: &str) -> &'static [&'static str] {
         "geodesic_torus" => &["phi", "th", "phi'", "th'"],
         "kuramoto" => &["th1", "th2", "th3", "th4"],
         "three_body" => &["x1", "y1", "x2", "y2", "x3", "y3"],
+        "hindmarsh_rose" => &["x (V)", "y (fast)", "z (slow)"],
+        "coupled_map_lattice" => &["x0", "x1", "x2", "x3"],
         _ => &["x", "y", "z"],
     }
 }

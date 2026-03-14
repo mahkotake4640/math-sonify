@@ -1,6 +1,7 @@
 pub mod oscillator;
 pub mod filter;
 pub mod reverb;
+pub mod fdn_reverb;
 pub mod delay;
 pub mod envelope;
 pub mod limiter;
@@ -14,6 +15,7 @@ pub mod waveguide;
 pub use oscillator::{Oscillator, OscShape};
 pub use filter::BiquadFilter;
 pub use reverb::Freeverb;
+pub use fdn_reverb::FdnReverb;
 pub use delay::DelayLine;
 pub use envelope::Adsr;
 pub use limiter::Limiter;

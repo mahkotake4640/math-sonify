@@ -1,0 +1,85 @@
+use super::DynamicalSystem;
+
+/// Coupled Map Lattice — 1D lattice of N logistic maps with nearest-neighbor coupling.
+///
+/// Spatially-extended chaos. Each site is a logistic map coupled to its neighbors:
+///   x_i(t+1) = (1-ε) * f(x_i) + (ε/2) * (f(x_{i-1}) + f(x_{i+1}))
+///   f(x) = r * x * (1 - x)
+///
+/// Periodic boundary conditions. N=16 sites.
+///
+/// Character: ghostly, flickering, akin to interference patterns in a physical medium.
+/// As coupling ε increases, spatial coherence emerges — "modes" appear in the lattice.
+/// In sonification, site index maps to stereo position, so you hear spatial patterns
+/// travel through the field left-to-right.
+///
+/// Control parameters:
+///   r:   logistic growth rate (3.7–4.0 for chaos; 3.0 for period-doubling edge)
+///   eps: coupling strength (0 = independent maps; 1 = fully coupled = synchrony)
+
+const N: usize = 16;
+
+pub struct CoupledMapLattice {
+    state: Vec<f64>,
+    pub r: f64,   // logistic parameter (3.5 to 4.0)
+    pub eps: f64, // coupling (0 to 1)
+    speed: f64,
+}
+
+impl CoupledMapLattice {
+    pub fn new(r: f64, eps: f64) -> Self {
+        // Seed with varied initial conditions to break symmetry
+        let state: Vec<f64> = (0..N).map(|i| {
+            let t = i as f64 / N as f64;
+            0.2 + 0.6 * (t * std::f64::consts::PI * 3.0).sin().abs()
+        }).collect();
+        Self { state, r, eps, speed: 0.0 }
+    }
+
+    fn logistic(x: f64, r: f64) -> f64 {
+        r * x * (1.0 - x)
+    }
+}
+
+impl DynamicalSystem for CoupledMapLattice {
+    fn state(&self) -> &[f64] { &self.state }
+    fn dimension(&self) -> usize { N }
+    fn name(&self) -> &str { "Coupled Map Lattice" }
+    fn speed(&self) -> f64 { self.speed }
+
+    fn deriv_at(&self, _state: &[f64]) -> Vec<f64> {
+        // Discrete map: derivative not meaningful, return zeros
+        vec![0.0; N]
+    }
+
+    fn set_state(&mut self, s: &[f64]) {
+        let n = self.state.len().min(s.len());
+        for i in 0..n {
+            if s[i].is_finite() { self.state[i] = s[i].clamp(0.001, 0.999); }
+        }
+    }
+
+    fn step(&mut self, _dt: f64) {
+        // CML is a discrete-time map — dt is ignored, one call = one iteration.
+        // Apply one step of the coupled logistic map.
+        let r = self.r;
+        let eps = self.eps;
+        let prev = self.state.clone();
+
+        for i in 0..N {
+            let left  = (i + N - 1) % N;
+            let right = (i + 1) % N;
+            let center = Self::logistic(prev[i], r);
+            let fl     = Self::logistic(prev[left], r);
+            let fr     = Self::logistic(prev[right], r);
+            let val = (1.0 - eps) * center + (eps / 2.0) * (fl + fr);
+            // Clamp to (0,1) — logistic map is only defined there
+            self.state[i] = val.clamp(0.0001, 0.9999);
+        }
+
+        // Speed = max |Δx_i| across all sites
+        self.speed = self.state.iter().zip(prev.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
+    }
+}

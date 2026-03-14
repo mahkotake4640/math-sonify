@@ -11,6 +11,8 @@ pub mod van_der_pol;
 pub mod halvorsen;
 pub mod aizawa;
 pub mod chua;
+pub mod hindmarsh_rose;
+pub mod coupled_map_lattice;
 
 pub use lorenz::Lorenz;
 pub use custom_ode::{CustomOde, validate_exprs};
@@ -25,6 +27,8 @@ pub use van_der_pol::VanDerPol;
 pub use halvorsen::Halvorsen;
 pub use aizawa::Aizawa;
 pub use chua::Chua;
+pub use hindmarsh_rose::HindmarshRose;
+pub use coupled_map_lattice::CoupledMapLattice;
 
 /// A continuous-time dynamical system that can be stepped forward.
 pub trait DynamicalSystem: Send {

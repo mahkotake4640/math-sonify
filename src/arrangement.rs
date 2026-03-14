@@ -75,6 +75,8 @@ pub fn lerp_config(a: &Config, b: &Config, t: f32) -> Config {
         halvorsen:       HalvorsenConfig { a: lf64(a.halvorsen.a, b.halvorsen.a) },
         aizawa:          AizawaConfig { a: lf64(a.aizawa.a, b.aizawa.a), b: lf64(a.aizawa.b, b.aizawa.b), c: lf64(a.aizawa.c, b.aizawa.c), d: lf64(a.aizawa.d, b.aizawa.d), e: lf64(a.aizawa.e, b.aizawa.e), f: lf64(a.aizawa.f, b.aizawa.f) },
         chua:            ChuaConfig { alpha: lf64(a.chua.alpha, b.chua.alpha), beta: lf64(a.chua.beta, b.chua.beta), m0: lf64(a.chua.m0, b.chua.m0), m1: lf64(a.chua.m1, b.chua.m1) },
+        hindmarsh_rose:  HindmarshRoseConfig { current_i: lf64(a.hindmarsh_rose.current_i, b.hindmarsh_rose.current_i), r: lf64(a.hindmarsh_rose.r, b.hindmarsh_rose.r) },
+        coupled_map_lattice: CmlConfig { r: lf64(a.coupled_map_lattice.r, b.coupled_map_lattice.r), eps: lf64(a.coupled_map_lattice.eps, b.coupled_map_lattice.eps) },
         viz:             a.viz.clone(), // don't morph viz settings
     }
 }
