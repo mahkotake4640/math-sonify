@@ -3304,7 +3304,8 @@ fn draw_studio_tab(ui: &mut Ui, state: &SharedState) {
                     ui.add_space(8.0);
                     ui.label(RichText::new("Vol").color(GRAY_HINT).size(11.0));
                     let mut v = vol;
-                    if ui.add(Slider::new(&mut v, 0.0..=1.0).show_value(false).desired_width(70.0)).changed() {
+                    ui.set_max_width(80.0);
+                    if ui.add(Slider::new(&mut v, 0.0..=1.0).show_value(false)).changed() {
                         state.lock().snippet_volume = v;
                     }
                     ui.add_space(12.0);
@@ -3375,8 +3376,7 @@ fn draw_studio_tab(ui: &mut Ui, state: &SharedState) {
                                         if slot_snip_opt.is_some() {
                                             let (dot_r, _) = ui.allocate_exact_size(Vec2::new(7.0, 7.0), Sense::hover());
                                             ui.painter().circle_filled(dot_r.center(), 3.0, accent);
-                                            ui.label(RichText::new(&snip_name).color(Color32::WHITE).size(10.5)
-                                                .truncate());
+                                            ui.add(egui::Label::new(RichText::new(&snip_name).color(Color32::WHITE).size(10.5)).truncate(true));
                                             if !snip_thumb.is_empty() {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     let (wr, _) = ui.allocate_exact_size(Vec2::new(44.0, 12.0), Sense::hover());
