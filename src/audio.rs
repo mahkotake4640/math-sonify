@@ -63,6 +63,8 @@ struct LayerSynth {
     // Vocoder filter bank: 16 bandpass channels covering 80 Hz to 8 kHz
     vocoder_filters: Vec<BiquadFilter>,
     vocoder_buzz_phase: f32,
+    // Track current formant frequencies to avoid rebuilding filters every sample
+    formant_freqs: [f32; 3],
 }
 
 impl LayerSynth {
@@ -115,6 +117,7 @@ impl LayerSynth {
                 }).collect()
             },
             vocoder_buzz_phase: 0.0,
+            formant_freqs: [800.0, 1200.0, 2500.0],
         }
     }
 
@@ -417,14 +420,13 @@ impl LayerSynth {
         let sr = self.sr;
         for (i, freq) in [p.freqs[0], p.freqs[1], p.freqs[2]].iter().enumerate() {
             let f = freq.clamp(100.0, sr * 0.45);
-            // Only rebuild if the frequency has moved by more than 2 Hz to
-            // avoid per-sample coefficient churn
-            let current_freq = match i {
-                0 => 800.0f32, // placeholder; BiquadFilter doesn't expose freq
-                _ => f,
-            };
-            let _ = current_freq; // suppress unused warning
-            self.formant_filters[i] = BiquadFilter::band_pass(f, q, sr);
+            // Only update coefficients when frequency moves by more than 2 Hz —
+            // rebuilding the filter struct every sample resets z1/z2 to zero,
+            // which destroys the IIR memory and makes the formant filters silent.
+            if (f - self.formant_freqs[i]).abs() > 2.0 {
+                self.formant_filters[i].update_bp(f, q, sr);
+                self.formant_freqs[i] = f;
+            }
         }
 
         let f1_out = self.formant_filters[0].process(excitation) * p.amps[0];

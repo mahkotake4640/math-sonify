@@ -67,4 +67,17 @@ impl BiquadFilter {
             self.z1 = 0.0; self.z2 = 0.0;
         }
     }
+
+    /// Update band-pass coefficients in place, preserving filter state.
+    /// Use this instead of creating a new filter to avoid resetting z1/z2 state.
+    pub fn update_bp(&mut self, center_hz: f32, q: f32, sample_rate: f32) {
+        let center = center_hz.clamp(20.0, sample_rate * 0.45);
+        let q_safe = q.max(0.1);
+        let new = Self::band_pass(center, q_safe, sample_rate);
+        self.b0 = new.b0; self.b1 = new.b1; self.b2 = new.b2;
+        self.a1 = new.a1; self.a2 = new.a2;
+        if !self.z1.is_finite() || !self.z2.is_finite() {
+            self.z1 = 0.0; self.z2 = 0.0;
+        }
+    }
 }
