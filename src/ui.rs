@@ -219,6 +219,8 @@ pub struct AppState {
     pub bifurc_2d_mode: bool,
     pub bifurc_data_2d: Arc<Mutex<Vec<(f32, f32, f32)>>>,
     pub energy_error: f64,
+    pub permutation_entropy: f64,
+    pub integrator_divergence: f64,
     pub session_log: Vec<SessionEntry>,
 }
 
@@ -409,6 +411,8 @@ impl AppState {
             bifurc_2d_mode: false,
             bifurc_data_2d: Arc::new(Mutex::new(Vec::new())),
             energy_error: 0.0,
+            permutation_entropy: 0.0,
+            integrator_divergence: 0.0,
             session_log: Vec::new(),
         }
     }
@@ -1064,7 +1068,8 @@ pub fn draw_ui(
              freqs, voice_levels, chord_intervals, current_state, current_deriv,
              chaos_level, order_param, kuramoto_phases, trail_color, perf_mode,
              anaglyph_3d, anaglyph_separation, lyapunov_spectrum, attractor_type,
-             kolmogorov_entropy) = {
+             kolmogorov_entropy, energy_error, sync_error, permutation_entropy,
+             integrator_divergence) = {
             let st = state.lock();
             let proj = st.viz_projection;
             let rot = st.rotation_angle;
@@ -1091,7 +1096,11 @@ pub fn draw_ui(
             let ls = st.lyapunov_spectrum.clone();
             let at = st.attractor_type.clone();
             let ke = st.kolmogorov_entropy;
-            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp, tc, pm, ag, ag_sep, ls, at, ke)
+            let ee = st.energy_error;
+            let se = st.sync_error;
+            let pe = st.permutation_entropy;
+            let id = st.integrator_divergence;
+            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp, tc, pm, ag, ag_sep, ls, at, ke, ee, se, pe, id)
         };
 
         // ── Ghost trails + portrait ink update (visual memory) ─────────────────
@@ -1140,12 +1149,12 @@ pub fn draw_ui(
         };
 
         match viz_tab {
-            0 => draw_phase_portrait(ui, viz_points, &system_name, &mode_name, &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, anaglyph_3d, anaglyph_separation, &ghosts, &ink, lunar_phase2, &scars_main, tod_main),
+            0 => draw_phase_portrait(ui, viz_points, &system_name, &mode_name, &current_state, &current_deriv, projection, rotation_angle, auto_rotate, trail_color, anaglyph_3d, anaglyph_separation, &ghosts, &ink, lunar_phase2, &scars_main, tod_main, energy_error),
             1 => draw_mixer_tab(ui, state, viz_points),
             2 => draw_arrange_tab(ui, state, recording),
             3 => draw_waveform(ui, waveform),
             4 => draw_note_map(ui, &freqs, &voice_levels, &chord_intervals),
-            5 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases, &lyapunov_spectrum, &attractor_type, kolmogorov_entropy),
+            5 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases, &lyapunov_spectrum, &attractor_type, kolmogorov_entropy, energy_error, sync_error, permutation_entropy, integrator_divergence),
             6 => draw_bifurc_diagram(ui, bifurc_data, state),
             _ => {}
         }
