@@ -223,10 +223,10 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
     };
 
     // Voice shape pool
-    let voice_shapes: &[&str] = &["sine", "sine", "sine", "triangle", "saw", "square", "triangle"];
+    let voice_shapes: &[&str] = &["sine", "sine", "sine", "triangle", "saw", "triangle", "triangle"];
 
     // Chord mode pool
-    let chord_modes: &[&str] = &["none", "none", "none", "fifths", "octave", "power"];
+    let chord_modes: &[&str] = &["none", "none", "none", "power", "octave", "power"];
 
     // Musical root frequencies (A2=110 through A4=440, hitting each octave position)
     let root_freqs: &[f64] = &[82.4, 110.0, 130.8, 164.8, 196.0, 220.0, 261.6, 293.7, 329.6, 392.0, 440.0, 523.3];
