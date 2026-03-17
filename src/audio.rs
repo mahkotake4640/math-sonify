@@ -307,11 +307,21 @@ impl LayerSynth {
     fn synth_spectral(&mut self, p: &AudioParams) -> (f32, f32) {
         use std::f32::consts::TAU;
         // Vocoder-style filter bank: buzz/saw excitation through 16 bandpass filters.
-        // This gives a vocal-adjacent, "air through tubes" texture vs additive sinusoids.
         let buzz_freq = p.partials_base_freq.max(40.0);
         self.vocoder_buzz_phase = (self.vocoder_buzz_phase + TAU * buzz_freq / self.sr).rem_euclid(TAU);
-        // Sawtooth excitation (rich harmonic content for the filter bank to carve)
-        let buzz = 1.0 - self.vocoder_buzz_phase / std::f32::consts::PI;
+
+        // PolyBLEP band-limited sawtooth excitation.
+        // The original aliased saw smeared noise energy across all bands, making
+        // quiet partials sound muddy.  PolyBLEP removes folded alias content so
+        // the filter bank carves a clean spectrum.
+        let t  = self.vocoder_buzz_phase / TAU;
+        let dt = (buzz_freq / self.sr).clamp(0.0, 0.5);
+        let blep = if t < dt {
+            let u = t / dt; 2.0 * u - u * u - 1.0
+        } else if t > 1.0 - dt {
+            let u = (t - 1.0) / dt; u * u + 2.0 * u + 1.0
+        } else { 0.0 };
+        let buzz = (2.0 * t - 1.0) - blep;
 
         // Also blend in the legacy additive partial sum (mix 40% additive / 60% vocoder)
         let mut additive = 0.0f32;

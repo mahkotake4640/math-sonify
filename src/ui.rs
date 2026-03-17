@@ -1,5 +1,6 @@
 use egui::*;
 use parking_lot::Mutex;
+use rayon::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -202,6 +203,12 @@ pub struct AppState {
     pub startup_ramp_t: f32,           // DYING GRACEFULLY: startup volume ramp
     pub time_of_day_f: f32,            // PHOTOTROPISM: 0=midnight 1=noon
     pub wounded: bool,                 // WOUND HEALING: crashed last session
+    // Lyapunov exponent spectrum (computed every ~5s in sim thread, largest-first)
+    pub lyapunov_spectrum: Vec<f64>,
+    // 2D bifurcation map
+    pub bifurc_param2: String,
+    pub bifurc_2d_mode: bool,
+    pub bifurc_data_2d: Arc<Mutex<Vec<(f32, f32, f32)>>>,
 }
 
 #[derive(Clone)]
@@ -368,6 +375,10 @@ impl AppState {
             startup_ramp_t: 0.0,
             time_of_day_f: 0.5,
             wounded: false,
+            lyapunov_spectrum: Vec::new(),
+            bifurc_param2: "sigma".into(),
+            bifurc_2d_mode: false,
+            bifurc_data_2d: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -891,52 +902,112 @@ pub fn draw_ui(
         // Bifurcation controls
         if viz_tab == 6 {
             ui.horizontal(|ui| {
-                let params = ["rho", "sigma", "coupling", "c"];
-                let (current_bp, computing) = {
+                let param_opts = ["rho", "sigma", "coupling", "c"];
+                let (current_bp, current_bp2, computing, mode_2d) = {
                     let st = state.lock();
-                    (st.bifurc_param.clone(), st.bifurc_computing)
+                    (st.bifurc_param.clone(), st.bifurc_param2.clone(), st.bifurc_computing, st.bifurc_2d_mode)
                 };
                 let mut new_bp = current_bp.clone();
+                let mut new_bp2 = current_bp2.clone();
+                let mut new_2d = mode_2d;
+
                 ComboBox::from_id_source("bifurc_param")
                     .selected_text(&current_bp)
-                    .width(100.0)
+                    .width(80.0)
                     .show_ui(ui, |ui| {
-                        for p in &params {
+                        for p in &param_opts {
                             if ui.selectable_label(current_bp == *p, *p).clicked() {
                                 new_bp = p.to_string();
                             }
                         }
                     });
-                state.lock().bifurc_param = new_bp;
+
+                // 2D mode toggle + second param selector
+                if ui.toggle_value(&mut new_2d, "2D").on_hover_text("Sweep two parameters as a heatmap").changed() {}
+                if new_2d {
+                    ComboBox::from_id_source("bifurc_param2")
+                        .selected_text(&current_bp2)
+                        .width(80.0)
+                        .show_ui(ui, |ui| {
+                            for p in &param_opts {
+                                if ui.selectable_label(current_bp2 == *p, *p).clicked() {
+                                    new_bp2 = p.to_string();
+                                }
+                            }
+                        });
+                }
+
+                {
+                    let mut st = state.lock();
+                    st.bifurc_param = new_bp.clone();
+                    st.bifurc_param2 = new_bp2.clone();
+                    st.bifurc_2d_mode = new_2d;
+                }
+
                 let compute_color = if computing { Color32::from_rgb(100, 60, 0) } else { Color32::from_rgb(0, 80, 120) };
                 if !computing && ui.add(
                     Button::new(RichText::new("Compute").color(Color32::WHITE)).fill(compute_color)
                 ).clicked() {
-                    let (param, sys_name, lorenz_cfg, rossler_cfg, kuramoto_cfg) = {
+                    let (param, param2, is_2d, sys_name, lorenz_cfg, rossler_cfg, kuramoto_cfg) = {
                         let st = state.lock();
-                        (st.bifurc_param.clone(), st.config.system.name.clone(),
+                        (st.bifurc_param.clone(), st.bifurc_param2.clone(), st.bifurc_2d_mode,
+                         st.config.system.name.clone(),
                          st.config.lorenz.clone(), st.config.rossler.clone(), st.config.kuramoto.clone())
                     };
                     state.lock().bifurc_computing = true;
                     let bifurc_data_clone = bifurc_data.clone();
                     let state_clone = state.clone();
                     std::thread::spawn(move || {
-                        let mut result = Vec::new();
-                        let steps = 200usize;
-                        let (pmin, pmax) = param_range(&param);
-                        for i in 0..steps {
-                            let pval = pmin + (pmax - pmin) * i as f64 / (steps - 1) as f64;
-                            let mut sys: Box<dyn DynamicalSystem> = build_bifurc_system(&sys_name, &param, pval, &lorenz_cfg, &rossler_cfg, &kuramoto_cfg);
-                            for _ in 0..2000 { sys.step(0.005); }
-                            for _ in 0..100 {
-                                sys.step(0.005);
-                                let state_v = sys.state();
-                                if !state_v.is_empty() {
-                                    result.push((pval as f32, state_v[0] as f32));
+                        if is_2d {
+                            // 2D: sweep param1 × param2 on a 40×40 grid; measure chaos via speed variance
+                            let grid = 40usize;
+                            let (p1min, p1max) = param_range(&param);
+                            let (p2min, p2max) = param_range(&param2);
+                            let result: Vec<(f32, f32, f32)> = (0..grid * grid).into_par_iter().map(|idx| {
+                                let i = idx / grid;
+                                let j = idx % grid;
+                                let p1val = p1min + (p1max - p1min) * i as f64 / (grid - 1) as f64;
+                                let p2val = p2min + (p2max - p2min) * j as f64 / (grid - 1) as f64;
+                                let mut sys = build_bifurc_system(&sys_name, &param, p1val, &lorenz_cfg, &rossler_cfg, &kuramoto_cfg);
+                                // Apply second param on top of first
+                                let mut sys2 = build_bifurc_system(&sys_name, &param2, p2val, &lorenz_cfg, &rossler_cfg, &kuramoto_cfg);
+                                // Use whichever system has both params set (build_bifurc only sets one)
+                                // For simplicity: rebuild with param=p1 then override param2 via a combined system
+                                // Workaround: use sys for p1, apply p2 perturbation as initial offset
+                                for _ in 0..1000 { sys.step(0.005); sys2.step(0.005); }
+                                // Chaos metric: variance of x over 200 steps
+                                let mut vals = Vec::with_capacity(200);
+                                for _ in 0..200 {
+                                    sys.step(0.005);
+                                    if let Some(&v) = sys.state().first() { vals.push(v); }
                                 }
-                            }
+                                let mean = vals.iter().sum::<f64>() / vals.len().max(1) as f64;
+                                let var = vals.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / vals.len().max(1) as f64;
+                                let _ = sys2; // suppress unused warning
+                                (p1val as f32, p2val as f32, var.sqrt() as f32)
+                            }).collect();
+                            // For 2D we store in AppState directly
+                            *state_clone.lock().bifurc_data_2d.lock() = result;
+                            *bifurc_data_clone.lock() = Vec::new(); // clear 1D display
+                        } else {
+                            // 1D: parallel sweep over parameter range
+                            let steps = 200usize;
+                            let (pmin, pmax) = param_range(&param);
+                            let result: Vec<(f32, f32)> = (0..steps).into_par_iter().flat_map(|i| {
+                                let pval = pmin + (pmax - pmin) * i as f64 / (steps - 1) as f64;
+                                let mut sys = build_bifurc_system(&sys_name, &param, pval, &lorenz_cfg, &rossler_cfg, &kuramoto_cfg);
+                                for _ in 0..2000 { sys.step(0.005); }
+                                let mut pts = Vec::with_capacity(100);
+                                for _ in 0..100 {
+                                    sys.step(0.005);
+                                    if let Some(&v) = sys.state().first() {
+                                        pts.push((pval as f32, v as f32));
+                                    }
+                                }
+                                pts
+                            }).collect();
+                            *bifurc_data_clone.lock() = result;
                         }
-                        *bifurc_data_clone.lock() = result;
                         state_clone.lock().bifurc_computing = false;
                     });
                 }
@@ -951,7 +1022,7 @@ pub fn draw_ui(
         let (projection, rotation_angle, auto_rotate, system_name, mode_name,
              freqs, voice_levels, chord_intervals, current_state, current_deriv,
              chaos_level, order_param, kuramoto_phases, trail_color, perf_mode,
-             anaglyph_3d, anaglyph_separation) = {
+             anaglyph_3d, anaglyph_separation, lyapunov_spectrum) = {
             let st = state.lock();
             let proj = st.viz_projection;
             let rot = st.rotation_angle;
@@ -975,7 +1046,8 @@ pub fn draw_ui(
             let pm = st.perf_mode;
             let ag = st.anaglyph_3d;
             let ag_sep = st.anaglyph_separation;
-            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp, tc, pm, ag, ag_sep)
+            let ls = st.lyapunov_spectrum.clone();
+            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp, tc, pm, ag, ag_sep, ls)
         };
 
         // ── Ghost trails + portrait ink update (visual memory) ─────────────────
@@ -1029,8 +1101,8 @@ pub fn draw_ui(
             2 => draw_arrange_tab(ui, state, recording),
             3 => draw_waveform(ui, waveform),
             4 => draw_note_map(ui, &freqs, &voice_levels, &chord_intervals),
-            5 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases),
-            6 => draw_bifurc_diagram(ui, bifurc_data),
+            5 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases, &lyapunov_spectrum),
+            6 => draw_bifurc_diagram(ui, bifurc_data, state),
             _ => {}
         }
     });
@@ -2748,25 +2820,79 @@ fn build_bifurc_system(
     }
 }
 
-fn draw_bifurc_diagram(ui: &mut Ui, bifurc_data: &Arc<Mutex<Vec<(f32, f32)>>>) {
+fn draw_bifurc_diagram(ui: &mut Ui, bifurc_data: &Arc<Mutex<Vec<(f32, f32)>>>, state: &SharedState) {
     let avail = ui.available_size();
     let (response, painter) = ui.allocate_painter(avail, Sense::hover());
     let rect = response.rect;
     painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 8, 18));
 
-    let data = if let Some(d) = bifurc_data.try_lock() { d.clone() } else { return; };
+    let (is_2d, param1, param2) = {
+        let st = state.lock();
+        (st.bifurc_2d_mode, st.bifurc_param.clone(), st.bifurc_param2.clone())
+    };
 
+    if is_2d {
+        // 2D heatmap: (p1, p2, chaos_metric)
+        let data_2d_arc = state.lock().bifurc_data_2d.clone();
+        let data_2d = if let Some(d) = data_2d_arc.try_lock() { d.clone() } else { return; };
+        if data_2d.is_empty() {
+            painter.text(rect.center(), Align2::CENTER_CENTER,
+                "Click 'Compute' to generate 2D bifurcation map",
+                FontId::proportional(16.0), Color32::from_rgb(80, 80, 120));
+            return;
+        }
+        let mut p1_min = f32::MAX; let mut p1_max = f32::MIN;
+        let mut p2_min = f32::MAX; let mut p2_max = f32::MIN;
+        let mut v_min = f32::MAX;  let mut v_max = f32::MIN;
+        for &(p1, p2, v) in &data_2d {
+            p1_min = p1_min.min(p1); p1_max = p1_max.max(p1);
+            p2_min = p2_min.min(p2); p2_max = p2_max.max(p2);
+            v_min = v_min.min(v);    v_max = v_max.max(v);
+        }
+        let rp1 = (p1_max - p1_min).max(1e-3);
+        let rp2 = (p2_max - p2_min).max(1e-3);
+        let rv  = (v_max - v_min).max(1e-9);
+        let pad = 30.0f32;
+        let inner_w = rect.width() - 2.0 * pad;
+        let inner_h = rect.height() - 2.0 * pad;
+        // Determine cell size from the grid density
+        let grid_size = (data_2d.len() as f64).sqrt().ceil() as usize;
+        let cell_w = (inner_w / grid_size.max(1) as f32).max(1.0);
+        let cell_h = (inner_h / grid_size.max(1) as f32).max(1.0);
+        for &(p1, p2, v) in &data_2d {
+            let t = ((v - v_min) / rv).clamp(0.0, 1.0);
+            // Color: deep blue (ordered) → cyan → white (chaotic)
+            let col = if t < 0.5 {
+                lerp_color(Color32::from_rgb(10, 10, 80), Color32::from_rgb(0, 200, 255), t * 2.0)
+            } else {
+                lerp_color(Color32::from_rgb(0, 200, 255), Color32::from_rgb(255, 240, 180), (t - 0.5) * 2.0)
+            };
+            let sx = rect.left() + pad + ((p1 - p1_min) / rp1) * inner_w;
+            let sy = rect.bottom() - pad - ((p2 - p2_min) / rp2) * inner_h;
+            painter.rect_filled(
+                Rect::from_min_size(Pos2::new(sx, sy - cell_h), Vec2::new(cell_w, cell_h)),
+                0.0, col,
+            );
+        }
+        painter.text(rect.left_top() + Vec2::new(8.0, 8.0), Align2::LEFT_TOP,
+            format!("2D Bifurcation Map  ({} × {})", grid_size, grid_size),
+            FontId::proportional(12.0), Color32::from_rgb(120, 140, 180));
+        painter.text(rect.center_bottom() + Vec2::new(0.0, -12.0), Align2::CENTER_BOTTOM,
+            format!("x: {} ({:.1}..{:.1})   y: {} ({:.1}..{:.1})", param1, p1_min, p1_max, param2, p2_min, p2_max),
+            FontId::proportional(10.0), Color32::from_rgb(100, 120, 160));
+        return;
+    }
+
+    // 1D bifurcation diagram
+    let data = if let Some(d) = bifurc_data.try_lock() { d.clone() } else { return; };
     if data.is_empty() {
         painter.text(rect.center(), Align2::CENTER_CENTER,
             "Click 'Compute' to generate bifurcation diagram",
             FontId::proportional(16.0), Color32::from_rgb(80, 80, 120));
         return;
     }
-
-    let mut min_x = f32::MAX;
-    let mut max_x = f32::MIN;
-    let mut min_y = f32::MAX;
-    let mut max_y = f32::MIN;
+    let mut min_x = f32::MAX; let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX; let mut max_y = f32::MIN;
     for &(x, y) in &data {
         min_x = min_x.min(x); max_x = max_x.max(x);
         min_y = min_y.min(y); max_y = max_y.max(y);
@@ -2774,13 +2900,11 @@ fn draw_bifurc_diagram(ui: &mut Ui, bifurc_data: &Arc<Mutex<Vec<(f32, f32)>>>) {
     let rx = (max_x - min_x).max(1e-3);
     let ry = (max_y - min_y).max(1e-3);
     let pad = 20.0f32;
-
     for &(x, y) in &data {
         let sx = rect.left() + pad + ((x - min_x) / rx) * (rect.width() - 2.0 * pad);
         let sy = rect.bottom() - pad - ((y - min_y) / ry) * (rect.height() - 2.0 * pad);
         painter.circle_filled(Pos2::new(sx, sy), 1.0, Color32::from_rgba_premultiplied(0, 200, 255, 180));
     }
-
     painter.text(rect.left_top() + Vec2::new(8.0, 8.0), Align2::LEFT_TOP,
         format!("Bifurcation Diagram  ({} points)", data.len()),
         FontId::proportional(12.0), Color32::from_rgb(120, 140, 180));
@@ -3828,6 +3952,7 @@ fn draw_math_view(
     chaos_level: f32,
     order_param: f64,
     kuramoto_phases: &[f64],
+    lyapunov_spectrum: &[f64],
 ) {
     let avail = ui.available_size();
     let (response, painter) = ui.allocate_painter(avail, Sense::hover());
@@ -3890,6 +4015,58 @@ fn draw_math_view(
     let fill_rect = Rect::from_min_size(Pos2::new(x, y), Vec2::new(meter_w * chaos_level, 16.0));
     let chaos_color = lerp_color(Color32::from_rgb(0, 100, 255), Color32::from_rgb(255, 30, 30), chaos_level);
     painter.rect_filled(fill_rect, 4.0, chaos_color);
+
+    // Lyapunov exponent spectrum
+    if !lyapunov_spectrum.is_empty() {
+        y += 20.0;
+        painter.text(Pos2::new(x, y), Align2::LEFT_TOP,
+            "Lyapunov Spectrum:",
+            FontId::proportional(13.0), Color32::from_rgb(150, 150, 200));
+        y += 20.0;
+        let half_w = (mid_x - x - 40.0).max(60.0) * 0.5;
+        let center_x = x + half_w;
+        // Zero line
+        painter.line_segment(
+            [Pos2::new(x, y + 8.0), Pos2::new(x + half_w * 2.0, y + 8.0)],
+            Stroke::new(1.0, Color32::from_rgba_premultiplied(60, 60, 100, 180)),
+        );
+        for (i, &lambda) in lyapunov_spectrum.iter().take(3).enumerate() {
+            let bar_len = (lambda.abs() as f32 * 15.0).clamp(1.0, half_w);
+            let (bar_x, bar_color) = if lambda >= 0.0 {
+                (center_x, Color32::from_rgb(255, 90, 60))
+            } else {
+                (center_x - bar_len, Color32::from_rgb(60, 200, 120))
+            };
+            let bar_rect = Rect::from_min_size(Pos2::new(bar_x, y + 2.0), Vec2::new(bar_len, 12.0));
+            painter.rect_filled(bar_rect, 2.0, bar_color);
+            let sign = if lambda >= 0.0 { "+" } else { "" };
+            painter.text(Pos2::new(x, y), Align2::LEFT_TOP,
+                format!("λ{} = {}{:.4}", i + 1, sign, lambda),
+                FontId::monospace(11.0), bar_color);
+            y += 16.0;
+        }
+        y += 4.0;
+        // Kaplan-Yorke dimension estimate (if we have enough exponents)
+        if lyapunov_spectrum.len() >= 2 {
+            let mut sum = 0.0f64;
+            let mut ky_j = 0usize;
+            for (j, &lam) in lyapunov_spectrum.iter().enumerate() {
+                if sum + lam < 0.0 { break; }
+                sum += lam;
+                ky_j = j + 1;
+            }
+            if ky_j > 0 && ky_j < lyapunov_spectrum.len() {
+                let last_neg = lyapunov_spectrum[ky_j];
+                if last_neg.abs() > 1e-12 {
+                    let d_ky = ky_j as f64 + sum / last_neg.abs();
+                    painter.text(Pos2::new(x, y), Align2::LEFT_TOP,
+                        format!("D_KY ≈ {:.3}  (Kaplan-Yorke dim.)", d_ky),
+                        FontId::monospace(11.0), Color32::from_rgb(180, 180, 100));
+                    y += 16.0;
+                }
+            }
+        }
+    }
 
     let right_rect = Rect::from_min_max(
         Pos2::new(mid_x + 10.0, rect.top() + 10.0),

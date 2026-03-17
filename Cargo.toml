@@ -30,6 +30,7 @@ notify = "6"
 # Concurrency utilities
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
+rayon = "1"
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
