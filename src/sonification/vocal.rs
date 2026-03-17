@@ -27,7 +27,7 @@ impl VocalMapping {
         Self {
             min: Vec::new(),
             max: Vec::new(),
-            alpha: 0.001,
+            alpha: 0.02,
             vowel_pos: 0.0,
             breathiness: 0.0,
         }

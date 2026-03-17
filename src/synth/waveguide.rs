@@ -63,7 +63,8 @@ impl WaveguideString {
 
     pub fn set_freq(&mut self, hz: f32) {
         let hz = hz.max(10.0);
-        let scaled = hz * (0.5 + self.tension * 1.5);
+        // Exponential mapping: tension [0,1] → frequency [0.25x, 4.0x], unity at 0.5
+        let scaled = hz * 2.0f32.powf((self.tension - 0.5) * 2.0);
         self.length = (self.sample_rate / scaled).clamp(2.0, MAX_DELAY as f32 - 2.0);
     }
 
@@ -133,9 +134,10 @@ impl WaveguideString {
         self.delay_fwd[self.write_fwd] = fed_back;
         self.delay_bck[self.write_bck] = -fed_back;
 
-        // Advance write pointers
-        self.write_fwd = (self.write_fwd + 1) % MAX_DELAY;
-        self.write_bck = (self.write_bck + 1) % MAX_DELAY;
+        // Advance write pointers using active loop length to prevent overrun on freq change
+        let active_len = len_f as usize;
+        self.write_fwd = (self.write_fwd + 1) % active_len.max(4);
+        self.write_bck = (self.write_bck + 1) % active_len.max(4);
 
         // Output is the forward-traveling wave at the nut end
         fwd_read

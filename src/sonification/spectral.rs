@@ -81,9 +81,9 @@ impl Sonification for SpectralMapping {
             }
         }
 
-        // Spectral roll-off: higher partials naturally quieter
+        // Spectral roll-off: steeper natural rolloff (~-12 dB/oct)
         for (k, slot) in raw.iter_mut().enumerate() {
-            *slot *= 1.0 / (1.0 + k as f32 * 0.15);
+            *slot *= 1.0 / (1.0 + (k as f32).powf(1.5) * 0.08);
         }
 
         // Smooth to prevent clicks

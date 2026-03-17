@@ -133,6 +133,8 @@ pub struct AppState {
     pub coupled_target: String,
     pub coupled_x_out: f32,   // live display: main system x output (normalized)
     pub coupled_src_x_out: f32, // live display: source system x output (normalized)
+    pub coupled_bidirectional: bool,
+    pub sync_error: f32,
     // Performance mode
     pub perf_mode: bool,
     // Audio-reactive trail color
@@ -205,6 +207,7 @@ pub struct AppState {
     pub wounded: bool,                 // WOUND HEALING: crashed last session
     // Lyapunov exponent spectrum (computed every ~5s in sim thread, largest-first)
     pub lyapunov_spectrum: Vec<f64>,
+    pub attractor_type: String,
     // 2D bifurcation map
     pub bifurc_param2: String,
     pub bifurc_2d_mode: bool,
@@ -325,6 +328,8 @@ impl AppState {
             coupled_target: "rho".into(),
             coupled_x_out: 0.0,
             coupled_src_x_out: 0.0,
+            coupled_bidirectional: false,
+            sync_error: 0.0,
             perf_mode: false,
             trail_color: egui::Color32::from_rgb(0, 220, 255),
             custom_ode_x: "10.0 * (y - x)".into(),
@@ -376,6 +381,7 @@ impl AppState {
             time_of_day_f: 0.5,
             wounded: false,
             lyapunov_spectrum: Vec::new(),
+            attractor_type: String::new(),
             bifurc_param2: "sigma".into(),
             bifurc_2d_mode: false,
             bifurc_data_2d: Arc::new(Mutex::new(Vec::new())),
@@ -483,6 +489,11 @@ fn system_display_name(s: &str) -> &'static str {
         "hindmarsh_rose" => "Hindmarsh-Rose Neuron",
         "coupled_map_lattice" => "Coupled Map Lattice",
         "custom" => "Custom ODE",
+        "mackey_glass" => "Mackey-Glass DDE",
+        "nose_hoover" => "Nose-Hoover",
+        "sprott_b" => "Sprott B",
+        "henon_map" => "Henon Map",
+        "lorenz96" => "Lorenz-96",
         _ => "Unknown System",
     }
 }
@@ -504,6 +515,11 @@ fn system_internal_name(display: &str) -> &'static str {
         "Hindmarsh-Rose Neuron" => "hindmarsh_rose",
         "Coupled Map Lattice" => "coupled_map_lattice",
         "Custom ODE" => "custom",
+        "Mackey-Glass DDE" => "mackey_glass",
+        "Nose-Hoover" => "nose_hoover",
+        "Sprott B" => "sprott_b",
+        "Henon Map" => "henon_map",
+        "Lorenz-96" => "lorenz96",
         _ => "lorenz",
     }
 }
@@ -1022,7 +1038,7 @@ pub fn draw_ui(
         let (projection, rotation_angle, auto_rotate, system_name, mode_name,
              freqs, voice_levels, chord_intervals, current_state, current_deriv,
              chaos_level, order_param, kuramoto_phases, trail_color, perf_mode,
-             anaglyph_3d, anaglyph_separation, lyapunov_spectrum) = {
+             anaglyph_3d, anaglyph_separation, lyapunov_spectrum, attractor_type) = {
             let st = state.lock();
             let proj = st.viz_projection;
             let rot = st.rotation_angle;
@@ -1047,7 +1063,8 @@ pub fn draw_ui(
             let ag = st.anaglyph_3d;
             let ag_sep = st.anaglyph_separation;
             let ls = st.lyapunov_spectrum.clone();
-            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp, tc, pm, ag, ag_sep, ls)
+            let at = st.attractor_type.clone();
+            (proj, rot, ar, sn, mn, fr, vl, ci, cs, cd, cl, op, kp, tc, pm, ag, ag_sep, ls, at)
         };
 
         // ── Ghost trails + portrait ink update (visual memory) ─────────────────
@@ -1101,7 +1118,7 @@ pub fn draw_ui(
             2 => draw_arrange_tab(ui, state, recording),
             3 => draw_waveform(ui, waveform),
             4 => draw_note_map(ui, &freqs, &voice_levels, &chord_intervals),
-            5 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases, &lyapunov_spectrum),
+            5 => draw_math_view(ui, &system_name, &current_state, &current_deriv, chaos_level, order_param, &kuramoto_phases, &lyapunov_spectrum, &attractor_type),
             6 => draw_bifurc_diagram(ui, bifurc_data, state),
             _ => {}
         }
@@ -1374,7 +1391,7 @@ fn draw_advanced_panel(
 
     // ---- PHYSICS ENGINE ----
     collapsing_section(ui, "PHYSICS ENGINE", false, |ui| {
-        let systems_internal = ["lorenz", "fractional_lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body", "duffing", "van_der_pol", "halvorsen", "aizawa", "chua", "hindmarsh_rose", "coupled_map_lattice", "custom"];
+        let systems_internal = ["lorenz", "fractional_lorenz", "rossler", "double_pendulum", "geodesic_torus", "kuramoto", "three_body", "duffing", "van_der_pol", "halvorsen", "aizawa", "chua", "hindmarsh_rose", "coupled_map_lattice", "custom", "mackey_glass", "nose_hoover", "sprott_b", "henon_map", "lorenz96"];
         let systems_display: Vec<&str> = systems_internal.iter().map(|s| system_display_name(s)).collect();
         let current_sys = st.config.system.name.clone();
         let current_display = system_display_name(&current_sys);
@@ -1806,6 +1823,7 @@ fn draw_advanced_panel(
         // Live bar meters
         let main_x = st.coupled_x_out;
         let src_x = st.coupled_src_x_out;
+        let sync_err = st.sync_error;
         drop(st);
         ui.label(RichText::new("Live Output (x):").color(GRAY_HINT).size(11.0));
         ui.horizontal(|ui| {
@@ -1822,6 +1840,23 @@ fn draw_advanced_panel(
             let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * src_x, rect.height()));
             ui.painter().rect_filled(bar, 2.0, Color32::from_rgb(200, 100, 0));
         });
+        ui.add_space(4.0);
+        ui.label(RichText::new("Sync Error (EMA):").color(GRAY_HINT).size(11.0));
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(120.0, 14.0), Sense::hover());
+            ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(20, 20, 40));
+            let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * sync_err.clamp(0.0, 1.0), rect.height()));
+            let err_color = {
+                let t = sync_err.clamp(0.0, 1.0);
+                Color32::from_rgb((t * 220.0) as u8, ((1.0 - t) * 160.0) as u8, 60)
+            };
+            ui.painter().rect_filled(bar, 2.0, err_color);
+            ui.label(RichText::new(format!("{:.3}", sync_err)).color(GRAY_HINT).size(10.0));
+        });
+        {
+            let mut st = state.lock();
+            ui.checkbox(&mut st.coupled_bidirectional, RichText::new("Bidirectional Coupling").color(Color32::WHITE));
+        }
     });
 
     // ---- CUSTOM ODE ----
@@ -3953,6 +3988,7 @@ fn draw_math_view(
     order_param: f64,
     kuramoto_phases: &[f64],
     lyapunov_spectrum: &[f64],
+    attractor_type: &str,
 ) {
     let avail = ui.available_size();
     let (response, painter) = ui.allocate_painter(avail, Sense::hover());
@@ -4066,6 +4102,27 @@ fn draw_math_view(
                 }
             }
         }
+    }
+
+    if !attractor_type.is_empty() && attractor_type != "unknown" {
+        y += 6.0;
+        let atype_color = match attractor_type {
+            "chaos"       => Color32::from_rgb(255, 90, 60),
+            "hyperchaos"  => Color32::from_rgb(255, 40, 160),
+            "limit_cycle" => Color32::from_rgb(60, 200, 120),
+            "torus"       => Color32::from_rgb(80, 180, 255),
+            "fixed_point" => Color32::from_rgb(200, 200, 200),
+            _             => Color32::from_rgb(180, 180, 100),
+        };
+        painter.text(
+            Pos2::new(x, y),
+            Align2::LEFT_TOP,
+            format!("Attractor: {}", attractor_type.replace('_', " ")),
+            FontId::monospace(12.0),
+            atype_color,
+        );
+        y += 16.0;
+        let _ = y; // suppress unused warning
     }
 
     let right_rect = Rect::from_min_max(

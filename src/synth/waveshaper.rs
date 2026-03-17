@@ -35,7 +35,7 @@ impl Waveshaper {
         // Asymmetric path: even + odd harmonics (tube character)
         // The x² term breaks symmetry; tanh keeps it bounded.
         let k = self.asymmetry.clamp(0.0, 0.6);
-        let asym = (driven + k * driven * driven).tanh();
+        let asym = (driven + k * driven.abs()).tanh();
 
         // Blend: asymmetry=0 → pure sym, asymmetry=0.22 → warm tube mix
         let shaped = sym * (1.0 - k) + asym * k;

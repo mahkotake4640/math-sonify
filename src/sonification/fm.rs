@@ -25,8 +25,9 @@ impl Sonification for FmMapping {
         let carrier_freq = quantize_to_scale(norm0, base_hz, octave_range, scale);
 
         // Mod ratio from second state dimension
+        // Bound mod_ratio to musical range [1.0, 7.0]
         let mod_ratio = if state.len() > 1 {
-            1.0 + (state[1].abs() as f32 % 8.0)
+            1.0 + (state[1].abs() as f32 % 6.0)
         } else { 2.0 };
 
         // Chaos estimate from state magnitude

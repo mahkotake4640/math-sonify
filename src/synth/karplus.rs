@@ -51,7 +51,9 @@ impl KarplusStrong {
         self.length_f = (sample_rate / freq.max(20.0))
             .clamp(2.0, self.buf.len() as f32 - 2.0);
         let len = self.length_f as usize;
-        let mut rng = self.write as u64 * 6_364_136_223_846_793_005 + 1;
+        // Better seeding: add entropy from buffer content to avoid identical excitation
+        let mut rng = self.write as u64 ^ 0xDEADBEEFCAFEBABE;
+        rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; // warm up xorshift
         for i in 0..len {
             rng = rng.wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);

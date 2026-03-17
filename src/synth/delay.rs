@@ -28,7 +28,7 @@ impl DelayLine {
 
     pub fn set_delay_ms(&mut self, ms: f32, sample_rate: f32) {
         let max = self.buf_l.len() as f32 - 2.0;
-        self.delay_samples = (ms * 0.001 * sample_rate).clamp(1.0, max);
+        self.delay_samples = (ms * 0.001 * sample_rate).clamp(2.0, max);
     }
 
     #[inline(always)]
@@ -51,8 +51,8 @@ impl DelayLine {
         let del_l = if del_l.is_finite() { del_l } else { 0.0 };
         let del_r = if del_r.is_finite() { del_r } else { 0.0 };
 
-        self.buf_l[self.pos] = (l + del_l * self.feedback).clamp(-4.0, 4.0);
-        self.buf_r[self.pos] = (r + del_r * self.feedback).clamp(-4.0, 4.0);
+        self.buf_l[self.pos] = ((l + del_l * self.feedback) * 0.25).tanh() * 4.0;
+        self.buf_r[self.pos] = ((r + del_r * self.feedback) * 0.25).tanh() * 4.0;
         self.pos = (self.pos + 1) % self.buf_l.len();
 
         let dry = 1.0 - self.mix;

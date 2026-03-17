@@ -122,7 +122,7 @@ impl Freeverb {
     pub fn process(&mut self, input_l: f32, input_r: f32) -> (f32, f32) {
         let input_l = if input_l.is_finite() { input_l } else { 0.0 };
         let input_r = if input_r.is_finite() { input_r } else { 0.0 };
-        let mono_in = (input_l + input_r) * 0.015; // scale to prevent saturation
+        let mono_in = (input_l + input_r) * (0.015 * self.wet.clamp(0.1, 1.0) / 0.4); // scale proportional to wet level
         let mut out_l = 0.0f32;
         let mut out_r = 0.0f32;
         for c in &mut self.combs_l { out_l += c.process(mono_in); }

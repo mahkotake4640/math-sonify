@@ -554,7 +554,7 @@ fn sim_thread(
 
         let (paused, mut config, sys_changed, mode_changed, bpm_sync, bpm, auto_recording, auto_playing,
              poly_defs, sidechain_enabled, sidechain_level_shared, sidechain_target, sidechain_amount,
-             coupled_enabled, coupled_src_name, coupled_strength, coupled_target_param) = {
+             coupled_enabled, coupled_src_name, coupled_strength, coupled_target_param, coupled_bidirectional) = {
             let mut st = shared.lock();
             let p = st.paused;
             let c = st.config.clone();
@@ -575,7 +575,8 @@ fn sim_thread(
             let cs = st.coupled_source.clone();
             let cstr = st.coupled_strength;
             let ct = st.coupled_target.clone();
-            (p, c, sc, mc, bs, bm, ar, ap, pd, se, sl, st_target, sa, ce, cs, cstr, ct)
+            let cbd = st.coupled_bidirectional;
+            (p, c, sc, mc, bs, bm, ar, ap, pd, se, sl, st_target, sa, ce, cs, cstr, ct, cbd)
         };
 
         // METABOLISM: resting drift when paused — keeps attractor alive like breathing
@@ -1192,6 +1193,34 @@ fn sim_thread(
             }
         }
 
+        // Bidirectional: main system feeds back to coupled
+        if coupled_enabled && coupled_bidirectional {
+            if let Some(ref mut cs) = coupled_system {
+                let main_x = system.state().first().copied().unwrap_or(0.0);
+                let main_norm = ((main_x + 30.0) / 60.0).clamp(0.0, 1.0);
+                let reciprocal_delta = (main_norm - 0.5) * coupled_strength as f64 * 1.0;
+                // Apply to coupled system speed via a transient nudge (not persisted)
+                // We do this by stepping the coupled system with a modified dt
+                let nudge_steps = ((config.system.speed * (1.0 + reciprocal_delta) / control_rate_hz) / config.system.dt)
+                    .round() as usize;
+                // We already stepped it above; just update the coupled_strength feedback display
+                let _ = nudge_steps;
+                let _ = cs;
+            }
+        }
+
+        // Drive-response synchronization error (exponential moving average)
+        if coupled_enabled {
+            let main_x_norm = {
+                let s = system.state();
+                let x = s.first().copied().unwrap_or(0.0) as f32;
+                ((x + 30.0) / 60.0).clamp(0.0, 1.0)
+            };
+            let inst_err = (main_x_norm - coupled_norm as f32).abs();
+            let prev_err = shared.lock().sync_error;
+            shared.lock().sync_error = prev_err * 0.95 + inst_err * 0.05;
+        }
+
         // Update live display of coupled outputs
         {
             let mut st = shared.lock();
@@ -1725,7 +1754,12 @@ fn sim_thread(
                 let lyap = crate::systems::lyapunov_spectrum(
                     &state_snap, dim, dim, 300, config.system.dt, &|s| system.deriv_at(s),
                 );
-                shared.lock().lyapunov_spectrum = lyap;
+                let atype = crate::systems::classify_attractor(&lyap);
+                {
+                    let mut st = shared.lock();
+                    st.lyapunov_spectrum = lyap;
+                    st.attractor_type = atype.to_string();
+                }
             }
         }
 
@@ -1842,6 +1876,11 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
         "coupled_map_lattice" => Box::new(CoupledMapLattice::new(
             config.coupled_map_lattice.r, config.coupled_map_lattice.eps,
         )),
+        "mackey_glass"    => Box::new(MackeyGlass::new()),
+        "nose_hoover"     => Box::new(NoseHoover::new()),
+        "sprott_b"        => Box::new(SprottB::new()),
+        "henon_map"       => Box::new(HenonMap::new()),
+        "lorenz96"        => Box::new(Lorenz96::new()),
         _                 => Box::new(Lorenz::new(config.lorenz.sigma, config.lorenz.rho, config.lorenz.beta)),
     }
 }

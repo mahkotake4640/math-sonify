@@ -90,7 +90,7 @@ impl Adsr {
                 // Exponential decay toward sustain
                 self.level = self.level * self.decay_coeff
                     + self.decay_target * (1.0 - self.decay_coeff);
-                if (self.level - self.sustain_level).abs() < 0.0002 {
+                if (self.level - self.sustain_level).abs() < 0.0001 {
                     self.level = self.sustain_level;
                     self.stage = Stage::Sustain;
                 }

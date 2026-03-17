@@ -54,7 +54,7 @@ impl Grain {
         if self.window_phase >= 1.0 { self.active = false; }
 
         // Equal-power panning: constant loudness across the stereo field
-        let pan_angle = (self.pan.clamp(-1.0, 1.0) + 1.0) * 0.5 * PI * 0.5; // [0, π/2]
+        let pan_angle = (self.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4; // [0, π/2]
         let l = sig * pan_angle.cos();
         let r = sig * pan_angle.sin();
         (l, r)
@@ -67,6 +67,9 @@ pub struct GrainEngine {
     pub spawn_rate: f32,    // grains per second
     pub base_freq: f32,
     pub freq_spread: f32,   // semitones of random detune (±)
+    /// Grain overlap ratio (0.5 = 50% overlap, i.e., spawn rate relative to grain duration).
+    /// Used externally to scale spawn_rate: spawn_rate = overlap * sample_rate / avg_grain_duration.
+    pub overlap: f32,
     spawn_counter: f32,
     rng_state: u64,
 }
@@ -80,6 +83,7 @@ impl GrainEngine {
             spawn_rate: 20.0,
             base_freq: 220.0,
             freq_spread: 0.5,
+            overlap: 0.5,
             spawn_counter: 0.0,
             rng_state: 12345,
         }

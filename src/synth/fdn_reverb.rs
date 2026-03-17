@@ -59,7 +59,7 @@ impl FdnChannel {
         self.lfo_phase = (self.lfo_phase + self.lfo_rate)
             .rem_euclid(std::f32::consts::TAU);
         let mod_offset = self.lfo_phase.sin() * self.lfo_depth;
-        let delay_f = (base_delay as f32 + mod_offset).max(1.0);
+        let delay_f = (base_delay as f32 - mod_offset).max(1.0);
         let len = self.buf.len();
         let d0 = delay_f as usize;
         let frac = delay_f - d0 as f32;
@@ -134,7 +134,7 @@ impl FdnReverb {
             pre_delay_buf: vec![(0.0, 0.0); pre_delay_len],
             pre_delay_pos: 0,
             pre_delay_len,
-            feedback: 0.82,
+            feedback: 0.88,
             damping: 0.25,
             wet: 0.4,
         }

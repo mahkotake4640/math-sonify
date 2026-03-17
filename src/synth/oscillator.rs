@@ -10,6 +10,8 @@ pub struct Oscillator {
     sample_rate: f32,
     // Leaky integrator state for band-limited triangle generation
     tri_state: f32,
+    // DC-blocking state for square wave input to triangle integrator
+    sq_dc: f32,
 }
 
 /// PolyBLEP residual — removes the aliasing step artifact at a phase discontinuity.
@@ -35,7 +37,7 @@ fn poly_blep(t: f32, dt: f32) -> f32 {
 
 impl Oscillator {
     pub fn new(freq: f32, shape: OscShape, sample_rate: f32) -> Self {
-        Self { phase: 0.0, freq, shape, sample_rate, tri_state: 0.0 }
+        Self { phase: 0.0, freq, shape, sample_rate, tri_state: 0.0, sq_dc: 0.0 }
     }
 
     pub fn next_sample(&mut self) -> f32 {
@@ -61,10 +63,13 @@ impl Oscillator {
                 let sq = sq_naive
                     + poly_blep(t, dt)
                     - poly_blep((t + 0.5) % 1.0, dt);
+                // DC-block the square before integrating (prevents sub-bass accumulation)
+                self.sq_dc += 0.00001 * (sq - self.sq_dc);
+                let sq_ac = sq - self.sq_dc;
                 // Integrate: step size = 4*dt to get correct ±1 amplitude
-                self.tri_state += 4.0 * dt * sq;
-                // Gentle DC-blocking leak (removes integrator drift)
-                self.tri_state *= 1.0 - 1e-4;
+                self.tri_state += 4.0 * dt * sq_ac;
+                // Slightly tighter leak to remove integrator drift
+                self.tri_state *= 1.0 - 2e-5;
                 self.tri_state
             }
         };

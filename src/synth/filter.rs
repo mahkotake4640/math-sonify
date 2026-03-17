@@ -42,7 +42,11 @@ impl BiquadFilter {
         let y = self.b0 * x + self.z1;
         self.z1 = self.b1 * x - self.a1 * y + self.z2;
         self.z2 = self.b2 * x - self.a2 * y;
-        if y.is_finite() { y } else { self.z1 = 0.0; self.z2 = 0.0; 0.0 }
+        if y.is_finite() { y } else {
+            self.z1 = self.z1.clamp(-1.0, 1.0);
+            self.z2 = self.z2.clamp(-1.0, 1.0);
+            0.0
+        }
     }
 
     pub fn update_lp(&mut self, cutoff_hz: f32, q: f32, sample_rate: f32) {

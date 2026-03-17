@@ -16,8 +16,8 @@ pub struct Chorus {
 
 impl Chorus {
     pub fn new(sample_rate: f32) -> Self {
-        // Max delay 25 ms (a little headroom above the deepest modulation)
-        let max_delay_samples = (25.0 * 0.001 * sample_rate) as usize + 2;
+        // Max delay 50 ms (a little headroom above the deepest modulation)
+        let max_delay_samples = (50.0 * 0.001 * sample_rate) as usize + 2;
         Self {
             mix: 0.0,
             rate: 0.5,

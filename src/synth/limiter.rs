@@ -8,6 +8,7 @@ pub struct Limiter {
     lookahead: Vec<(f32, f32)>,
     lh_pos: usize,
     lh_len: usize,
+    gain_smooth: f32,
 }
 
 impl Limiter {
@@ -22,6 +23,7 @@ impl Limiter {
             lookahead: vec![(0.0, 0.0); lh_len],
             lh_pos: 0,
             lh_len,
+            gain_smooth: 1.0,
         }
     }
 
@@ -44,12 +46,15 @@ impl Limiter {
         let (dl, dr) = self.lookahead[read_pos];
         self.lh_pos = (self.lh_pos + 1) % self.lh_len;
 
-        // Gain reduction
-        let gain = if self.envelope > self.threshold {
+        // Smooth gain reduction to eliminate zipper noise
+        let target_gain = if self.envelope > self.threshold {
             self.threshold / self.envelope
         } else {
             1.0
         };
-        (dl * gain, dr * gain)
+        // Fast attack (0.001 coeff), slow release (0.0001 coeff)
+        let coeff = if target_gain < self.gain_smooth { 0.001 } else { 0.0001 };
+        self.gain_smooth += coeff * (target_gain - self.gain_smooth);
+        (dl * self.gain_smooth, dr * self.gain_smooth)
     }
 }

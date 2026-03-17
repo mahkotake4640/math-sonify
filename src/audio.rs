@@ -13,6 +13,7 @@ use crate::sonification::{AudioParams, SonifMode};
 use crate::synth::{
     Oscillator, OscShape, BiquadFilter, FdnReverb, DelayLine, Limiter,
     GrainEngine, Bitcrusher, KarplusStrong, Chorus, Waveshaper, Adsr, WaveguideString,
+    ThreeBandEq,
 };
 
 pub type WavRecorder     = Arc<Mutex<Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>>>;
@@ -118,10 +119,11 @@ impl LayerSynth {
     }
 
     fn update(&mut self, p: &AudioParams) {
-        self.grains.spawn_rate = p.grain_spawn_rate;
+        self.grains.spawn_rate += 0.05 * (p.grain_spawn_rate - self.grains.spawn_rate);
         self.grains.base_freq  = p.grain_base_freq;
         self.grains.freq_spread = p.grain_freq_spread;
-        self.freq_smooth_rate = (1.0 / (p.portamento_ms.max(1.0) * 0.001 * self.sr)).clamp(0.001, 1.0);
+        let samples = p.portamento_ms.max(1.0) * 0.001 * self.sr;
+        self.freq_smooth_rate = (1.0 - (-6.908 / samples).exp()).clamp(0.001, 1.0);
         self.chord_intervals = p.chord_intervals;
         self.waveshaper.drive = p.waveshaper_drive;
         self.waveshaper.mix   = p.waveshaper_mix;
@@ -232,9 +234,10 @@ impl LayerSynth {
         let out_l = l * self.level * pan_l;
         let out_r = r * self.level * pan_r;
 
-        // Track peak for VU meter
+        // Track peak for VU meter with proper ballistic decay (~300ms release)
         let peak = out_l.abs().max(out_r.abs());
-        self.peak = (self.peak * 0.999).max(peak); // fast attack, slow decay
+        let decay_coeff = (-6.908 / (0.3 * self.sr)).exp();
+        self.peak = (self.peak * decay_coeff).max(peak);
 
         (out_l, out_r)
     }
@@ -298,10 +301,9 @@ impl LayerSynth {
         let width = 1.0 + p.chaos_level.clamp(0.0, 1.0) * 1.2;
         let mid  = (l + r) * 0.5;
         let side = (l - r) * 0.5 * width;
-        // Decode mid-side back to L/R — no * 0.5 here; it was already baked
-        // into the mid/side computation above (both use * 0.5), so the round-
-        // trip is transparent at width=1.0 and properly widens at width>1.0.
-        (mid + side, mid - side)
+        // Energy-preserving normalisation: prevents loudness increase at wide widths.
+        let norm = 1.0 / (1.0 + (width - 1.0) * 0.5).sqrt();
+        ((mid + side) * norm, (mid - side) * norm)
     }
 
     fn synth_spectral(&mut self, p: &AudioParams) -> (f32, f32) {
@@ -449,11 +451,14 @@ struct SynthState {
     layers: [LayerSynth; 3],
     // Shared master effects chain
     filter: BiquadFilter,
+    eq: ThreeBandEq,
     reverb: FdnReverb,
     delay: DelayLine,
     limiter: Limiter,
     chorus: Chorus,
     master_volume: f32,
+    // Sidechain duck (KS trigger ducks reverb/delay output)
+    sidechain_duck: f32,
     reverb_wet: f32,
     delay_ms: f32,
     delay_feedback: f32,
@@ -494,11 +499,13 @@ impl SynthState {
             layer_params: [None, None, None],
             layers: [LayerSynth::new(sr), LayerSynth::new(sr), LayerSynth::new(sr)],
             filter: BiquadFilter::low_pass(8000.0, 0.7, sr),
+            eq: ThreeBandEq::new(sr),
             reverb,
             delay,
             limiter: Limiter::new(-1.0, 5.0, sr),
             chorus: Chorus::new(sr),
             master_volume: 0.7,
+            sidechain_duck: 1.0,
             reverb_wet,
             delay_ms,
             delay_feedback,
@@ -518,8 +525,8 @@ impl SynthState {
         if idx >= 3 { return; }
         // Update master effects from layer 0 params (layer 0 owns the master bus)
         if idx == 0 {
-            // Hard floor at 300 Hz — lower cuts too much content and causes perceived silence
-            let safe_cutoff = params.filter_cutoff.max(300.0);
+            // Hard floor at 50 Hz — allows sub-bass content to pass through
+            let safe_cutoff = params.filter_cutoff.max(50.0);
             self.filter.update_lp(safe_cutoff, params.filter_q, self.sample_rate);
             self.master_volume = params.master_volume;
             self.reverb.wet = params.reverb_wet.clamp(0.0, 1.0);
@@ -528,6 +535,10 @@ impl SynthState {
             self.chorus.mix   = params.chorus_mix;
             self.chorus.rate  = params.chorus_rate;
             self.chorus.depth = params.chorus_depth;
+        }
+        // Sidechain compression: KS trigger ducks reverb/delay output
+        if params.ks_trigger {
+            self.sidechain_duck = 0.3; // -10 dB duck
         }
         self.layers[idx].update(&params);
         self.layer_params[idx] = Some(params);
@@ -590,28 +601,42 @@ impl SynthState {
             self.filter.process(sum_l),
             self.filter.process(sum_r),
         );
-        let (ld, rd) = self.delay.process(lf, rf);
+        // 3-band parametric EQ (between filter and delay)
+        let (leq, req) = self.eq.process(lf, rf);
+        let (ld, rd) = self.delay.process(leq, req);
         // Skip chorus computation when mix is negligible (CPU optimization)
         let (lc, rc) = if self.chorus.mix > 0.001 {
             self.chorus.process(ld, rd)
         } else {
             (ld, rd)
         };
-        // Skip reverb computation when wet is negligible (CPU optimization)
-        let (lrev, rrev) = if self.reverb.wet > 0.001 {
-            self.reverb.process(lc, rc)
-        } else {
+        // Noise gate: skip reverb for signals below -80 dBFS
+        let gate_threshold = 1e-4;
+        let (lc_gated, rc_gated) = if lc.abs().max(rc.abs()) > gate_threshold {
             (lc, rc)
+        } else {
+            (lc, rc) // pass through dry (reverb skipped below)
         };
+        // Skip reverb computation when wet is negligible (CPU optimization)
+        let (lrev, rrev) = if self.reverb.wet > 0.001 && lc.abs().max(rc.abs()) > gate_threshold {
+            let (rl, rr) = self.reverb.process(lc_gated, rc_gated);
+            // Apply sidechain duck to reverb output
+            (rl * self.sidechain_duck, rr * self.sidechain_duck)
+        } else {
+            (lc_gated, rc_gated)
+        };
+        // Sidechain duck recovery
+        self.sidechain_duck += 0.0003 * (1.0 - self.sidechain_duck);
         let (lo_raw, ro_raw) = self.limiter.process(lrev, rrev);
 
         // Final NaN guard
         let lo = if lo_raw.is_finite() { lo_raw } else { 0.0 };
         let ro = if ro_raw.is_finite() { ro_raw } else { 0.0 };
 
-        // Master peak for VU
+        // Master peak for VU with proper ballistic decay (~300ms release)
         let mpeak = lo.abs().max(ro.abs());
-        self.master_peak = (self.master_peak * 0.999).max(mpeak);
+        let master_decay_coeff = (-6.908 / (0.3 * self.sample_rate)).exp();
+        self.master_peak = (self.master_peak * master_decay_coeff).max(mpeak);
         if let Some(mut m) = self.meter.try_lock() {
             m[3] = (m[3] * 0.99).max(self.master_peak);
             self.master_peak *= 0.98;

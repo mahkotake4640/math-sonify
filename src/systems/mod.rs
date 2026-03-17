@@ -13,6 +13,11 @@ pub mod aizawa;
 pub mod chua;
 pub mod hindmarsh_rose;
 pub mod coupled_map_lattice;
+pub mod mackey_glass;
+pub mod nose_hoover;
+pub mod sprott_b;
+pub mod henon_map;
+pub mod lorenz96;
 
 pub use lorenz::Lorenz;
 pub use custom_ode::{CustomOde, validate_exprs};
@@ -29,6 +34,11 @@ pub use aizawa::Aizawa;
 pub use chua::Chua;
 pub use hindmarsh_rose::HindmarshRose;
 pub use coupled_map_lattice::CoupledMapLattice;
+pub use mackey_glass::MackeyGlass;
+pub use nose_hoover::NoseHoover;
+pub use sprott_b::SprottB;
+pub use henon_map::HenonMap;
+pub use lorenz96::Lorenz96;
 
 /// A continuous-time dynamical system that can be stepped forward.
 pub trait DynamicalSystem: Send {
@@ -203,6 +213,339 @@ where
     }
     let total_time = n_steps as f64 * dt;
     log_sum.iter().map(|&s| s / total_time).collect()
+}
+
+/// Record states whenever the trajectory crosses the plane `state[plane_dim] == plane_val`
+/// from below (negative to positive crossing).
+/// Returns a Vec of crossing states (each is a Vec<f64> snapshot of the full state).
+/// `n_warmup`: steps to discard before recording; `n_crossings`: crossings to capture.
+pub fn poincare_section<F>(
+    initial_state: &[f64],
+    dt: f64,
+    n_warmup: usize,
+    n_crossings: usize,
+    plane_dim: usize,
+    plane_val: f64,
+    f: &F,
+) -> Vec<Vec<f64>>
+where
+    F: Fn(&[f64]) -> Vec<f64>,
+{
+    let mut state = initial_state.to_vec();
+    // Warmup
+    for _ in 0..n_warmup {
+        rk4(&mut state, dt, f);
+    }
+    let mut crossings = Vec::new();
+    let mut prev = state.clone();
+    while crossings.len() < n_crossings {
+        rk4(&mut state, dt, f);
+        let prev_val = prev[plane_dim] - plane_val;
+        let curr_val = state[plane_dim] - plane_val;
+        if prev_val < 0.0 && curr_val >= 0.0 {
+            // Linear interpolation to find crossing
+            let t_cross = if (curr_val - prev_val).abs() > 1e-15 {
+                (plane_val - prev[plane_dim]) / (state[plane_dim] - prev[plane_dim])
+            } else {
+                0.5
+            };
+            let cross_state: Vec<f64> = prev.iter().zip(state.iter())
+                .map(|(&p, &s)| p + t_cross * (s - p))
+                .collect();
+            crossings.push(cross_state);
+        }
+        prev = state.clone();
+    }
+    crossings
+}
+
+/// Estimate the period of a (near-)periodic orbit by tracking Poincaré crossings.
+/// Returns `Some(period_in_time_units)` if a period is detected within tolerance,
+/// or `None` if the orbit appears chaotic or took too long.
+pub fn detect_period<F>(
+    initial_state: &[f64],
+    dt: f64,
+    plane_dim: usize,
+    f: &F,
+    max_steps: usize,
+) -> Option<f64>
+where
+    F: Fn(&[f64]) -> Vec<f64>,
+{
+    // Warmup 200 steps to estimate plane_val
+    let mut state = initial_state.to_vec();
+    let n_warm = 200usize;
+    let mut sum_val = 0.0f64;
+    for _ in 0..n_warm {
+        rk4(&mut state, dt, f);
+        sum_val += state[plane_dim];
+    }
+    let plane_val = sum_val / n_warm as f64;
+
+    let mut prev = state.clone();
+    let mut crossing_times: Vec<f64> = Vec::new();
+    let mut t = n_warm as f64 * dt;
+
+    for _ in 0..max_steps {
+        rk4(&mut state, dt, f);
+        t += dt;
+        let prev_val = prev[plane_dim] - plane_val;
+        let curr_val = state[plane_dim] - plane_val;
+        if prev_val < 0.0 && curr_val >= 0.0 {
+            let t_frac = if (curr_val - prev_val).abs() > 1e-15 {
+                (plane_val - prev[plane_dim]) / (state[plane_dim] - prev[plane_dim])
+            } else {
+                0.5
+            };
+            let t_cross = t - dt + t_frac * dt;
+            crossing_times.push(t_cross);
+            if crossing_times.len() >= 3 {
+                let n = crossing_times.len();
+                let last_interval = crossing_times[n - 1] - crossing_times[n - 2];
+                let prev_interval = crossing_times[n - 2] - crossing_times[n - 3];
+                if prev_interval > 1e-12 {
+                    let ratio = last_interval / prev_interval;
+                    if (ratio - 1.0).abs() < 0.05 {
+                        // Stable period detected — return average
+                        let avg = crossing_times.windows(2)
+                            .map(|w| w[1] - w[0])
+                            .sum::<f64>() / (crossing_times.len() - 1) as f64;
+                        return Some(avg);
+                    }
+                }
+            }
+        }
+        prev = state.clone();
+    }
+    None
+}
+
+/// Find a fixed point of the system near `guess` using Newton's method on f(x)=0.
+/// Returns `Some(fixed_point)` if converged within `tol` in `max_iter` iterations,
+/// or `None` if diverged.
+pub fn find_fixed_point<F>(
+    guess: &[f64],
+    tol: f64,
+    max_iter: usize,
+    f: &F,
+) -> Option<Vec<f64>>
+where
+    F: Fn(&[f64]) -> Vec<f64>,
+{
+    let eps = 1e-7f64;
+    let n = guess.len();
+    let mut x = guess.to_vec();
+    for _ in 0..max_iter {
+        let fx = f(&x);
+        // Check convergence
+        let fnorm: f64 = fx.iter().map(|&v| v * v).sum::<f64>().sqrt();
+        if fnorm < tol { return Some(x); }
+        // Divergence check
+        let xnorm: f64 = x.iter().map(|&v| v * v).sum::<f64>().sqrt();
+        if xnorm > 1e6 { return None; }
+        // Build numerical Jacobian n×n
+        let mut jac = vec![vec![0.0f64; n]; n];
+        for j in 0..n {
+            let mut xp = x.clone();
+            xp[j] += eps;
+            let fxp = f(&xp);
+            for i in 0..n {
+                jac[i][j] = (fxp[i] - fx[i]) / eps;
+            }
+        }
+        // Solve J * dx = -fx via Gaussian elimination (in-place augmented matrix)
+        // Augmented matrix: [J | -fx]
+        let mut aug: Vec<Vec<f64>> = (0..n).map(|i| {
+            let mut row = jac[i].clone();
+            row.push(-fx[i]);
+            row
+        }).collect();
+        for col in 0..n {
+            // Find pivot
+            let pivot = (col..n).max_by(|&a, &b| {
+                aug[a][col].abs().partial_cmp(&aug[b][col].abs()).unwrap_or(std::cmp::Ordering::Equal)
+            })?;
+            aug.swap(col, pivot);
+            let diag = aug[col][col];
+            if diag.abs() < 1e-15 { return None; }
+            for k in col..=n { aug[col][k] /= diag; }
+            for row in 0..n {
+                if row != col {
+                    let factor = aug[row][col];
+                    for k in col..=n { aug[row][k] -= factor * aug[col][k]; }
+                }
+            }
+        }
+        // dx is in aug[i][n]
+        for i in 0..n { x[i] += aug[i][n]; }
+    }
+    // Final check
+    let fx = f(&x);
+    let fnorm: f64 = fx.iter().map(|&v| v * v).sum::<f64>().sqrt();
+    if fnorm < tol { Some(x) } else { None }
+}
+
+/// Classify the attractor type from its Lyapunov spectrum.
+/// Returns one of: "fixed_point", "limit_cycle", "torus", "chaos", "hyperchaos", "unknown"
+pub fn classify_attractor(lyapunov: &[f64]) -> &'static str {
+    if lyapunov.is_empty() { return "unknown"; }
+    let positive_count = lyapunov.iter().filter(|&&l| l > 0.01).count();
+    let near_zero_count = lyapunov.iter().filter(|&&l| l.abs() < 0.01).count();
+    let all_negative = lyapunov.iter().all(|&l| l < 0.0);
+    if all_negative {
+        return "fixed_point";
+    }
+    if positive_count >= 2 {
+        return "hyperchaos";
+    }
+    if positive_count == 1 {
+        return "chaos";
+    }
+    // No positive exponents
+    if near_zero_count >= 2 {
+        return "torus";
+    }
+    if near_zero_count == 1 {
+        return "limit_cycle";
+    }
+    "unknown"
+}
+
+/// Compute permutation entropy of a 1D time series.
+/// `order`: embedding dimension (3–7 typical). `delay`: time delay in samples.
+/// Returns entropy in nats, normalized to [0,1] by dividing by ln(order!).
+pub fn permutation_entropy(trajectory: &[f64], order: usize, delay: usize) -> f64 {
+    if order < 2 || trajectory.is_empty() { return 0.0; }
+    let delay = delay.max(1);
+    let window = order * delay;
+    // Number of windows
+    let n_windows = if trajectory.len() >= window {
+        trajectory.len() - window + 1
+    } else {
+        return 0.0;
+    };
+    // Count pattern frequencies
+    let mut counts: std::collections::HashMap<Vec<usize>, usize> = std::collections::HashMap::new();
+    for start in 0..n_windows {
+        // Extract pattern: indices 0, delay, 2*delay, ...
+        let pattern: Vec<f64> = (0..order).map(|k| trajectory[start + k * delay]).collect();
+        // Argsort
+        let mut idx: Vec<usize> = (0..order).collect();
+        idx.sort_by(|&a, &b| pattern[a].partial_cmp(&pattern[b]).unwrap_or(std::cmp::Ordering::Equal));
+        *counts.entry(idx).or_insert(0) += 1;
+    }
+    let total = n_windows as f64;
+    let entropy: f64 = counts.values()
+        .map(|&c| { let p = c as f64 / total; -p * p.ln() })
+        .sum();
+    // Normalize by ln(order!)
+    let factorial: f64 = (1..=order).map(|k| k as f64).product();
+    let max_entropy = factorial.ln();
+    if max_entropy > 1e-15 { entropy / max_entropy } else { 0.0 }
+}
+
+/// Estimate the correlation dimension of an attractor from a trajectory.
+/// Uses the Grassberger-Procaccia algorithm: C(r) ~ r^D as r→0.
+/// `trajectory`: Vec of state snapshots. `n_pairs`: number of random pairs to sample.
+/// Returns estimated dimension D.
+pub fn correlation_dimension(trajectory: &[Vec<f64>], n_pairs: usize) -> f64 {
+    let n = trajectory.len();
+    if n < 2 || n_pairs == 0 { return 0.0; }
+    // Sample random pairs using a simple LCG
+    let mut seed: u64 = 12345678901234567;
+    let lcg_next = |s: &mut u64| -> usize {
+        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (*s >> 33) as usize
+    };
+    let mut distances: Vec<f64> = Vec::with_capacity(n_pairs);
+    for _ in 0..n_pairs {
+        let i = lcg_next(&mut seed) % n;
+        let j = lcg_next(&mut seed) % n;
+        if i == j { continue; }
+        let dist: f64 = trajectory[i].iter().zip(trajectory[j].iter())
+            .map(|(&a, &b)| (a - b) * (a - b))
+            .sum::<f64>()
+            .sqrt();
+        distances.push(dist);
+    }
+    if distances.is_empty() { return 0.0; }
+    distances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let total = distances.len();
+    let r1_idx = total / 10;
+    let r2_idx = (total * 9) / 10;
+    let r1 = distances[r1_idx];
+    let r2 = distances[r2_idx.min(total - 1)];
+    let c1 = distances.iter().filter(|&&d| d < r1).count() as f64;
+    let c2 = distances.iter().filter(|&&d| d < r2).count() as f64;
+    let dim = (c2.max(1.0).ln() - c1.max(1.0).ln())
+        / ((r2 / r1.max(1e-10)).max(1e-10).ln());
+    dim.clamp(0.0, 20.0)
+}
+
+/// Find a parameter path from `p_start` to `p_end` that avoids divergence,
+/// using binary subdivision. `test_fn` returns true if a parameter value is "safe"
+/// (system does not diverge there). Returns a sorted Vec of safe waypoint values
+/// from start to end. If the direct path is safe, returns `[p_start, p_end]`.
+/// Recursively subdivides at the midpoint if midpoint is unsafe (up to `max_depth`).
+pub fn safe_param_path(
+    p_start: f64,
+    p_end: f64,
+    test_fn: &dyn Fn(f64) -> bool,
+    max_depth: usize,
+) -> Vec<f64> {
+    if max_depth == 0 {
+        return vec![p_start, p_end];
+    }
+    let p_mid = (p_start + p_end) / 2.0;
+    if test_fn(p_mid) {
+        // Midpoint is safe — direct path is fine
+        vec![p_start, p_end]
+    } else {
+        // Subdivide
+        let mut left = safe_param_path(p_start, p_mid, test_fn, max_depth - 1);
+        let right = safe_param_path(p_mid, p_end, test_fn, max_depth - 1);
+        // Merge: left already ends with p_mid or p_start; right starts with p_mid
+        // Avoid duplicate at junction
+        for v in right.into_iter().skip(1) {
+            left.push(v);
+        }
+        left
+    }
+}
+
+/// Morris one-at-a-time screening: estimate parameter sensitivity by measuring
+/// how much the output changes when each parameter is perturbed by `delta`.
+/// `params`: baseline parameter values. `output_fn`: closure taking a param slice,
+/// returning a scalar metric. `delta`: relative perturbation (e.g. 0.1 for 10%).
+/// Returns sensitivity index for each parameter (larger = more influential).
+pub fn morris_sensitivity<F>(
+    params: &[f64],
+    delta: f64,
+    output_fn: F,
+) -> Vec<f64>
+where
+    F: Fn(&[f64]) -> f64,
+{
+    let baseline = output_fn(params);
+    let mut sensitivities = Vec::with_capacity(params.len());
+    for i in 0..params.len() {
+        let mut perturbed = params.to_vec();
+        perturbed[i] *= 1.0 + delta;
+        let output = output_fn(&perturbed);
+        let sensitivity = if delta.abs() > 1e-15 {
+            ((output - baseline) / delta).abs()
+        } else {
+            0.0
+        };
+        sensitivities.push(sensitivity);
+    }
+    sensitivities
+}
+
+/// Estimate Kolmogorov (metric) entropy from the Lyapunov spectrum.
+/// Per Pesin's identity: K = Σ max(λᵢ, 0) (sum of positive Lyapunov exponents).
+pub fn kolmogorov_entropy(lyapunov: &[f64]) -> f64 {
+    lyapunov.iter().map(|&l| l.max(0.0)).sum()
 }
 
 /// Symplectic (leapfrog / Störmer-Verlet) helper for Hamiltonian systems.
