@@ -1,4 +1,4 @@
-use super::{DynamicalSystem, rk4};
+use super::{rk4, DynamicalSystem};
 
 /// Chua's circuit — canonical example of a chaotic electronic circuit.
 ///
@@ -33,18 +33,20 @@ impl Chua {
         let x = state[0];
         let y = state[1];
         let z = state[2];
-        vec![
-            alpha * (y - x - Self::h(x, m0, m1)),
-            x - y + z,
-            -beta * y,
-        ]
+        vec![alpha * (y - x - Self::h(x, m0, m1)), x - y + z, -beta * y]
     }
 }
 
 impl DynamicalSystem for Chua {
-    fn state(&self) -> &[f64] { &self.state }
-    fn dimension(&self) -> usize { 3 }
-    fn name(&self) -> &str { "Chua's Circuit" }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+    fn dimension(&self) -> usize {
+        3
+    }
+    fn name(&self) -> &str {
+        "Chua's Circuit"
+    }
 
     fn step(&mut self, dt: f64) {
         let (alpha, beta, m0, m1) = (self.alpha, self.beta, self.m0, self.m1);

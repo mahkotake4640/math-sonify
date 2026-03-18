@@ -45,11 +45,21 @@ impl Limiter {
 
     /// Process one stereo sample pair and return the gain-limited output `(left, right)`.
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        let l = if l.is_finite() { l.clamp(-10.0, 10.0) } else { 0.0 };
-        let r = if r.is_finite() { r.clamp(-10.0, 10.0) } else { 0.0 };
+        let l = if l.is_finite() {
+            l.clamp(-10.0, 10.0)
+        } else {
+            0.0
+        };
+        let r = if r.is_finite() {
+            r.clamp(-10.0, 10.0)
+        } else {
+            0.0
+        };
 
         // Peak detection — reset envelope if it has gone NaN/inf
-        if !self.envelope.is_finite() { self.envelope = 0.0; }
+        if !self.envelope.is_finite() {
+            self.envelope = 0.0;
+        }
         let peak = l.abs().max(r.abs());
         if peak > self.envelope {
             self.envelope += self.attack_coeff * (peak - self.envelope);
@@ -70,7 +80,11 @@ impl Limiter {
             1.0
         };
         // Fast attack (0.001 coeff), slow release (0.0001 coeff)
-        let coeff = if target_gain < self.gain_smooth { 0.001 } else { 0.0001 };
+        let coeff = if target_gain < self.gain_smooth {
+            0.001
+        } else {
+            0.0001
+        };
         self.gain_smooth += coeff * (target_gain - self.gain_smooth);
         (dl * self.gain_smooth, dr * self.gain_smooth)
     }

@@ -17,7 +17,14 @@
 /// reaches within 0.1% of target in exactly the specified time.
 
 #[derive(Clone, Copy, PartialEq, Default)]
-enum Stage { #[default] Idle, Attack, Decay, Sustain, Release }
+enum Stage {
+    #[default]
+    Idle,
+    Attack,
+    Decay,
+    Sustain,
+    Release,
+}
 
 #[derive(Clone, Default)]
 /// ADSR envelope generator with exponential decay and release curves.
@@ -44,14 +51,16 @@ pub struct Adsr {
 /// within 0.1% of its target in `time_ms` milliseconds.
 fn exp_coeff(time_ms: f32, sample_rate: f32) -> f32 {
     let samples = (time_ms * 0.001 * sample_rate).max(1.0);
-    (-6.908 / samples).exp()  // ln(1000) ≈ 6.908
+    (-6.908 / samples).exp() // ln(1000) ≈ 6.908
 }
 
 /// Helper: run the ADSR for `n` samples and return the last value.
 #[cfg(test)]
 fn run_for(env: &mut Adsr, n: usize) -> f32 {
     let mut v = 0.0;
-    for _ in 0..n { v = env.next_sample(); }
+    for _ in 0..n {
+        v = env.next_sample();
+    }
     v
 }
 
@@ -64,7 +73,13 @@ impl Adsr {
     /// - `sustain`: Sustain amplitude level (0..1).
     /// - `release_ms`: Exponential release time to reach silence.
     /// - `sample_rate`: Audio sample rate in Hz.
-    pub fn new(attack_ms: f32, decay_ms: f32, sustain: f32, release_ms: f32, sample_rate: f32) -> Self {
+    pub fn new(
+        attack_ms: f32,
+        decay_ms: f32,
+        sustain: f32,
+        release_ms: f32,
+        sample_rate: f32,
+    ) -> Self {
         let sustain = sustain.clamp(0.0, 1.0);
         let mut s = Self {
             stage: Stage::Idle,
@@ -84,21 +99,31 @@ impl Adsr {
     pub fn set_params(&mut self, attack_ms: f32, decay_ms: f32, sustain: f32, release_ms: f32) {
         let sr = self.sample_rate.max(1.0);
         let sustain = sustain.clamp(0.0, 1.0);
-        self.attack_rate   = 1.0 / (attack_ms * 0.001 * sr).max(1.0);
-        self.decay_coeff   = exp_coeff(decay_ms, sr);
-        self.decay_target  = sustain;
+        self.attack_rate = 1.0 / (attack_ms * 0.001 * sr).max(1.0);
+        self.decay_coeff = exp_coeff(decay_ms, sr);
+        self.decay_target = sustain;
         self.release_coeff = exp_coeff(release_ms, sr);
         self.sustain_level = sustain;
     }
 
     /// Begin the attack stage.
-    pub fn trigger(&mut self) { self.stage = Stage::Attack; }
+    pub fn trigger(&mut self) {
+        self.stage = Stage::Attack;
+    }
     /// Begin the release stage (no-op if already idle).
-    pub fn release(&mut self) { if self.stage != Stage::Idle { self.stage = Stage::Release; } }
+    pub fn release(&mut self) {
+        if self.stage != Stage::Idle {
+            self.stage = Stage::Release;
+        }
+    }
     /// Returns `true` when the envelope has fully released and is producing silence.
-    pub fn is_idle(&self) -> bool { self.stage == Stage::Idle }
+    pub fn is_idle(&self) -> bool {
+        self.stage == Stage::Idle
+    }
     /// Returns the current envelope level without advancing the state.
-    pub fn level(&self) -> f32 { self.level }
+    pub fn level(&self) -> f32 {
+        self.level
+    }
 
     /// Advance the envelope by one sample and return the current level.
     pub fn next_sample(&mut self) -> f32 {
@@ -116,8 +141,8 @@ impl Adsr {
             }
             Stage::Decay => {
                 // Exponential decay toward sustain
-                self.level = self.level * self.decay_coeff
-                    + self.decay_target * (1.0 - self.decay_coeff);
+                self.level =
+                    self.level * self.decay_coeff + self.decay_target * (1.0 - self.decay_coeff);
                 if (self.level - self.sustain_level).abs() < 0.0001 {
                     self.level = self.sustain_level;
                     self.stage = Stage::Sustain;
@@ -129,7 +154,8 @@ impl Adsr {
             Stage::Release => {
                 // Exponential decay toward zero
                 self.level *= self.release_coeff;
-                if self.level < 1e-6 { // −120 dBFS — no audible tail, no DC accumulation
+                if self.level < 1e-6 {
+                    // −120 dBFS — no audible tail, no DC accumulation
                     self.level = 0.0;
                     self.stage = Stage::Idle;
                 }
@@ -161,10 +187,18 @@ mod tests {
         env.trigger();
         // After a few samples the level should be rising from 0.
         let early = run_for(&mut env, attack_samples / 4);
-        assert!(early > 0.0 && early < 1.0, "Level should be rising during attack, got {}", early);
+        assert!(
+            early > 0.0 && early < 1.0,
+            "Level should be rising during attack, got {}",
+            early
+        );
         // Run another full attack_samples to ensure we are well past the attack stage.
         let peak = run_for(&mut env, attack_samples * 2);
-        assert!(peak >= 0.5, "Level should be >= sustain after attack+decay, got {}", peak);
+        assert!(
+            peak >= 0.5,
+            "Level should be >= sustain after attack+decay, got {}",
+            peak
+        );
     }
 
     #[test]
@@ -176,8 +210,12 @@ mod tests {
         run_for(&mut env, 100);
         // Now in decay; wait long enough to reach sustain.
         let after_decay = run_for(&mut env, 20000);
-        assert!((after_decay - sustain).abs() < 0.01,
-            "After decay level should be at sustain {}, got {}", sustain, after_decay);
+        assert!(
+            (after_decay - sustain).abs() < 0.01,
+            "After decay level should be at sustain {}, got {}",
+            sustain,
+            after_decay
+        );
     }
 
     #[test]
@@ -190,8 +228,12 @@ mod tests {
         // Now the envelope should be in Sustain; level must be constant.
         let s1 = env.next_sample();
         let s2 = run_for(&mut env, 100);
-        assert!((s1 - s2).abs() < 0.005,
-            "Sustain level should be constant: {} vs {}", s1, s2);
+        assert!(
+            (s1 - s2).abs() < 0.005,
+            "Sustain level should be constant: {} vs {}",
+            s1,
+            s2
+        );
     }
 
     #[test]
@@ -203,9 +245,15 @@ mod tests {
         env.release();
         // After enough release samples, the level must reach 0.
         let after_release = run_for(&mut env, 20000);
-        assert!(after_release.abs() < 1e-5,
-            "Level should reach 0 after release, got {}", after_release);
-        assert!(env.is_idle(), "Envelope should be idle after release completes");
+        assert!(
+            after_release.abs() < 1e-5,
+            "Level should reach 0 after release, got {}",
+            after_release
+        );
+        assert!(
+            env.is_idle(),
+            "Envelope should be idle after release completes"
+        );
     }
 
     #[test]
@@ -213,9 +261,13 @@ mod tests {
         // Zero-duration attack, decay, and release should not cause division by zero or panic.
         let mut env = Adsr::new(0.0, 0.0, 0.5, 0.0, SR);
         env.trigger();
-        for _ in 0..1000 { env.next_sample(); }
+        for _ in 0..1000 {
+            env.next_sample();
+        }
         env.release();
-        for _ in 0..1000 { env.next_sample(); }
+        for _ in 0..1000 {
+            env.next_sample();
+        }
         // Just check that we did not panic and the output is finite.
         assert!(env.level().is_finite());
     }

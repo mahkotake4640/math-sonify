@@ -1,4 +1,4 @@
-use super::{DynamicalSystem, rk4};
+use super::{rk4, DynamicalSystem};
 
 /// Halvorsen cyclic-symmetry attractor: a three-dimensional system with
 /// rotational symmetry under (x,y,z) -> (y,z,x).
@@ -17,7 +17,10 @@ pub struct Halvorsen {
 impl Halvorsen {
     /// Create a Halvorsen attractor with default parameter a = 1.89.
     pub fn new() -> Self {
-        Self { state: vec![-5.0, 0.0, 0.0], a: 1.89 }
+        Self {
+            state: vec![-5.0, 0.0, 0.0],
+            a: 1.89,
+        }
     }
 
     fn deriv(state: &[f64], a: f64) -> Vec<f64> {
@@ -33,9 +36,15 @@ impl Halvorsen {
 }
 
 impl DynamicalSystem for Halvorsen {
-    fn state(&self) -> &[f64] { &self.state }
-    fn dimension(&self) -> usize { 3 }
-    fn name(&self) -> &str { "Halvorsen" }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+    fn dimension(&self) -> usize {
+        3
+    }
+    fn name(&self) -> &str {
+        "Halvorsen"
+    }
 
     fn step(&mut self, dt: f64) {
         let a = self.a;

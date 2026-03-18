@@ -57,7 +57,14 @@ impl OscSender {
 
     /// Send the current attractor state as an OSC message to `/sonify/state`.
     /// Arguments: x, y, z, speed, lyapunov (5 floats).
-    pub fn send_state(&self, x: f32, y: f32, z: f32, speed: f32, lyapunov: f32) -> anyhow::Result<()> {
+    pub fn send_state(
+        &self,
+        x: f32,
+        y: f32,
+        z: f32,
+        speed: f32,
+        lyapunov: f32,
+    ) -> anyhow::Result<()> {
         let packet = encode_osc("/sonify/state", &[x, y, z, speed, lyapunov]);
         self.socket.send_to(&packet, &self.target)?;
         Ok(())

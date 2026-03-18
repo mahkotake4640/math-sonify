@@ -8,9 +8,13 @@
 /// the filter parameters at run-time without resetting the delay state.
 #[derive(Clone)]
 pub struct BiquadFilter {
-    b0: f32, b1: f32, b2: f32,
-    a1: f32, a2: f32,
-    z1: f32, z2: f32,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1: f32,
+    z2: f32,
 }
 
 impl BiquadFilter {
@@ -31,7 +35,8 @@ impl BiquadFilter {
             b2: (1.0 - cos_w0) / 2.0 / a0,
             a1: -2.0 * cos_w0 / a0,
             a2: (1.0 - alpha) / a0,
-            z1: 0.0, z2: 0.0,
+            z1: 0.0,
+            z2: 0.0,
         }
     }
 
@@ -51,7 +56,8 @@ impl BiquadFilter {
             b2: -alpha / a0,
             a1: -2.0 * w0.cos() / a0,
             a2: (1.0 - alpha) / a0,
-            z1: 0.0, z2: 0.0,
+            z1: 0.0,
+            z2: 0.0,
         }
     }
 
@@ -64,7 +70,9 @@ impl BiquadFilter {
         // On NaN: clear state rather than clamping to ±1.
         // Clamping leaves stored energy that causes a loud transient on recovery;
         // zeroing gives a clean restart with only a brief silence artefact.
-        if y.is_finite() { y } else {
+        if y.is_finite() {
+            y
+        } else {
             self.z1 = 0.0;
             self.z2 = 0.0;
             0.0
@@ -80,18 +88,23 @@ impl BiquadFilter {
         let cutoff = cutoff_hz.clamp(20.0, sample_rate * 0.45);
         let q_safe = q.max(0.1);
         let new = Self::low_pass(cutoff, q_safe, sample_rate);
-        self.b0 = new.b0; self.b1 = new.b1; self.b2 = new.b2;
-        self.a1 = new.a1; self.a2 = new.a2;
+        self.b0 = new.b0;
+        self.b1 = new.b1;
+        self.b2 = new.b2;
+        self.a1 = new.a1;
+        self.a2 = new.a2;
         // Reset state if it has gone NaN/inf
         if !self.z1.is_finite() || !self.z2.is_finite() {
-            self.z1 = 0.0; self.z2 = 0.0;
+            self.z1 = 0.0;
+            self.z2 = 0.0;
         }
     }
 
     /// Reset the delay-line state to zero if it has gone non-finite.
     pub fn reset_if_nan(&mut self) {
         if !self.z1.is_finite() || !self.z2.is_finite() {
-            self.z1 = 0.0; self.z2 = 0.0;
+            self.z1 = 0.0;
+            self.z2 = 0.0;
         }
     }
 
@@ -101,10 +114,14 @@ impl BiquadFilter {
         let center = center_hz.clamp(20.0, sample_rate * 0.45);
         let q_safe = q.max(0.1);
         let new = Self::band_pass(center, q_safe, sample_rate);
-        self.b0 = new.b0; self.b1 = new.b1; self.b2 = new.b2;
-        self.a1 = new.a1; self.a2 = new.a2;
+        self.b0 = new.b0;
+        self.b1 = new.b1;
+        self.b2 = new.b2;
+        self.a1 = new.a1;
+        self.a2 = new.a2;
         if !self.z1.is_finite() || !self.z2.is_finite() {
-            self.z1 = 0.0; self.z2 = 0.0;
+            self.z1 = 0.0;
+            self.z2 = 0.0;
         }
     }
 }
@@ -118,7 +135,9 @@ mod tests {
     /// Feed `n` samples of DC (value 1.0) through the filter and return the last output.
     fn feed_dc(filt: &mut BiquadFilter, n: usize) -> f32 {
         let mut out = 0.0;
-        for _ in 0..n { out = filt.process(1.0); }
+        for _ in 0..n {
+            out = filt.process(1.0);
+        }
         out
     }
 
@@ -139,7 +158,11 @@ mod tests {
         // A low-pass filter with a high cutoff should let DC through.
         let mut filt = BiquadFilter::low_pass(10000.0, 0.707, SR);
         let out = feed_dc(&mut filt, 8000);
-        assert!(out > 0.9, "Low-pass should pass DC (output near 1.0), got {}", out);
+        assert!(
+            out > 0.9,
+            "Low-pass should pass DC (output near 1.0), got {}",
+            out
+        );
     }
 
     #[test]
@@ -147,7 +170,11 @@ mod tests {
         // A low-pass at 500 Hz should heavily attenuate a 10 kHz sine.
         let mut filt = BiquadFilter::low_pass(500.0, 0.707, SR);
         let rms = sine_rms(&mut filt, 10000.0, 8000);
-        assert!(rms < 0.1, "Low-pass at 500 Hz should attenuate 10 kHz, RMS={}", rms);
+        assert!(
+            rms < 0.1,
+            "Low-pass at 500 Hz should attenuate 10 kHz, RMS={}",
+            rms
+        );
     }
 
     #[test]
@@ -160,9 +187,13 @@ mod tests {
         let mut filt_high = BiquadFilter::band_pass(center, 2.0, SR);
         let rms_high = sine_rms(&mut filt_high, 10000.0, 4000);
 
-        assert!(rms_center > rms_high,
+        assert!(
+            rms_center > rms_high,
             "Band-pass should pass center freq ({}) better than 10 kHz ({} vs {})",
-            center, rms_center, rms_high);
+            center,
+            rms_center,
+            rms_high
+        );
     }
 
     #[test]
@@ -172,8 +203,16 @@ mod tests {
         let mut bp = BiquadFilter::band_pass(1000.0, 2.0, SR);
         for i in 0..8000 {
             let x = (i as f32 * 0.1).sin() * 10.0; // intentionally large signal
-            assert!(lp.process(x).is_finite(), "LP output non-finite at sample {}", i);
-            assert!(bp.process(x).is_finite(), "BP output non-finite at sample {}", i);
+            assert!(
+                lp.process(x).is_finite(),
+                "LP output non-finite at sample {}",
+                i
+            );
+            assert!(
+                bp.process(x).is_finite(),
+                "BP output non-finite at sample {}",
+                i
+            );
         }
     }
 
@@ -184,6 +223,10 @@ mod tests {
         let _ = filt.process(f32::NAN);
         // After the NaN, normal input should produce finite output.
         let out = filt.process(1.0);
-        assert!(out.is_finite(), "Filter should recover from NaN input, got {}", out);
+        assert!(
+            out.is_finite(),
+            "Filter should recover from NaN input, got {}",
+            out
+        );
     }
 }

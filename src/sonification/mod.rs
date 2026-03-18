@@ -19,17 +19,17 @@
 #![allow(dead_code)]
 
 pub mod direct;
-pub mod orbital;
-pub mod granular;
-pub mod spectral;
 pub mod fm;
+pub mod granular;
+pub mod orbital;
+pub mod spectral;
 pub mod vocal;
 
 pub use direct::DirectMapping;
-pub use orbital::OrbitalResonance;
-pub use granular::GranularMapping;
-pub use spectral::SpectralMapping;
 pub use fm::FmMapping;
+pub use granular::GranularMapping;
+pub use orbital::OrbitalResonance;
+pub use spectral::SpectralMapping;
 pub use vocal::VocalMapping;
 
 use crate::config::SonificationConfig;
@@ -186,13 +186,13 @@ impl Default for AudioParams {
 /// the third chord voice is omitted for two-note chord types).
 pub fn chord_intervals_for(mode: &str) -> [f32; 3] {
     match mode {
-        "major"  => [4.0, 7.0, 0.0],
-        "minor"  => [3.0, 7.0, 0.0],
-        "power"  => [7.0, 12.0, 0.0],
-        "sus2"   => [2.0, 7.0, 0.0],
+        "major" => [4.0, 7.0, 0.0],
+        "minor" => [3.0, 7.0, 0.0],
+        "power" => [7.0, 12.0, 0.0],
+        "sus2" => [2.0, 7.0, 0.0],
         "octave" => [12.0, 24.0, 0.0],
-        "dom7"   => [4.0, 7.0, 10.0],
-        _        => [0.0, 0.0, 0.0],
+        "dom7" => [4.0, 7.0, 10.0],
+        _ => [0.0, 0.0, 0.0],
     }
 }
 
@@ -213,7 +213,16 @@ pub fn chord_intervals_for(mode: &str) -> [f32; 3] {
 /// - `Waveguide`: a Karplus-Strong waveguide string whose tension and damping
 ///   are modulated by the attractor trajectory in real time.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
-pub enum SonifMode { #[default] Direct, Orbital, Granular, Spectral, FM, Vocal, Waveguide }
+pub enum SonifMode {
+    #[default]
+    Direct,
+    Orbital,
+    Granular,
+    Spectral,
+    FM,
+    Vocal,
+    Waveguide,
+}
 
 impl std::fmt::Display for SonifMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -232,28 +241,31 @@ impl std::fmt::Display for SonifMode {
 /// Musical scale quantization.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Scale {
-    #[default] Pentatonic,
+    #[default]
+    Pentatonic,
     Chromatic,
     JustIntonation,
     Microtonal,
-    Edo19,      // 19 equal divisions of the octave
-    Edo31,      // 31 equal divisions of the octave
-    Edo24,      // 24-EDO: quarter-tones
-    WholeTone,  // 6-note whole-tone scale
-    Phrygian,   // E Phrygian: 0, 1, 3, 5, 7, 8, 10
-    Lydian,     // F Lydian: 0, 2, 4, 6, 7, 9, 11
+    Edo19,     // 19 equal divisions of the octave
+    Edo31,     // 31 equal divisions of the octave
+    Edo24,     // 24-EDO: quarter-tones
+    WholeTone, // 6-note whole-tone scale
+    Phrygian,  // E Phrygian: 0, 1, 3, 5, 7, 8, 10
+    Lydian,    // F Lydian: 0, 2, 4, 6, 7, 9, 11
 }
 
 /// Semitone intervals for non-computed scales, relative to root.
 fn scale_intervals(scale: Scale) -> &'static [f32] {
     match scale {
-        Scale::Pentatonic =>      &[0.0, 2.0, 4.0, 7.0, 9.0],
-        Scale::Chromatic =>       &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0],
-        Scale::JustIntonation =>  &[0.0, 2.039, 3.863, 4.980, 7.020, 8.841, 10.884], // just major
-        Scale::Microtonal =>      &[0.0, 0.75, 1.5, 2.25, 3.0, 3.75, 4.5, 5.25, 6.0, 6.75, 7.5, 8.25, 9.0],
-        Scale::WholeTone =>       &[0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
-        Scale::Phrygian =>        &[0.0, 1.0, 3.0, 5.0, 7.0, 8.0, 10.0],
-        Scale::Lydian =>          &[0.0, 2.0, 4.0, 6.0, 7.0, 9.0, 11.0],
+        Scale::Pentatonic => &[0.0, 2.0, 4.0, 7.0, 9.0],
+        Scale::Chromatic => &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0],
+        Scale::JustIntonation => &[0.0, 2.039, 3.863, 4.980, 7.020, 8.841, 10.884], // just major
+        Scale::Microtonal => &[
+            0.0, 0.75, 1.5, 2.25, 3.0, 3.75, 4.5, 5.25, 6.0, 6.75, 7.5, 8.25, 9.0,
+        ],
+        Scale::WholeTone => &[0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
+        Scale::Phrygian => &[0.0, 1.0, 3.0, 5.0, 7.0, 8.0, 10.0],
+        Scale::Lydian => &[0.0, 2.0, 4.0, 6.0, 7.0, 9.0, 11.0],
         // EDO scales have computed intervals -- handled in scale_intervals_owned
         Scale::Edo19 | Scale::Edo31 | Scale::Edo24 => &[0.0],
     }
@@ -277,8 +289,8 @@ pub fn quantize_to_scale(t: f32, base_hz: f32, octave_range: f32, scale: Scale) 
     // Map t to a position in the scale across octave_range octaves
     let total_steps = octave_range * n;
     // Clamp to total_steps-1 so t=1.0 doesn't map one octave past the range
-    let step_float = ((t.clamp(0.0, 1.0) * total_steps) as usize)
-        .min((total_steps as usize).saturating_sub(1));
+    let step_float =
+        ((t.clamp(0.0, 1.0) * total_steps) as usize).min((total_steps as usize).saturating_sub(1));
     let octave = step_float / intervals.len();
     let degree = step_float % intervals.len();
     let semitones = octave as f32 * 12.0 + intervals[degree];

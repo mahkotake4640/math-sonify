@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use crate::systems::DynamicalSystem;
+use std::collections::VecDeque;
 
 /// Fractional-order Lorenz system using Grünwald-Letnikov approximation.
 /// alpha=1.0 reduces to the classical Lorenz system.
@@ -19,7 +19,9 @@ pub struct FractionalLorenz {
 
 fn gl_coefficients(alpha: f64, n: usize) -> Vec<f64> {
     let mut coeffs = vec![0.0f64; n];
-    if n == 0 { return coeffs; }
+    if n == 0 {
+        return coeffs;
+    }
     coeffs[0] = 1.0;
     for k in 1..n {
         coeffs[k] = coeffs[k - 1] * ((k as f64 - 1.0 - alpha) / k as f64);
@@ -35,7 +37,9 @@ impl FractionalLorenz {
         let mut history_y = VecDeque::with_capacity(memory_len);
         let mut history_z = VecDeque::with_capacity(memory_len);
         // Initialize with Lorenz starting point
-        let x0 = 1.0f64; let y0 = 1.0f64; let z0 = 1.0f64;
+        let x0 = 1.0f64;
+        let y0 = 1.0f64;
+        let z0 = 1.0f64;
         history_x.push_back(x0);
         history_y.push_back(y0);
         history_z.push_back(z0);
@@ -56,12 +60,18 @@ impl FractionalLorenz {
     fn gl_sum(history: &VecDeque<f64>, coeffs: &[f64]) -> f64 {
         // sum_{k=1}^{n} coeff[k] * history[n-k]
         // history[0] = most recent
-        history.iter().zip(coeffs.iter().skip(1)).map(|(&h, &c)| c * h).sum::<f64>()
+        history
+            .iter()
+            .zip(coeffs.iter().skip(1))
+            .map(|(&h, &c)| c * h)
+            .sum::<f64>()
     }
 }
 
 impl DynamicalSystem for FractionalLorenz {
-    fn state(&self) -> &[f64] { &self.state }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
 
     fn step(&mut self, dt: f64) {
         // Rebuild coeffs if alpha changed
@@ -94,21 +104,34 @@ impl DynamicalSystem for FractionalLorenz {
         self.history_x.push_front(new_x);
         self.history_y.push_front(new_y);
         self.history_z.push_front(new_z);
-        if self.history_x.len() > self.memory_len { self.history_x.pop_back(); }
-        if self.history_y.len() > self.memory_len { self.history_y.pop_back(); }
-        if self.history_z.len() > self.memory_len { self.history_z.pop_back(); }
+        if self.history_x.len() > self.memory_len {
+            self.history_x.pop_back();
+        }
+        if self.history_y.len() > self.memory_len {
+            self.history_y.pop_back();
+        }
+        if self.history_z.len() > self.memory_len {
+            self.history_z.pop_back();
+        }
 
         // Safety clamp: GL approximation can blow up for very low alpha (<0.7)
         // If any state component exceeds 1000.0, reset to a safe state
-        if new_x.abs() > 1000.0 || new_y.abs() > 1000.0 || new_z.abs() > 1000.0
-            || !new_x.is_finite() || !new_y.is_finite() || !new_z.is_finite()
+        if new_x.abs() > 1000.0
+            || new_y.abs() > 1000.0
+            || new_z.abs() > 1000.0
+            || !new_x.is_finite()
+            || !new_y.is_finite()
+            || !new_z.is_finite()
         {
             self.state[0] = 0.1;
             self.state[1] = 0.0;
             self.state[2] = 0.1;
-            self.history_x.clear(); self.history_x.push_back(0.1);
-            self.history_y.clear(); self.history_y.push_back(0.0);
-            self.history_z.clear(); self.history_z.push_back(0.1);
+            self.history_x.clear();
+            self.history_x.push_back(0.1);
+            self.history_y.clear();
+            self.history_y.push_back(0.0);
+            self.history_z.clear();
+            self.history_z.push_back(0.1);
             return;
         }
 
@@ -117,8 +140,12 @@ impl DynamicalSystem for FractionalLorenz {
         self.state[2] = new_z;
     }
 
-    fn dimension(&self) -> usize { 3 }
-    fn name(&self) -> &str { "fractional_lorenz" }
+    fn dimension(&self) -> usize {
+        3
+    }
+    fn name(&self) -> &str {
+        "fractional_lorenz"
+    }
 
     fn speed(&self) -> f64 {
         let dx = self.sigma * (self.state[1] - self.state[0]);
@@ -128,7 +155,9 @@ impl DynamicalSystem for FractionalLorenz {
     }
 
     fn deriv_at(&self, state: &[f64]) -> Vec<f64> {
-        if state.len() < 3 { return vec![0.0; 3]; }
+        if state.len() < 3 {
+            return vec![0.0; 3];
+        }
         vec![
             self.sigma * (state[1] - state[0]),
             state[0] * (self.rho - state[2]) - state[1],
@@ -140,5 +169,7 @@ impl DynamicalSystem for FractionalLorenz {
 // Allow indexing state
 impl std::ops::Index<usize> for FractionalLorenz {
     type Output = f64;
-    fn index(&self, i: usize) -> &f64 { &self.state[i] }
+    fn index(&self, i: usize) -> &f64 {
+        &self.state[i]
+    }
 }

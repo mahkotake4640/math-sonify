@@ -12,14 +12,26 @@ use std::f32::consts::TAU;
 /// A single biquad section (direct form II transposed).
 #[derive(Clone)]
 struct Biquad {
-    b0: f32, b1: f32, b2: f32,
-    a1: f32, a2: f32,
-    z1: f32, z2: f32,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1: f32,
+    z2: f32,
 }
 
 impl Biquad {
     fn unity() -> Self {
-        Self { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0, z1: 0.0, z2: 0.0 }
+        Self {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
 
     /// Low shelf filter (Audio EQ Cookbook, Robert Bristow-Johnson).
@@ -30,13 +42,21 @@ impl Biquad {
         let sin_w0 = w0.sin();
         let s = 1.0; // shelf slope (1.0 = maximally flat)
         let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).sqrt();
-        let b0 =       a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt());
+        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt());
         let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let b2 =       a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt());
-        let a0 =             (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt();
-        let a1 = -2.0 *     ((a - 1.0) + (a + 1.0) * cos_w0);
-        let a2 =             (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt();
-        Self { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0, z1: 0.0, z2: 0.0 }
+        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt());
+        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt();
+        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
+        let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt();
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
 
     /// High shelf filter.
@@ -47,13 +67,21 @@ impl Biquad {
         let sin_w0 = w0.sin();
         let s = 1.0;
         let alpha = sin_w0 / 2.0 * ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).sqrt();
-        let b0 =       a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt());
+        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt());
         let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let b2 =       a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt());
-        let a0 =             (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt();
-        let a1 =  2.0 *     ((a - 1.0) - (a + 1.0) * cos_w0);
-        let a2 =             (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt();
-        Self { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0, z1: 0.0, z2: 0.0 }
+        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt());
+        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * alpha * a.sqrt();
+        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
+        let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * alpha * a.sqrt();
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
 
     /// Peaking EQ filter.
@@ -67,7 +95,15 @@ impl Biquad {
         let a0 = 1.0 + alpha / a;
         let a1 = -2.0 * w0.cos();
         let a2 = 1.0 - alpha / a;
-        Self { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0, z1: 0.0, z2: 0.0 }
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            z1: 0.0,
+            z2: 0.0,
+        }
     }
 
     #[inline(always)]
@@ -76,7 +112,13 @@ impl Biquad {
         let y = self.b0 * x + self.z1;
         self.z1 = self.b1 * x - self.a1 * y + self.z2;
         self.z2 = self.b2 * x - self.a2 * y;
-        if y.is_finite() { y } else { self.z1 = 0.0; self.z2 = 0.0; 0.0 }
+        if y.is_finite() {
+            y
+        } else {
+            self.z1 = 0.0;
+            self.z2 = 0.0;
+            0.0
+        }
     }
 }
 
@@ -92,10 +134,10 @@ pub struct ThreeBandEq {
     mid_peak_r: Biquad,
     high_shelf_l: Biquad,
     high_shelf_r: Biquad,
-    pub low_gain_db: f32,   // ±12 dB
+    pub low_gain_db: f32, // ±12 dB
     pub mid_gain_db: f32,
     pub high_gain_db: f32,
-    pub mid_freq: f32,      // default 1000 Hz
+    pub mid_freq: f32, // default 1000 Hz
     sample_rate: f32,
 }
 
@@ -123,7 +165,12 @@ impl ThreeBandEq {
         let low = Biquad::low_shelf(200.0, self.low_gain_db.clamp(-12.0, 12.0), sr);
         // Q=2.5: ~2/3 octave bandwidth — surgical enough to sculpt specific
         // resonances without sounding mushy (Q=1.0 ≈ 2 octaves was too wide).
-        let mid = Biquad::peak(self.mid_freq.clamp(200.0, sr * 0.45), self.mid_gain_db.clamp(-12.0, 12.0), 2.5, sr);
+        let mid = Biquad::peak(
+            self.mid_freq.clamp(200.0, sr * 0.45),
+            self.mid_gain_db.clamp(-12.0, 12.0),
+            2.5,
+            sr,
+        );
         let high = Biquad::high_shelf(6000.0, self.high_gain_db.clamp(-12.0, 12.0), sr);
         self.low_shelf_l = low.clone();
         self.low_shelf_r = low;
@@ -136,8 +183,12 @@ impl ThreeBandEq {
     /// Process one stereo sample pair.
     #[inline]
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
-        let l = self.high_shelf_l.process(self.mid_peak_l.process(self.low_shelf_l.process(l)));
-        let r = self.high_shelf_r.process(self.mid_peak_r.process(self.low_shelf_r.process(r)));
+        let l = self
+            .high_shelf_l
+            .process(self.mid_peak_l.process(self.low_shelf_l.process(l)));
+        let r = self
+            .high_shelf_r
+            .process(self.mid_peak_r.process(self.low_shelf_r.process(r)));
         (l, r)
     }
 }

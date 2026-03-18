@@ -1,4 +1,4 @@
-use super::{DynamicalSystem, rk4};
+use super::{rk4, DynamicalSystem};
 
 /// Duffing oscillator: a driven, damped nonlinear oscillator.
 ///
@@ -49,17 +49,28 @@ impl Duffing {
 }
 
 impl DynamicalSystem for Duffing {
-    fn state(&self) -> &[f64] { &self.state }
-    fn dimension(&self) -> usize { 3 }
-    fn name(&self) -> &str { "Duffing" }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+    fn dimension(&self) -> usize {
+        3
+    }
+    fn name(&self) -> &str {
+        "Duffing"
+    }
 
     fn step(&mut self, dt: f64) {
-        let (delta, alpha, beta, gamma, omega) = (self.delta, self.alpha, self.beta, self.gamma, self.omega);
-        rk4(&mut self.state, dt, |s| Self::deriv(s, delta, alpha, beta, gamma, omega));
+        let (delta, alpha, beta, gamma, omega) =
+            (self.delta, self.alpha, self.beta, self.gamma, self.omega);
+        rk4(&mut self.state, dt, |s| {
+            Self::deriv(s, delta, alpha, beta, gamma, omega)
+        });
     }
 
     fn deriv_at(&self, state: &[f64]) -> Vec<f64> {
-        Self::deriv(state, self.delta, self.alpha, self.beta, self.gamma, self.omega)
+        Self::deriv(
+            state, self.delta, self.alpha, self.beta, self.gamma, self.omega,
+        )
     }
 
     fn speed(&self) -> f64 {

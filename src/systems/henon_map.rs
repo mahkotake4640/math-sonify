@@ -28,10 +28,18 @@ impl HenonMap {
 }
 
 impl DynamicalSystem for HenonMap {
-    fn state(&self) -> &[f64] { &self.state }
-    fn dimension(&self) -> usize { 3 }
-    fn name(&self) -> &str { "henon_map" }
-    fn speed(&self) -> f64 { self.speed }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+    fn dimension(&self) -> usize {
+        3
+    }
+    fn name(&self) -> &str {
+        "henon_map"
+    }
+    fn speed(&self) -> f64 {
+        self.speed
+    }
 
     fn deriv_at(&self, _state: &[f64]) -> Vec<f64> {
         vec![0.0; 3]
@@ -40,7 +48,9 @@ impl DynamicalSystem for HenonMap {
     fn set_state(&mut self, s: &[f64]) {
         let n = self.state.len().min(s.len());
         for i in 0..n {
-            if s[i].is_finite() { self.state[i] = s[i]; }
+            if s[i].is_finite() {
+                self.state[i] = s[i];
+            }
         }
     }
 

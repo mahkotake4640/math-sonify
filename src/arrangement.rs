@@ -297,81 +297,147 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
     };
 
     // Pick from a slice randomly
-    let pick = |rng: &mut u64, choices: &[&str]| -> String {
-        choices[ri(rng, choices.len())].to_string()
-    };
+    let pick =
+        |rng: &mut u64, choices: &[&str]| -> String { choices[ri(rng, choices.len())].to_string() };
 
     // Preset pools per mood (large enough that repeats are rare across 6 scenes)
     let ambient_pool: &[&str] = &[
-        "Midnight Approach", "The Irrational Winding", "Breathing Galaxy",
-        "Memory of Water", "Monk's Bell", "Deep Hypnosis",
-        "Aurora Borealis", "The Synchronization", "Last Light",
-        "Cathedral Organ", "Collapsing Cathedral", "The Butterfly's Aria",
-        "Siren Call", "Throat of the Storm",
+        "Midnight Approach",
+        "The Irrational Winding",
+        "Breathing Galaxy",
+        "Memory of Water",
+        "Monk's Bell",
+        "Deep Hypnosis",
+        "Aurora Borealis",
+        "The Synchronization",
+        "Last Light",
+        "Cathedral Organ",
+        "Collapsing Cathedral",
+        "The Butterfly's Aria",
+        "Siren Call",
+        "Throat of the Storm",
     ];
     let rhythmic_pool: &[&str] = &[
-        "Frozen Machinery", "The Phase Transition", "Clockwork Insect",
-        "Planetary Clockwork", "Industrial Heartbeat", "Bone Structure",
-        "Dissociation", "Neon Labyrinth", "Tungsten Filament", "The Double Scroll",
-        "Solar Wind", "Electric Kelp", "Möbius Lead",
+        "Frozen Machinery",
+        "The Phase Transition",
+        "Clockwork Insect",
+        "Planetary Clockwork",
+        "Industrial Heartbeat",
+        "Bone Structure",
+        "Dissociation",
+        "Neon Labyrinth",
+        "Tungsten Filament",
+        "The Double Scroll",
+        "Solar Wind",
+        "Electric Kelp",
+        "Möbius Lead",
     ];
     let experimental_pool: &[&str] = &[
-        "Neon Labyrinth", "Dissociation", "Tungsten Filament", "The Double Scroll",
-        "Bone Structure", "Clockwork Insect", "Ancient Algorithm",
-        "Seismic Event", "Frozen Machinery", "The Phase Transition",
-        "Electric Kelp", "Solar Wind", "Collapsing Cathedral",
+        "Neon Labyrinth",
+        "Dissociation",
+        "Tungsten Filament",
+        "The Double Scroll",
+        "Bone Structure",
+        "Clockwork Insect",
+        "Ancient Algorithm",
+        "Seismic Event",
+        "Frozen Machinery",
+        "The Phase Transition",
+        "Electric Kelp",
+        "Solar Wind",
+        "Collapsing Cathedral",
     ];
 
     let pool = match mood {
-        "rhythmic"     => rhythmic_pool,
+        "rhythmic" => rhythmic_pool,
         "experimental" => experimental_pool,
-        _              => ambient_pool,
+        _ => ambient_pool,
     };
 
     // Sonification modes — full pool, weighted toward mood character
-    let modes_ambient:       &[&str] = &["direct", "direct", "orbital", "spectral", "granular", "vocal", "waveguide"];
-    let modes_rhythmic:      &[&str] = &["direct", "direct", "granular", "fm", "orbital", "granular", "spectral"];
-    let modes_experimental:  &[&str] = &["spectral", "fm", "granular", "orbital", "vocal", "waveguide", "fm"];
+    let modes_ambient: &[&str] = &[
+        "direct",
+        "direct",
+        "orbital",
+        "spectral",
+        "granular",
+        "vocal",
+        "waveguide",
+    ];
+    let modes_rhythmic: &[&str] = &[
+        "direct", "direct", "granular", "fm", "orbital", "granular", "spectral",
+    ];
+    let modes_experimental: &[&str] = &[
+        "spectral",
+        "fm",
+        "granular",
+        "orbital",
+        "vocal",
+        "waveguide",
+        "fm",
+    ];
     let mode_pool = match mood {
-        "rhythmic"     => modes_rhythmic,
+        "rhythmic" => modes_rhythmic,
         "experimental" => modes_experimental,
-        _              => modes_ambient,
+        _ => modes_ambient,
     };
 
     // Scale pools per mood
-    let scales_ambient:      &[&str] = &["pentatonic", "pentatonic", "just_intonation", "chromatic", "pentatonic"];
-    let scales_rhythmic:     &[&str] = &["pentatonic", "chromatic", "chromatic", "just_intonation", "pentatonic"];
-    let scales_experimental: &[&str] = &["microtonal", "chromatic", "just_intonation", "pentatonic", "microtonal"];
+    let scales_ambient: &[&str] = &[
+        "pentatonic",
+        "pentatonic",
+        "just_intonation",
+        "chromatic",
+        "pentatonic",
+    ];
+    let scales_rhythmic: &[&str] = &[
+        "pentatonic",
+        "chromatic",
+        "chromatic",
+        "just_intonation",
+        "pentatonic",
+    ];
+    let scales_experimental: &[&str] = &[
+        "microtonal",
+        "chromatic",
+        "just_intonation",
+        "pentatonic",
+        "microtonal",
+    ];
     let scale_pool = match mood {
-        "rhythmic"     => scales_rhythmic,
+        "rhythmic" => scales_rhythmic,
         "experimental" => scales_experimental,
-        _              => scales_ambient,
+        _ => scales_ambient,
     };
 
     // Voice shape pool
-    let voice_shapes: &[&str] = &["sine", "sine", "sine", "triangle", "saw", "triangle", "triangle"];
+    let voice_shapes: &[&str] = &[
+        "sine", "sine", "sine", "triangle", "saw", "triangle", "triangle",
+    ];
 
     // Chord mode pool
     let chord_modes: &[&str] = &["none", "none", "none", "power", "octave", "power"];
 
     // Musical root frequencies (A2=110 through A4=440, hitting each octave position)
-    let root_freqs: &[f64] = &[82.4, 110.0, 130.8, 164.8, 196.0, 220.0, 261.6, 293.7, 329.6, 392.0, 440.0, 523.3];
+    let root_freqs: &[f64] = &[
+        82.4, 110.0, 130.8, 164.8, 196.0, 220.0, 261.6, 293.7, 329.6, 392.0, 440.0, 523.3,
+    ];
 
     // Transpose pool in semitones (musically sensible intervals)
     let transpose_opts: &[f32] = &[-12.0, -7.0, -5.0, 0.0, 0.0, 0.0, 5.0, 7.0, 12.0];
 
     // item 17: Coherence budget — anchor musical DNA at song level so scenes form an arc.
-    let anchor_root_freq  = root_freqs[ri(&mut rng, root_freqs.len())];
-    let anchor_scale      = pick(&mut rng, scale_pool);
+    let anchor_root_freq = root_freqs[ri(&mut rng, root_freqs.len())];
+    let anchor_scale = pick(&mut rng, scale_pool);
     let anchor_speed_mult = rrange(&mut rng, 0.6, 2.0);
     let reverb_budget_total = rrange(&mut rng, 2.0, 3.5);
     let mut reverb_spent = 0.0f32;
 
     // Hold / morph time ranges per mood (morphs intentionally longer)
     let (hold_lo, hold_hi, morph_lo, morph_hi) = match mood {
-        "rhythmic"     => (10.0f32, 20.0, 18.0f32, 32.0),
-        "experimental" => ( 8.0f32, 18.0, 22.0f32, 42.0),
-        _              => (12.0f32, 26.0, 22.0f32, 40.0),
+        "rhythmic" => (10.0f32, 20.0, 18.0f32, 32.0),
+        "experimental" => (8.0f32, 18.0, 22.0f32, 42.0),
+        _ => (12.0f32, 26.0, 22.0f32, 40.0),
     };
 
     // 6 scenes, no two adjacent presets the same
@@ -382,40 +448,62 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         loop {
             let candidate = pick(&mut rng, pool);
             let last = chosen_presets.last().map(|s| s.as_str()).unwrap_or("");
-            if candidate != last || attempts > 8 { chosen_presets.push(candidate); break; }
+            if candidate != last || attempts > 8 {
+                chosen_presets.push(candidate);
+                break;
+            }
             attempts += 1;
         }
     }
 
     // Scene name banks
-    let names_ambient:      &[&str] = &["Drift", "Emerge", "Float", "Breathe", "Dissolve", "Return", "Expand", "Recede"];
-    let names_rhythmic:     &[&str] = &["Pulse", "Build", "Lock", "Scatter", "Drive", "Release", "Surge", "Drop"];
-    let names_experimental: &[&str] = &["Fracture", "Warp", "Corrupt", "Scatter", "Void", "Strange", "Collapse", "Mutate"];
+    let names_ambient: &[&str] = &[
+        "Drift", "Emerge", "Float", "Breathe", "Dissolve", "Return", "Expand", "Recede",
+    ];
+    let names_rhythmic: &[&str] = &[
+        "Pulse", "Build", "Lock", "Scatter", "Drive", "Release", "Surge", "Drop",
+    ];
+    let names_experimental: &[&str] = &[
+        "Fracture", "Warp", "Corrupt", "Scatter", "Void", "Strange", "Collapse", "Mutate",
+    ];
     let name_pool = match mood {
-        "rhythmic"     => names_rhythmic,
+        "rhythmic" => names_rhythmic,
         "experimental" => names_experimental,
-        _              => names_ambient,
+        _ => names_ambient,
     };
 
     let mut scenes: Vec<Scene> = Vec::with_capacity(n_scenes);
     for (i, preset) in chosen_presets.iter().enumerate() {
-        let hold  = rrange(&mut rng, hold_lo, hold_hi);
-        let morph = if i == 0 { 0.0 } else { rrange(&mut rng, morph_lo, morph_hi) };
-        let mode  = pick(&mut rng, mode_pool);
-        let scale = if rf(&mut rng) < 0.65 { anchor_scale.clone() } else { pick(&mut rng, scale_pool) };
+        let hold = rrange(&mut rng, hold_lo, hold_hi);
+        let morph = if i == 0 {
+            0.0
+        } else {
+            rrange(&mut rng, morph_lo, morph_hi)
+        };
+        let mode = pick(&mut rng, mode_pool);
+        let scale = if rf(&mut rng) < 0.65 {
+            anchor_scale.clone()
+        } else {
+            pick(&mut rng, scale_pool)
+        };
         let chord = pick(&mut rng, chord_modes);
 
         // Effects — wide independent ranges per scene
         let remaining_scenes = (n_scenes - i).max(1) as f32;
-        let reverb_max = ((reverb_budget_total - reverb_spent) / remaining_scenes).clamp(0.15, 0.80);
+        let reverb_max =
+            ((reverb_budget_total - reverb_spent) / remaining_scenes).clamp(0.15, 0.80);
         let reverb = rrange(&mut rng, 0.15, reverb_max);
         reverb_spent += reverb;
-        let chorus   = rrange(&mut rng, 0.0,  0.65);
-        let delay_fb = rrange(&mut rng, 0.0,  0.65);
+        let chorus = rrange(&mut rng, 0.0, 0.65);
+        let delay_fb = rrange(&mut rng, 0.0, 0.65);
         let delay_ms = rrange(&mut rng, 60.0, 800.0);
-        let porta    = rrange(&mut rng, 20.0, 800.0);
+        let porta = rrange(&mut rng, 20.0, 800.0);
         let waveshaper_drive = rrange(&mut rng, 1.0, 6.0);
-        let waveshaper_mix   = if rf(&mut rng) > 0.5 { rrange(&mut rng, 0.0, 0.5) } else { 0.0 };
+        let waveshaper_mix = if rf(&mut rng) > 0.5 {
+            rrange(&mut rng, 0.0, 0.5)
+        } else {
+            0.0
+        };
 
         // Pitch — anchor-coherent root frequency and transposition
         let base_freq = if rf(&mut rng) < 0.70 {
@@ -424,7 +512,7 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
             let octave_shift = if rf(&mut rng) < 0.5 { 0.5 } else { 2.0 };
             (anchor_root_freq * octave_shift).clamp(82.0, 880.0)
         };
-        let transpose  = transpose_opts[ri(&mut rng, transpose_opts.len())];
+        let transpose = transpose_opts[ri(&mut rng, transpose_opts.len())];
         let octave_range = rrange(&mut rng, 0.8, 3.5) as f64;
 
         // Speed — scatter around the anchor speed
@@ -444,49 +532,49 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         let vl3 = rrange(&mut rng, 0.0, 0.7);
 
         // System parameter scatter — push parameters into different dynamical regimes
-        let lorenz_sigma = rrange(&mut rng, 7.0,  14.0)  as f64;
-        let lorenz_rho   = rrange(&mut rng, 20.0, 40.0)  as f64;
-        let lorenz_beta  = rrange(&mut rng, 1.5,  4.0)   as f64;
-        let rossler_a    = rrange(&mut rng, 0.05, 0.35)  as f64;
-        let rossler_c    = rrange(&mut rng, 3.0,  13.0)  as f64;
-        let kuramoto_k   = rrange(&mut rng, 0.3,  4.5)   as f64;
-        let duffing_om   = rrange(&mut rng, 0.6,  1.4)   as f64;
-        let halvorsen_a  = rrange(&mut rng, 1.2,  1.9)   as f64;
+        let lorenz_sigma = rrange(&mut rng, 7.0, 14.0) as f64;
+        let lorenz_rho = rrange(&mut rng, 20.0, 40.0) as f64;
+        let lorenz_beta = rrange(&mut rng, 1.5, 4.0) as f64;
+        let rossler_a = rrange(&mut rng, 0.05, 0.35) as f64;
+        let rossler_c = rrange(&mut rng, 3.0, 13.0) as f64;
+        let kuramoto_k = rrange(&mut rng, 0.3, 4.5) as f64;
+        let duffing_om = rrange(&mut rng, 0.6, 1.4) as f64;
+        let halvorsen_a = rrange(&mut rng, 1.2, 1.9) as f64;
 
         let name_idx = (i + ri(&mut rng, 3)) % name_pool.len();
         let name = name_pool[name_idx];
 
         scenes.push(make_scene(name, preset, hold, morph, move |c| {
-            c.sonification.mode  = mode;
+            c.sonification.mode = mode;
             c.sonification.scale = scale;
             c.sonification.chord_mode = chord;
             c.sonification.base_frequency = base_freq;
-            c.sonification.octave_range   = octave_range;
+            c.sonification.octave_range = octave_range;
             c.sonification.transpose_semitones = transpose;
             c.sonification.portamento_ms = porta;
-            c.sonification.voice_shapes  = [vs0, vs1, vs2, vs3];
-            c.sonification.voice_levels  = [vl0, vl1, vl2, vl3];
+            c.sonification.voice_shapes = [vs0, vs1, vs2, vs3];
+            c.sonification.voice_levels = [vl0, vl1, vl2, vl3];
 
             // Speed
             c.system.speed = (c.system.speed * speed_mult as f64).clamp(0.5, 6.0);
 
             // Effects
-            c.audio.reverb_wet       = reverb.min(0.82);
-            c.audio.chorus_mix       = chorus;
-            c.audio.delay_feedback   = delay_fb;
-            c.audio.delay_ms         = delay_ms;
+            c.audio.reverb_wet = reverb.min(0.82);
+            c.audio.chorus_mix = chorus;
+            c.audio.delay_feedback = delay_fb;
+            c.audio.delay_ms = delay_ms;
             c.audio.waveshaper_drive = waveshaper_drive;
-            c.audio.waveshaper_mix   = waveshaper_mix;
+            c.audio.waveshaper_mix = waveshaper_mix;
 
             // System-specific parameter scatter (independent of preset values)
-            c.lorenz.sigma         = lorenz_sigma;
-            c.lorenz.rho           = lorenz_rho;
-            c.lorenz.beta          = lorenz_beta;
-            c.rossler.a            = rossler_a;
-            c.rossler.c            = rossler_c;
-            c.kuramoto.coupling    = kuramoto_k;
-            c.duffing.omega        = duffing_om;
-            c.halvorsen.a          = halvorsen_a;
+            c.lorenz.sigma = lorenz_sigma;
+            c.lorenz.rho = lorenz_rho;
+            c.lorenz.beta = lorenz_beta;
+            c.rossler.a = rossler_a;
+            c.rossler.c = rossler_c;
+            c.kuramoto.coupling = kuramoto_k;
+            c.duffing.omega = duffing_om;
+            c.halvorsen.a = halvorsen_a;
 
             c.audio.master_volume = c.audio.master_volume.max(0.62);
         }));
@@ -496,7 +584,7 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
     if mood == "rhythmic" || mood == "experimental" {
         for scene in scenes.iter_mut() {
             if rf(&mut rng) > 0.55 {
-                scene.config.audio.bit_depth  = rrange(&mut rng, 5.0, 15.0);
+                scene.config.audio.bit_depth = rrange(&mut rng, 5.0, 15.0);
                 scene.config.audio.rate_crush = rrange(&mut rng, 0.0, 0.45);
             }
         }

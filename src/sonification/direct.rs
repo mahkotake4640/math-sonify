@@ -1,4 +1,4 @@
-use super::{AudioParams, Sonification, SonifMode, Scale, quantize_to_scale};
+use super::{quantize_to_scale, AudioParams, Scale, SonifMode, Sonification};
 use crate::config::SonificationConfig;
 
 /// Direct frequency mapping: each state variable → a voice frequency.
@@ -16,7 +16,11 @@ impl DirectMapping {
     /// # Returns
     /// A `DirectMapping` ready to accept state vectors of any dimension.
     pub fn new() -> Self {
-        Self { min: Vec::new(), max: Vec::new(), alpha: 0.001 }
+        Self {
+            min: Vec::new(),
+            max: Vec::new(),
+            alpha: 0.001,
+        }
     }
 
     fn normalize(&mut self, state: &[f64]) -> Vec<f32> {
@@ -24,15 +28,25 @@ impl DirectMapping {
             self.min = state.to_vec();
             self.max = state.to_vec();
         }
-        state.iter().enumerate().map(|(i, &v)| {
-            // Soft min/max tracking
-            if v < self.min[i] { self.min[i] = v; }
-            else { self.min[i] += self.alpha * (v - self.min[i]); }
-            if v > self.max[i] { self.max[i] = v; }
-            else { self.max[i] += self.alpha * (v - self.max[i]); }
-            let range = (self.max[i] - self.min[i]).abs().max(1e-9);
-            ((v - self.min[i]) / range) as f32
-        }).collect()
+        state
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                // Soft min/max tracking
+                if v < self.min[i] {
+                    self.min[i] = v;
+                } else {
+                    self.min[i] += self.alpha * (v - self.min[i]);
+                }
+                if v > self.max[i] {
+                    self.max[i] = v;
+                } else {
+                    self.max[i] += self.alpha * (v - self.max[i]);
+                }
+                let range = (self.max[i] - self.min[i]).abs().max(1e-9);
+                ((v - self.min[i]) / range) as f32
+            })
+            .collect()
     }
 }
 
@@ -71,7 +85,11 @@ impl Sonification for DirectMapping {
         // Up to 4 voices from the first 4 state variables
         for i in 0..4.min(norm.len()) {
             params.freqs[i] = quantize_to_scale(norm[i], base, oct, scale);
-            params.amps[i] = if i < norm.len() { 0.5 + 0.5 * norm[i] } else { 0.0 };
+            params.amps[i] = if i < norm.len() {
+                0.5 + 0.5 * norm[i]
+            } else {
+                0.0
+            };
             params.pans[i] = norm[i] * 2.0 - 1.0;
         }
         // Use last dimension to modulate filter cutoff
@@ -96,8 +114,12 @@ mod tests {
         for i in 0..=100 {
             let t = i as f32 / 100.0;
             let f = map_to_frequency(t, base, octave_range, Scale::Pentatonic);
-            assert!(f >= 20.0 && f <= 20000.0,
-                "Frequency {} out of audible range at t={}", f, t);
+            assert!(
+                f >= 20.0 && f <= 20000.0,
+                "Frequency {} out of audible range at t={}",
+                f,
+                t
+            );
             assert!(f.is_finite(), "Frequency is non-finite at t={}", t);
         }
     }
@@ -108,7 +130,12 @@ mod tests {
         for i in 0..=100 {
             let t = i as f32 / 100.0;
             let a = map_to_amplitude(t);
-            assert!(a >= 0.0 && a <= 1.0, "Amplitude {} out of [0,1] at t={}", a, t);
+            assert!(
+                a >= 0.0 && a <= 1.0,
+                "Amplitude {} out of [0,1] at t={}",
+                a,
+                t
+            );
         }
     }
 
@@ -122,7 +149,13 @@ mod tests {
         for i in 0..=20 {
             let t = i as f32 / 20.0;
             let f = map_to_frequency(t, base, octave_range, Scale::Pentatonic);
-            assert!(f >= prev, "Frequency not monotone: {} < {} at t={}", f, prev, t);
+            assert!(
+                f >= prev,
+                "Frequency not monotone: {} < {} at t={}",
+                f,
+                prev,
+                t
+            );
             prev = f;
         }
     }
@@ -135,13 +168,20 @@ mod tests {
         let config = crate::config::SonificationConfig::default();
         let params = mapper.map(&state, 10.0, &config);
         for (i, &f) in params.freqs.iter().enumerate() {
-            assert!(f >= 0.0 && f.is_finite(),
-                "Voice {} frequency {} is invalid", i, f);
+            assert!(
+                f >= 0.0 && f.is_finite(),
+                "Voice {} frequency {} is invalid",
+                i,
+                f
+            );
         }
         for (i, &a) in params.amps.iter().enumerate() {
-            assert!(a >= 0.0 && a <= 1.0,
-                "Voice {} amplitude {} out of [0,1]", i, a);
+            assert!(
+                a >= 0.0 && a <= 1.0,
+                "Voice {} amplitude {} out of [0,1]",
+                i,
+                a
+            );
         }
     }
 }
-

@@ -1,5 +1,5 @@
+use super::{quantize_to_scale, AudioParams, Scale, SonifMode, Sonification};
 use crate::config::SonificationConfig;
-use super::{AudioParams, Sonification, SonifMode, quantize_to_scale, Scale};
 
 /// FM synthesis mapping: attractor state drives carrier frequency, modulator ratio, and index.
 ///
@@ -10,7 +10,9 @@ pub struct FmMapping;
 
 impl FmMapping {
     /// Creates a new `FmMapping` (stateless; no initialization required).
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl Sonification for FmMapping {
@@ -29,7 +31,9 @@ impl Sonification for FmMapping {
             // (three-body, Lorenz ρ=100) still produce musical frequency sweeps.
             let v = state[0] as f32;
             (v / 30.0).tanh() * 0.5 + 0.5
-        } else { 0.5 };
+        } else {
+            0.5
+        };
 
         let carrier_freq = quantize_to_scale(norm0, base_hz, octave_range, scale);
 
@@ -37,7 +41,9 @@ impl Sonification for FmMapping {
         // Bound mod_ratio to musical range [1.0, 7.0]
         let mod_ratio = if state.len() > 1 {
             1.0 + (state[1].abs() as f32 % 6.0)
-        } else { 2.0 };
+        } else {
+            2.0
+        };
 
         // Chaos estimate from state magnitude
         let chaos = {

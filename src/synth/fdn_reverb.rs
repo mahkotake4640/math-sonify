@@ -21,7 +21,7 @@ const FDN_DELAYS_44K: [usize; 8] = [1559, 1877, 2053, 2381, 2713, 3067, 3413, 37
 // LFO depths in samples and rates in Hz per channel.
 // Keep depths < 8 samples and rates well below 2 Hz to avoid audible pitch wobble.
 const LFO_DEPTHS: [f32; 8] = [3.5, 2.8, 4.1, 3.2, 5.0, 2.5, 3.8, 4.4];
-const LFO_RATES:  [f32; 8] = [0.31, 0.47, 0.61, 0.79, 0.97, 1.13, 1.31, 1.51];
+const LFO_RATES: [f32; 8] = [0.31, 0.47, 0.61, 0.79, 0.97, 1.13, 1.31, 1.51];
 
 struct FdnChannel {
     buf: Vec<f32>,
@@ -43,7 +43,7 @@ impl FdnChannel {
             lp_state: 0.0,
             lfo_phase: 0.0,
             lfo_rate: TAU * lfo_rate_hz / sample_rate,
-        lfo_depth,
+            lfo_depth,
         }
     }
 
@@ -56,8 +56,7 @@ impl FdnChannel {
     /// Read from the delay line at `base_delay` samples back, modulated by LFO,
     /// using linear interpolation for alias-free pitch variation.
     fn read_modulated(&mut self, base_delay: usize) -> f32 {
-        self.lfo_phase = (self.lfo_phase + self.lfo_rate)
-            .rem_euclid(std::f32::consts::TAU);
+        self.lfo_phase = (self.lfo_phase + self.lfo_rate).rem_euclid(std::f32::consts::TAU);
         let mod_offset = self.lfo_phase.sin() * self.lfo_depth;
         let delay_f = (base_delay as f32 - mod_offset).max(1.0);
         let len = self.buf.len();
@@ -71,7 +70,9 @@ impl FdnChannel {
     /// Apply first-order lowpass damping to the read value (in place via state).
     fn apply_damping(&mut self, val: f32, damp: f32) -> f32 {
         self.lp_state = (1.0 - damp) * val + damp * self.lp_state;
-        if !self.lp_state.is_finite() { self.lp_state = 0.0; }
+        if !self.lp_state.is_finite() {
+            self.lp_state = 0.0;
+        }
         self.lp_state
     }
 }
@@ -82,20 +83,25 @@ fn hadamard8(v: &mut [f32; 8]) {
     // 3 stages of butterfly operations
     for i in (0..8).step_by(2) {
         let (a, b) = (v[i], v[i + 1]);
-        v[i] = a + b; v[i + 1] = a - b;
+        v[i] = a + b;
+        v[i + 1] = a - b;
     }
     for base in [0usize, 4] {
         for j in 0..2 {
             let (a, b) = (v[base + j], v[base + j + 2]);
-            v[base + j] = a + b; v[base + j + 2] = a - b;
+            v[base + j] = a + b;
+            v[base + j + 2] = a - b;
         }
     }
     for j in 0..4 {
         let (a, b) = (v[j], v[j + 4]);
-        v[j] = a + b; v[j + 4] = a - b;
+        v[j] = a + b;
+        v[j + 4] = a - b;
     }
     let norm = (8.0f32).sqrt().recip();
-    for x in v.iter_mut() { *x *= norm; }
+    for x in v.iter_mut() {
+        *x *= norm;
+    }
 }
 
 pub struct FdnReverb {
@@ -117,12 +123,7 @@ impl FdnReverb {
             .map(|&d| (d as f32 * scale) as usize)
             .collect();
         let channels = (0..8)
-            .map(|i| FdnChannel::new(
-                base_delays[i],
-                LFO_DEPTHS[i],
-                LFO_RATES[i],
-                sample_rate,
-            ))
+            .map(|i| FdnChannel::new(base_delays[i], LFO_DEPTHS[i], LFO_RATES[i], sample_rate))
             .collect();
 
         // 10 ms pre-delay
@@ -172,7 +173,11 @@ impl FdnReverb {
         let mut out_l = 0.0f32;
         let mut out_r = 0.0f32;
         for (i, s) in state.iter().enumerate() {
-            if i % 2 == 0 { out_l += s; } else { out_r += s; }
+            if i % 2 == 0 {
+                out_l += s;
+            } else {
+                out_r += s;
+            }
         }
         out_l *= 0.25;
         out_r *= 0.25;
@@ -186,6 +191,9 @@ impl FdnReverb {
         }
 
         let dry = 1.0 - self.wet;
-        (input_l * dry + out_l * self.wet, input_r * dry + out_r * self.wet)
+        (
+            input_l * dry + out_l * self.wet,
+            input_r * dry + out_r * self.wet,
+        )
     }
 }

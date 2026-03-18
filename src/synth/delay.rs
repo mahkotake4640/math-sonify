@@ -8,7 +8,7 @@ pub struct DelayLine {
     buf_l: Vec<f32>,
     buf_r: Vec<f32>,
     pos: usize,
-    pub delay_samples: f32,  // now fractional
+    pub delay_samples: f32, // now fractional
     pub feedback: f32,
     pub mix: f32,
 }

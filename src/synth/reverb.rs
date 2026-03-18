@@ -12,9 +12,18 @@ const NUM_ALLPASS: usize = 4;
 
 // Tuning constants (samples at 44100 Hz)
 const COMB_TUNING_L: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
-const COMB_TUNING_R: [usize; 8] = [1116+23, 1188+23, 1277+23, 1356+23, 1422+23, 1491+23, 1557+23, 1617+23];
+const COMB_TUNING_R: [usize; 8] = [
+    1116 + 23,
+    1188 + 23,
+    1277 + 23,
+    1356 + 23,
+    1422 + 23,
+    1491 + 23,
+    1557 + 23,
+    1617 + 23,
+];
 const ALLPASS_TUNING_L: [usize; 4] = [556, 441, 341, 225];
-const ALLPASS_TUNING_R: [usize; 4] = [556+23, 441+23, 341+23, 225+23];
+const ALLPASS_TUNING_R: [usize; 4] = [556 + 23, 441 + 23, 341 + 23, 225 + 23];
 
 struct CombFilter {
     buf: Vec<f32>,
@@ -27,11 +36,23 @@ struct CombFilter {
 
 impl CombFilter {
     fn new(size: usize) -> Self {
-        Self { buf: vec![0.0; size], pos: 0, feedback: 0.84, damp1: 0.2, damp2: 0.8, filter_store: 0.0 }
+        Self {
+            buf: vec![0.0; size],
+            pos: 0,
+            feedback: 0.84,
+            damp1: 0.2,
+            damp2: 0.8,
+            filter_store: 0.0,
+        }
     }
 
-    fn set_damp(&mut self, d: f32) { self.damp1 = d; self.damp2 = 1.0 - d; }
-    fn set_feedback(&mut self, f: f32) { self.feedback = f; }
+    fn set_damp(&mut self, d: f32) {
+        self.damp1 = d;
+        self.damp2 = 1.0 - d;
+    }
+    fn set_feedback(&mut self, f: f32) {
+        self.feedback = f;
+    }
 
     fn process(&mut self, input: f32) -> f32 {
         let out = self.buf[self.pos];
@@ -48,7 +69,12 @@ struct AllpassFilter {
 }
 
 impl AllpassFilter {
-    fn new(size: usize) -> Self { Self { buf: vec![0.0; size], pos: 0 } }
+    fn new(size: usize) -> Self {
+        Self {
+            buf: vec![0.0; size],
+            pos: 0,
+        }
+    }
 
     fn process(&mut self, input: f32) -> f32 {
         let buf_out = self.buf[self.pos];
@@ -122,8 +148,12 @@ impl Freeverb {
     /// Values above `0.98` cause the reverb to ring indefinitely.
     pub fn set_room_size(&mut self, r: f32) {
         self.room_size = r;
-        for c in &mut self.combs_l { c.set_feedback(r); }
-        for c in &mut self.combs_r { c.set_feedback(r); }
+        for c in &mut self.combs_l {
+            c.set_feedback(r);
+        }
+        for c in &mut self.combs_r {
+            c.set_feedback(r);
+        }
     }
 
     /// Set the high-frequency damping coefficient for each comb filter.
@@ -131,8 +161,12 @@ impl Freeverb {
     /// Higher values roll off highs faster, simulating absorption by air and surfaces.
     pub fn set_damp(&mut self, d: f32) {
         self.damp = d;
-        for c in &mut self.combs_l { c.set_damp(d); }
-        for c in &mut self.combs_r { c.set_damp(d); }
+        for c in &mut self.combs_l {
+            c.set_damp(d);
+        }
+        for c in &mut self.combs_r {
+            c.set_damp(d);
+        }
     }
 
     /// Process one stereo sample pair. Returns (left, right).
@@ -142,19 +176,40 @@ impl Freeverb {
         let mono_in = (input_l + input_r) * (0.015 * self.wet.clamp(0.1, 1.0) / 0.4); // scale proportional to wet level
         let mut out_l = 0.0f32;
         let mut out_r = 0.0f32;
-        for c in &mut self.combs_l { out_l += c.process(mono_in); }
-        for c in &mut self.combs_r { out_r += c.process(mono_in); }
-        for a in &mut self.allpass_l { out_l = a.process(out_l); }
-        for a in &mut self.allpass_r { out_r = a.process(out_r); }
+        for c in &mut self.combs_l {
+            out_l += c.process(mono_in);
+        }
+        for c in &mut self.combs_r {
+            out_r += c.process(mono_in);
+        }
+        for a in &mut self.allpass_l {
+            out_l = a.process(out_l);
+        }
+        for a in &mut self.allpass_r {
+            out_r = a.process(out_r);
+        }
         // Sanitize: if reverb buffers are corrupted, reset them
         if !out_l.is_finite() || !out_r.is_finite() {
-            for c in &mut self.combs_l { c.buf.iter_mut().for_each(|x| *x = 0.0); c.filter_store = 0.0; }
-            for c in &mut self.combs_r { c.buf.iter_mut().for_each(|x| *x = 0.0); c.filter_store = 0.0; }
-            for a in &mut self.allpass_l { a.buf.iter_mut().for_each(|x| *x = 0.0); }
-            for a in &mut self.allpass_r { a.buf.iter_mut().for_each(|x| *x = 0.0); }
+            for c in &mut self.combs_l {
+                c.buf.iter_mut().for_each(|x| *x = 0.0);
+                c.filter_store = 0.0;
+            }
+            for c in &mut self.combs_r {
+                c.buf.iter_mut().for_each(|x| *x = 0.0);
+                c.filter_store = 0.0;
+            }
+            for a in &mut self.allpass_l {
+                a.buf.iter_mut().for_each(|x| *x = 0.0);
+            }
+            for a in &mut self.allpass_r {
+                a.buf.iter_mut().for_each(|x| *x = 0.0);
+            }
             return (input_l * (1.0 - self.wet), input_r * (1.0 - self.wet));
         }
         let dry = 1.0 - self.wet;
-        (input_l * dry + out_l * self.wet, input_r * dry + out_r * self.wet)
+        (
+            input_l * dry + out_l * self.wet,
+            input_r * dry + out_r * self.wet,
+        )
     }
 }

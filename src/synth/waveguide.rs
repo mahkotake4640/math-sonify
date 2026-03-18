@@ -24,11 +24,11 @@ pub struct WaveguideString {
     write_fwd: usize,
     write_bck: usize,
     sample_rate: f32,
-    pub tension:    f32,  // 0..1 → frequency scaling
-    pub damping:    f32,  // feedback coefficient (e.g. 0.995 = slow decay)
-    pub brightness: f32,  // IIR loop filter coefficient: 0 = bright, 0.5 = balanced, 0.9 = dark
-    pub dispersion: f32,  // allpass coefficient: 0 = none, 0.5 = moderate stiffness
-    pub length: f32,      // delay line length in samples
+    pub tension: f32,    // 0..1 → frequency scaling
+    pub damping: f32,    // feedback coefficient (e.g. 0.995 = slow decay)
+    pub brightness: f32, // IIR loop filter coefficient: 0 = bright, 0.5 = balanced, 0.9 = dark
+    pub dispersion: f32, // allpass coefficient: 0 = none, 0.5 = moderate stiffness
+    pub length: f32,     // delay line length in samples
     pub excite: bool,
     pub excite_pos: f32,
     noise_seed: u64,
@@ -53,10 +53,10 @@ impl WaveguideString {
             write_fwd: 0,
             write_bck: 0,
             sample_rate,
-            tension:    0.5,
-            damping:    0.995,  // raised from 0.98 — slower, more natural decay
-            brightness: 0.35,   // balanced; user can push toward dark (0.7) or bright (0.0)
-            dispersion: 0.12,   // mild stiffness; 0 = ideal string, 0.3 = piano-like
+            tension: 0.5,
+            damping: 0.995,   // raised from 0.98 — slower, more natural decay
+            brightness: 0.35, // balanced; user can push toward dark (0.7) or bright (0.0)
+            dispersion: 0.12, // mild stiffness; 0 = ideal string, 0.3 = piano-like
             length: (sample_rate / 220.0).clamp(2.0, MAX_DELAY as f32 - 2.0),
             excite: false,
             excite_pos: 0.5,
@@ -78,7 +78,8 @@ impl WaveguideString {
     }
 
     fn lcg_noise(&mut self) -> f32 {
-        self.noise_seed = self.noise_seed
+        self.noise_seed = self
+            .noise_seed
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
         // >> 33 yields 31 bits; divide by 2^31 for unbiased [-1, 1) range.

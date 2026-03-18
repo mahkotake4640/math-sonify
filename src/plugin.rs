@@ -10,19 +10,21 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 
-pub mod systems;
-pub mod sonification;
-pub mod synth;
+mod arrangement;
 pub mod config;
 pub mod error;
 mod patches;
-mod arrangement;
+pub mod sonification;
+pub mod synth;
+pub mod systems;
 
-use systems::*;
-use sonification::{Sonification, DirectMapping};
-use synth::{Oscillator, OscShape, BiquadFilter, Freeverb, DelayLine, Limiter,
-            KarplusStrong, Chorus, Waveshaper, Adsr};
 use config::SonificationConfig;
+use sonification::{DirectMapping, Sonification};
+use synth::{
+    Adsr, BiquadFilter, Chorus, DelayLine, Freeverb, KarplusStrong, Limiter, OscShape, Oscillator,
+    Waveshaper,
+};
+use systems::*;
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -84,7 +86,6 @@ struct MathSonifyParams {
     // -----------------------------------------------------------------------
     // Extended parameters (added in v0.10)
     // -----------------------------------------------------------------------
-
     /// Rössler parameter a.
     /// NOTE: The plugin currently runs the Lorenz attractor.  In a future
     /// version, system selection will be an enum parameter (Lorenz / Rössler /
@@ -146,145 +147,259 @@ impl Default for MathSonifyParams {
     fn default() -> Self {
         Self {
             master_volume: FloatParam::new(
-                "Master Volume", 0.7,
-                FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_smoother(SmoothingStyle::Linear(20.0)),
+                "Master Volume",
+                0.7,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0)),
 
             reverb_wet: FloatParam::new(
-                "Reverb Wet", 0.4,
-                FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_smoother(SmoothingStyle::Linear(50.0)),
+                "Reverb Wet",
+                0.4,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(50.0)),
 
             delay_ms: FloatParam::new(
-                "Delay Time", 300.0,
-                FloatRange::Skewed { min: 1.0, max: 2000.0, factor: FloatRange::skew_factor(-1.5) })
-                .with_unit(" ms"),
+                "Delay Time",
+                300.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_unit(" ms"),
 
             delay_feedback: FloatParam::new(
-                "Delay Feedback", 0.3,
-                FloatRange::Linear { min: 0.0, max: 0.9 }),
+                "Delay Feedback",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 0.9 },
+            ),
 
             sigma: FloatParam::new(
-                "Lorenz σ (Sigma)", 10.0,
-                FloatRange::Linear { min: 1.0, max: 30.0 }),
+                "Lorenz σ (Sigma)",
+                10.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 30.0,
+                },
+            ),
 
             rho: FloatParam::new(
-                "Lorenz ρ (Rho)", 28.0,
-                FloatRange::Linear { min: 10.0, max: 60.0 }),
+                "Lorenz ρ (Rho)",
+                28.0,
+                FloatRange::Linear {
+                    min: 10.0,
+                    max: 60.0,
+                },
+            ),
 
             beta: FloatParam::new(
-                "Lorenz β (Beta)", 2.6667,
-                FloatRange::Linear { min: 0.5, max: 8.0 }),
+                "Lorenz β (Beta)",
+                2.6667,
+                FloatRange::Linear { min: 0.5, max: 8.0 },
+            ),
 
             speed: FloatParam::new(
-                "Speed", 1.0,
-                FloatRange::Skewed { min: 0.05, max: 10.0, factor: FloatRange::skew_factor(-1.0) }),
+                "Speed",
+                1.0,
+                FloatRange::Skewed {
+                    min: 0.05,
+                    max: 10.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            ),
 
             base_frequency: FloatParam::new(
-                "Base Frequency", 110.0,
-                FloatRange::Skewed { min: 20.0, max: 1000.0, factor: FloatRange::skew_factor(-1.5) })
-                .with_unit(" Hz"),
+                "Base Frequency",
+                110.0,
+                FloatRange::Skewed {
+                    min: 20.0,
+                    max: 1000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_unit(" Hz"),
 
             octave_range: FloatParam::new(
-                "Octave Range", 3.0,
-                FloatRange::Linear { min: 0.5, max: 6.0 }),
+                "Octave Range",
+                3.0,
+                FloatRange::Linear { min: 0.5, max: 6.0 },
+            ),
 
             chorus_mix: FloatParam::new(
-                "Chorus Mix", 0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 }),
+                "Chorus Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             waveshaper_drive: FloatParam::new(
-                "Waveshaper Drive", 1.0,
-                FloatRange::Skewed { min: 1.0, max: 10.0, factor: FloatRange::skew_factor(-1.0) }),
+                "Waveshaper Drive",
+                1.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 10.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            ),
 
             portamento_ms: FloatParam::new(
-                "Portamento", 80.0,
-                FloatRange::Skewed { min: 1.0, max: 2000.0, factor: FloatRange::skew_factor(-1.5) })
-                .with_unit(" ms"),
+                "Portamento",
+                80.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_unit(" ms"),
 
             adsr_attack_ms: FloatParam::new(
-                "Attack", 10.0,
-                FloatRange::Skewed { min: 1.0, max: 2000.0, factor: FloatRange::skew_factor(-1.5) })
-                .with_unit(" ms"),
+                "Attack",
+                10.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_unit(" ms"),
 
             adsr_decay_ms: FloatParam::new(
-                "Decay", 200.0,
-                FloatRange::Skewed { min: 1.0, max: 2000.0, factor: FloatRange::skew_factor(-1.5) })
-                .with_unit(" ms"),
+                "Decay",
+                200.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_unit(" ms"),
 
             adsr_sustain: FloatParam::new(
-                "Sustain", 0.7,
-                FloatRange::Linear { min: 0.0, max: 1.0 }),
+                "Sustain",
+                0.7,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             adsr_release_ms: FloatParam::new(
-                "Release", 400.0,
-                FloatRange::Skewed { min: 10.0, max: 5000.0, factor: FloatRange::skew_factor(-1.5) })
-                .with_unit(" ms"),
+                "Release",
+                400.0,
+                FloatRange::Skewed {
+                    min: 10.0,
+                    max: 5000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_unit(" ms"),
 
             // --- Extended parameters (v0.10) --------------------------------
-
-            rossler_a: FloatParam::new(
-                "Rössler a", 0.2,
-                FloatRange::Linear { min: 0.0, max: 1.0 })
+            rossler_a: FloatParam::new("Rössler a", 0.2, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_smoother(SmoothingStyle::Linear(20.0)),
 
             rossler_c: FloatParam::new(
-                "Rössler c", 5.7,
-                FloatRange::Linear { min: 1.0, max: 20.0 })
-                .with_smoother(SmoothingStyle::Linear(20.0)),
+                "Rössler c",
+                5.7,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 20.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0)),
 
             base_freq_transpose: FloatParam::new(
-                "Transpose", 0.0,
-                FloatRange::Linear { min: -24.0, max: 24.0 })
-                .with_smoother(SmoothingStyle::Linear(10.0))
-                .with_unit(" st"),
+                "Transpose",
+                0.0,
+                FloatRange::Linear {
+                    min: -24.0,
+                    max: 24.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(10.0))
+            .with_unit(" st"),
 
             waveshaper_mix: FloatParam::new(
-                "Waveshaper Mix", 0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_smoother(SmoothingStyle::Linear(20.0)),
+                "Waveshaper Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0)),
 
             chorus_rate: FloatParam::new(
-                "Chorus Rate", 0.5,
-                FloatRange::Skewed { min: 0.1, max: 10.0, factor: FloatRange::skew_factor(-1.0) })
-                .with_smoother(SmoothingStyle::Linear(50.0))
-                .with_unit(" Hz"),
+                "Chorus Rate",
+                0.5,
+                FloatRange::Skewed {
+                    min: 0.1,
+                    max: 10.0,
+                    factor: FloatRange::skew_factor(-1.0),
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(50.0))
+            .with_unit(" Hz"),
 
             chorus_depth: FloatParam::new(
-                "Chorus Depth", 3.0,
-                FloatRange::Linear { min: 0.5, max: 20.0 })
-                .with_smoother(SmoothingStyle::Linear(50.0))
-                .with_unit(" ms"),
+                "Chorus Depth",
+                3.0,
+                FloatRange::Linear {
+                    min: 0.5,
+                    max: 20.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(50.0))
+            .with_unit(" ms"),
 
             reverb_size: FloatParam::new(
-                "Reverb Size", 0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_smoother(SmoothingStyle::Linear(100.0)),
+                "Reverb Size",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(100.0)),
 
             eq_low_db: FloatParam::new(
-                "EQ Low", 0.0,
-                FloatRange::Linear { min: -12.0, max: 12.0 })
-                .with_smoother(SmoothingStyle::Linear(20.0))
-                .with_unit(" dB"),
+                "EQ Low",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_unit(" dB"),
 
             eq_high_db: FloatParam::new(
-                "EQ High", 0.0,
-                FloatRange::Linear { min: -12.0, max: 12.0 })
-                .with_smoother(SmoothingStyle::Linear(20.0))
-                .with_unit(" dB"),
+                "EQ High",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_unit(" dB"),
 
             bit_depth: FloatParam::new(
-                "Bit Depth", 24.0,
-                FloatRange::Linear { min: 4.0, max: 24.0 })
-                .with_smoother(SmoothingStyle::Linear(20.0))
-                .with_unit(" bit"),
+                "Bit Depth",
+                24.0,
+                FloatRange::Linear {
+                    min: 4.0,
+                    max: 24.0,
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_unit(" bit"),
 
             speed_lfo_rate: FloatParam::new(
-                "Speed LFO Rate", 0.05,
-                FloatRange::Skewed { min: 0.001, max: 10.0, factor: FloatRange::skew_factor(-2.0) })
-                .with_smoother(SmoothingStyle::Linear(50.0))
-                .with_unit(" Hz"),
-
+                "Speed LFO Rate",
+                0.05,
+                FloatRange::Skewed {
+                    min: 0.001,
+                    max: 10.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_smoother(SmoothingStyle::Linear(50.0))
+            .with_unit(" Hz"),
             // Note: All parameters have clear names for DAW automation lanes.
             // Master Volume default=0.7, Speed default=1.0, Base Frequency default=110 Hz.
         }
@@ -326,10 +441,10 @@ struct PluginDsp {
     waveshaper: Waveshaper,
     ks: KarplusStrong,
     // Attractor integration accumulator (sub-sample precision)
-    accum: f64,  // accumulated real time in seconds
+    accum: f64, // accumulated real time in seconds
     step_dt: f64,
     // MIDI state
-    active_note: Option<u8>,  // currently held MIDI note
+    active_note: Option<u8>, // currently held MIDI note
     note_velocity: f32,
 }
 
@@ -345,7 +460,9 @@ impl PluginDsp {
             sample_rate: sr,
             lorenz: Lorenz::new(10.0, 28.0, 2.6667),
             mapper: DirectMapping::new(),
-            oscs: std::array::from_fn(|i| Oscillator::new(110.0 * (i+1) as f32, OscShape::Sine, sr)),
+            oscs: std::array::from_fn(|i| {
+                Oscillator::new(110.0 * (i + 1) as f32, OscShape::Sine, sr)
+            }),
             chord_oscs: std::array::from_fn(|_| Oscillator::new(220.0, OscShape::Sine, sr)),
             voice_adsr: std::array::from_fn(|_| Adsr::new(10.0, 200.0, 0.7, 400.0, sr)),
             amp_smooth: [0.0; 4],
@@ -369,15 +486,14 @@ impl PluginDsp {
     }
 
     fn next_sample(&mut self, params: &MathSonifyParams) -> (f32, f32) {
-
         // --- Rössler parameters (read every sample, smoothed) ---------------
         // Future version: add an enum parameter to select the attractor system
         // (Lorenz / Rössler / Halvorsen / …).  For now the plugin always runs
         // the Lorenz system.  The rossler_a and rossler_c knobs are fully
         // automatable and will drive Rössler integration once system selection
         // is implemented.  Classic chaotic Rössler: a=0.2, b=0.2, c=5.7.
-        let _rossler_a = params.rossler_a.smoothed.next();  // exposed, not yet wired
-        let _rossler_c = params.rossler_c.smoothed.next();  // exposed, not yet wired
+        let _rossler_a = params.rossler_a.smoothed.next(); // exposed, not yet wired
+        let _rossler_c = params.rossler_c.smoothed.next(); // exposed, not yet wired
 
         // Integrate the attractor once per sample (or skip to keep real-time)
         let speed = params.speed.smoothed.next() as f64;
@@ -428,7 +544,7 @@ impl PluginDsp {
             let tamp = ap.amps[i] * ap.voice_levels[i] * self.note_velocity;
             if tfreq > 10.0 {
                 self.freq_smooth[i] += fr * (tfreq - self.freq_smooth[i]);
-                self.amp_smooth[i]  += 0.005 * (tamp - self.amp_smooth[i]);
+                self.amp_smooth[i] += 0.005 * (tamp - self.amp_smooth[i]);
                 self.oscs[i].freq = self.freq_smooth[i];
                 let env = self.voice_adsr[i].next_sample();
                 let sig = self.oscs[i].next_sample() * self.amp_smooth[i] * gain * env;
@@ -445,7 +561,7 @@ impl PluginDsp {
 
         // Waveshaper — drive and mix are both automatable
         self.waveshaper.drive = params.waveshaper_drive.smoothed.next();
-        self.waveshaper.mix   = params.waveshaper_mix.smoothed.next();
+        self.waveshaper.mix = params.waveshaper_mix.smoothed.next();
         let l = self.waveshaper.process(l);
         let r = self.waveshaper.process(r);
 
@@ -453,7 +569,8 @@ impl PluginDsp {
         let l = self.filter.process(l + ks * 0.3);
         let r = self.filter.process(r + ks * 0.3);
 
-        self.delay.set_delay_ms(params.delay_ms.smoothed.next(), self.sample_rate);
+        self.delay
+            .set_delay_ms(params.delay_ms.smoothed.next(), self.sample_rate);
         self.delay.feedback = params.delay_feedback.smoothed.next();
         let (l, r) = self.delay.process(l, r);
 
@@ -485,19 +602,19 @@ impl PluginDsp {
         // filter state for low- and high-shelf stages).  The gains are read here
         // so smoothers stay active; a linear gain approximation is applied as a
         // temporary stand-in until proper shelf filters are plumbed in.
-        let eq_low_gain  = 10.0f32.powf(params.eq_low_db.smoothed.next()  / 20.0);
+        let eq_low_gain = 10.0f32.powf(params.eq_low_db.smoothed.next() / 20.0);
         let eq_high_gain = 10.0f32.powf(params.eq_high_db.smoothed.next() / 20.0);
         // Approximate: blend a simple one-pole low-pass for the low shelf and
         // one-pole high-pass for the high shelf, both at a fixed crossover (~500 Hz).
         // This is intentionally lightweight; replace with BiquadFilter shelves later.
         let crossover_coeff = 0.03_f32; // ~500 Hz at 44.1 kHz
-        // We keep running averages in place without extra state by using a
-        // stateless approximation: treat the whole buffer sample as its own state.
-        // This is equivalent to a one-sample lookahead shelf — acceptable for a
-        // first-pass implementation.
-        let l_low  = l * crossover_coeff;
+                                        // We keep running averages in place without extra state by using a
+                                        // stateless approximation: treat the whole buffer sample as its own state.
+                                        // This is equivalent to a one-sample lookahead shelf — acceptable for a
+                                        // first-pass implementation.
+        let l_low = l * crossover_coeff;
         let l_high = l - l_low;
-        let r_low  = r * crossover_coeff;
+        let r_low = r * crossover_coeff;
         let r_high = r - r_low;
         let l = l_low * eq_low_gain + l_high * eq_high_gain;
         let r = r_low * eq_low_gain + r_high * eq_high_gain;
@@ -510,7 +627,7 @@ impl PluginDsp {
         // Chorus rate and depth are read to advance their smoothers; they will
         // be forwarded to `self.chorus` once the Chorus struct exposes those
         // fields (currently the struct uses internal fixed values).
-        let _chorus_rate  = params.chorus_rate.smoothed.next();
+        let _chorus_rate = params.chorus_rate.smoothed.next();
         let _chorus_depth = params.chorus_depth.smoothed.next();
 
         let mv = params.master_volume.smoothed.next();
@@ -575,19 +692,17 @@ impl Default for MathSonify {
 }
 
 impl Plugin for MathSonify {
-    const NAME:              &'static str = "Math Sonify";
-    const VENDOR:            &'static str = "Mattbusel";
-    const URL:               &'static str = "https://github.com/Mattbusel/math-sonify";
-    const EMAIL:             &'static str = "mattbusel@gmail.com";
-    const VERSION:           &'static str = "0.9.0";
-    const AUDIO_IO_LAYOUTS:  &'static [AudioIOLayout] = &[
-        AudioIOLayout {
-            main_input_channels:  None,
-            main_output_channels: NonZeroU32::new(2),
-            ..AudioIOLayout::const_default()
-        },
-    ];
-    const MIDI_INPUT:  MidiConfig = MidiConfig::Basic;
+    const NAME: &'static str = "Math Sonify";
+    const VENDOR: &'static str = "Mattbusel";
+    const URL: &'static str = "https://github.com/Mattbusel/math-sonify";
+    const EMAIL: &'static str = "mattbusel@gmail.com";
+    const VERSION: &'static str = "0.9.0";
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: None,
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }];
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
@@ -623,7 +738,7 @@ impl Plugin for MathSonify {
     ) -> ProcessStatus {
         let dsp = match &mut self.dsp {
             Some(d) => d,
-            None    => return ProcessStatus::Error("DSP not initialized"),
+            None => return ProcessStatus::Error("DSP not initialized"),
         };
 
         // Process MIDI events
@@ -643,11 +758,23 @@ impl Plugin for MathSonify {
         for channel_samples in buffer.iter_samples() {
             let (l_raw, r_raw) = dsp.next_sample(&self.params);
             // Final safety clamp — prevents NaN or clipping from reaching the DAW
-            let l = if l_raw.is_finite() { l_raw.clamp(-1.0, 1.0) } else { 0.0 };
-            let r = if r_raw.is_finite() { r_raw.clamp(-1.0, 1.0) } else { 0.0 };
+            let l = if l_raw.is_finite() {
+                l_raw.clamp(-1.0, 1.0)
+            } else {
+                0.0
+            };
+            let r = if r_raw.is_finite() {
+                r_raw.clamp(-1.0, 1.0)
+            } else {
+                0.0
+            };
             let mut iter = channel_samples.into_iter();
-            if let Some(out_l) = iter.next() { *out_l = l; }
-            if let Some(out_r) = iter.next() { *out_r = r; }
+            if let Some(out_l) = iter.next() {
+                *out_l = l;
+            }
+            if let Some(out_r) = iter.next() {
+                *out_r = r;
+            }
         }
 
         ProcessStatus::Normal

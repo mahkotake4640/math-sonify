@@ -1,8 +1,8 @@
 // Config types are used in the binary but appear unused in the lib (plugin) build context.
 #![allow(dead_code)]
 
+use crate::sonification::{Scale, SonifMode};
 use serde::{Deserialize, Serialize};
-use crate::sonification::{SonifMode, Scale};
 
 /// Top-level application configuration, loaded from `config.toml`.
 ///
@@ -72,7 +72,12 @@ pub struct VizConfig {
 
 impl Default for VizConfig {
     fn default() -> Self {
-        Self { trail_length: 800, projection: "xy".into(), glow: true, theme: "neon".into() }
+        Self {
+            trail_length: 800,
+            projection: "xy".into(),
+            glow: true,
+            theme: "neon".into(),
+        }
     }
 }
 
@@ -87,7 +92,11 @@ pub struct SystemConfig {
 
 impl Default for SystemConfig {
     fn default() -> Self {
-        Self { name: "lorenz".into(), dt: 0.001, speed: 1.0 }
+        Self {
+            name: "lorenz".into(),
+            dt: 0.001,
+            speed: 1.0,
+        }
     }
 }
 
@@ -169,7 +178,13 @@ pub struct LorenzConfig {
     pub beta: f64,
 }
 impl Default for LorenzConfig {
-    fn default() -> Self { Self { sigma: 10.0, rho: 28.0, beta: 2.6667 } }
+    fn default() -> Self {
+        Self {
+            sigma: 10.0,
+            rho: 28.0,
+            beta: 2.6667,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -180,17 +195,32 @@ pub struct RosslerConfig {
     pub c: f64,
 }
 impl Default for RosslerConfig {
-    fn default() -> Self { Self { a: 0.2, b: 0.2, c: 5.7 } }
+    fn default() -> Self {
+        Self {
+            a: 0.2,
+            b: 0.2,
+            c: 5.7,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DoublePendulumConfig {
-    pub m1: f64, pub m2: f64,
-    pub l1: f64, pub l2: f64,
+    pub m1: f64,
+    pub m2: f64,
+    pub l1: f64,
+    pub l2: f64,
 }
 impl Default for DoublePendulumConfig {
-    fn default() -> Self { Self { m1: 1.0, m2: 1.0, l1: 1.0, l2: 1.0 } }
+    fn default() -> Self {
+        Self {
+            m1: 1.0,
+            m2: 1.0,
+            l1: 1.0,
+            l2: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -201,7 +231,9 @@ pub struct GeodesicTorusConfig {
     pub r: f64,
 }
 impl Default for GeodesicTorusConfig {
-    fn default() -> Self { Self { big_r: 3.0, r: 1.0 } }
+    fn default() -> Self {
+        Self { big_r: 3.0, r: 1.0 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -211,7 +243,12 @@ pub struct KuramotoConfig {
     pub coupling: f64,
 }
 impl Default for KuramotoConfig {
-    fn default() -> Self { Self { n_oscillators: 8, coupling: 1.5 } }
+    fn default() -> Self {
+        Self {
+            n_oscillators: 8,
+            coupling: 1.5,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -224,7 +261,15 @@ pub struct DuffingConfig {
     pub omega: f64,
 }
 impl Default for DuffingConfig {
-    fn default() -> Self { Self { delta: 0.3, alpha: -1.0, beta: 1.0, gamma: 0.5, omega: 1.2 } }
+    fn default() -> Self {
+        Self {
+            delta: 0.3,
+            alpha: -1.0,
+            beta: 1.0,
+            gamma: 0.5,
+            omega: 1.2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -233,7 +278,9 @@ pub struct VanDerPolConfig {
     pub mu: f64,
 }
 impl Default for VanDerPolConfig {
-    fn default() -> Self { Self { mu: 2.0 } }
+    fn default() -> Self {
+        Self { mu: 2.0 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -242,7 +289,9 @@ pub struct HalvorsenConfig {
     pub a: f64,
 }
 impl Default for HalvorsenConfig {
-    fn default() -> Self { Self { a: 1.89 } }
+    fn default() -> Self {
+        Self { a: 1.89 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -256,7 +305,16 @@ pub struct AizawaConfig {
     pub f: f64,
 }
 impl Default for AizawaConfig {
-    fn default() -> Self { Self { a: 0.95, b: 0.7, c: 0.6, d: 3.5, e: 0.25, f: 0.1 } }
+    fn default() -> Self {
+        Self {
+            a: 0.95,
+            b: 0.7,
+            c: 0.6,
+            d: 3.5,
+            e: 0.25,
+            f: 0.1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -268,7 +326,14 @@ pub struct ChuaConfig {
     pub m1: f64,
 }
 impl Default for ChuaConfig {
-    fn default() -> Self { Self { alpha: 15.6, beta: 28.0, m0: -1.143, m1: -0.714 } }
+    fn default() -> Self {
+        Self {
+            alpha: 15.6,
+            beta: 28.0,
+            m0: -1.143,
+            m1: -0.714,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -278,7 +343,12 @@ pub struct HindmarshRoseConfig {
     pub r: f64,         // slow adaptation timescale
 }
 impl Default for HindmarshRoseConfig {
-    fn default() -> Self { Self { current_i: 3.0, r: 0.006 } }
+    fn default() -> Self {
+        Self {
+            current_i: 3.0,
+            r: 0.006,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -288,7 +358,9 @@ pub struct CmlConfig {
     pub eps: f64, // coupling strength (0=independent, 1=synchrony)
 }
 impl Default for CmlConfig {
-    fn default() -> Self { Self { r: 3.9, eps: 0.35 } }
+    fn default() -> Self {
+        Self { r: 3.9, eps: 0.35 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -300,7 +372,14 @@ pub struct MackeyGlassConfig {
     pub n: f64,
 }
 impl Default for MackeyGlassConfig {
-    fn default() -> Self { Self { beta: 0.2, gamma: 0.1, tau: 17.0, n: 10.0 } }
+    fn default() -> Self {
+        Self {
+            beta: 0.2,
+            gamma: 0.1,
+            tau: 17.0,
+            n: 10.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -309,7 +388,9 @@ pub struct NoseHooverConfig {
     pub a: f64,
 }
 impl Default for NoseHooverConfig {
-    fn default() -> Self { Self { a: 3.0 } }
+    fn default() -> Self {
+        Self { a: 3.0 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -319,7 +400,9 @@ pub struct HenonMapConfig {
     pub b: f64,
 }
 impl Default for HenonMapConfig {
-    fn default() -> Self { Self { a: 1.4, b: 0.3 } }
+    fn default() -> Self {
+        Self { a: 1.4, b: 0.3 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -328,7 +411,9 @@ pub struct Lorenz96Config {
     pub f: f64,
 }
 impl Default for Lorenz96Config {
-    fn default() -> Self { Self { f: 8.0 } }
+    fn default() -> Self {
+        Self { f: 8.0 }
+    }
 }
 
 impl Config {
@@ -336,13 +421,13 @@ impl Config {
     /// Call this after deserializing from user-supplied config files.
     pub fn validate(&mut self) {
         // System
-        Self::clamp_log_f64(&mut self.system.dt,    0.0001, 0.1,   "system.dt");
-        Self::clamp_log_f64(&mut self.system.speed, 0.0,    100.0, "system.speed");
+        Self::clamp_log_f64(&mut self.system.dt, 0.0001, 0.1, "system.dt");
+        Self::clamp_log_f64(&mut self.system.speed, 0.0, 100.0, "system.speed");
 
         // Lorenz
-        Self::clamp_log_f64(&mut self.lorenz.sigma, 0.1,  100.0, "lorenz.sigma");
-        Self::clamp_log_f64(&mut self.lorenz.rho,   0.1,  200.0, "lorenz.rho");
-        Self::clamp_log_f64(&mut self.lorenz.beta,  0.01,  20.0, "lorenz.beta");
+        Self::clamp_log_f64(&mut self.lorenz.sigma, 0.1, 100.0, "lorenz.sigma");
+        Self::clamp_log_f64(&mut self.lorenz.rho, 0.1, 200.0, "lorenz.rho");
+        Self::clamp_log_f64(&mut self.lorenz.beta, 0.01, 20.0, "lorenz.beta");
 
         // Rossler
         Self::clamp_log_f64(&mut self.rossler.a, 0.0, 20.0, "rossler.a");
@@ -350,55 +435,138 @@ impl Config {
         Self::clamp_log_f64(&mut self.rossler.c, 0.0, 20.0, "rossler.c");
 
         // Audio
-        Self::clamp_log_f32(&mut self.audio.reverb_wet,     0.0,  1.0,    "audio.reverb_wet");
-        Self::clamp_log_f32(&mut self.audio.delay_ms,       1.0,  5000.0, "audio.delay_ms");
-        Self::clamp_log_f32(&mut self.audio.delay_feedback, 0.0,  0.99,   "audio.delay_feedback");
-        Self::clamp_log_f32(&mut self.audio.master_volume,  0.0,  1.0,    "audio.master_volume");
+        Self::clamp_log_f32(&mut self.audio.reverb_wet, 0.0, 1.0, "audio.reverb_wet");
+        Self::clamp_log_f32(&mut self.audio.delay_ms, 1.0, 5000.0, "audio.delay_ms");
+        Self::clamp_log_f32(
+            &mut self.audio.delay_feedback,
+            0.0,
+            0.99,
+            "audio.delay_feedback",
+        );
+        Self::clamp_log_f32(
+            &mut self.audio.master_volume,
+            0.0,
+            1.0,
+            "audio.master_volume",
+        );
         if self.audio.sample_rate != 44100 && self.audio.sample_rate != 48000 {
-            tracing::warn!(field = "audio.sample_rate", value = self.audio.sample_rate as f64, min = 44100.0_f64, max = 48000.0_f64, "config value clamped to valid range");
+            tracing::warn!(
+                field = "audio.sample_rate",
+                value = self.audio.sample_rate as f64,
+                min = 44100.0_f64,
+                max = 48000.0_f64,
+                "config value clamped to valid range"
+            );
             self.audio.sample_rate = 44100;
         }
-        Self::clamp_log_f32(&mut self.audio.chorus_mix,       0.0,  1.0,   "audio.chorus_mix");
-        Self::clamp_log_f32(&mut self.audio.chorus_rate,      0.01, 20.0,  "audio.chorus_rate");
-        Self::clamp_log_f32(&mut self.audio.chorus_depth,     0.0,  50.0,  "audio.chorus_depth");
-        Self::clamp_log_f32(&mut self.audio.waveshaper_drive, 0.0,  100.0, "audio.waveshaper_drive");
-        Self::clamp_log_f32(&mut self.audio.waveshaper_mix,   0.0,  1.0,   "audio.waveshaper_mix");
-        Self::clamp_log_f32(&mut self.audio.rate_crush,       0.0,  1.0,   "audio.rate_crush");
-        Self::clamp_log_f32(&mut self.audio.bit_depth,        1.0,  32.0,  "audio.bit_depth");
+        Self::clamp_log_f32(&mut self.audio.chorus_mix, 0.0, 1.0, "audio.chorus_mix");
+        Self::clamp_log_f32(&mut self.audio.chorus_rate, 0.01, 20.0, "audio.chorus_rate");
+        Self::clamp_log_f32(
+            &mut self.audio.chorus_depth,
+            0.0,
+            50.0,
+            "audio.chorus_depth",
+        );
+        Self::clamp_log_f32(
+            &mut self.audio.waveshaper_drive,
+            0.0,
+            100.0,
+            "audio.waveshaper_drive",
+        );
+        Self::clamp_log_f32(
+            &mut self.audio.waveshaper_mix,
+            0.0,
+            1.0,
+            "audio.waveshaper_mix",
+        );
+        Self::clamp_log_f32(&mut self.audio.rate_crush, 0.0, 1.0, "audio.rate_crush");
+        Self::clamp_log_f32(&mut self.audio.bit_depth, 1.0, 32.0, "audio.bit_depth");
 
         // Sonification
-        Self::clamp_log_f64(&mut self.sonification.base_frequency, 20.0, 2000.0, "sonification.base_frequency");
-        Self::clamp_log_f64(&mut self.sonification.octave_range,   0.1,  8.0,    "sonification.octave_range");
-        Self::clamp_log_f32(&mut self.sonification.portamento_ms,  1.0,  5000.0, "sonification.portamento_ms");
+        Self::clamp_log_f64(
+            &mut self.sonification.base_frequency,
+            20.0,
+            2000.0,
+            "sonification.base_frequency",
+        );
+        Self::clamp_log_f64(
+            &mut self.sonification.octave_range,
+            0.1,
+            8.0,
+            "sonification.octave_range",
+        );
+        Self::clamp_log_f32(
+            &mut self.sonification.portamento_ms,
+            1.0,
+            5000.0,
+            "sonification.portamento_ms",
+        );
         for v in &mut self.sonification.voice_levels {
             let old = *v;
             *v = v.clamp(0.0, 1.0);
             if (*v - old).abs() > 1e-9 {
-                tracing::warn!(field = "sonification.voice_levels", value = old as f64, min = 0.0_f64, max = 1.0_f64, "config value clamped to valid range");
+                tracing::warn!(
+                    field = "sonification.voice_levels",
+                    value = old as f64,
+                    min = 0.0_f64,
+                    max = 1.0_f64,
+                    "config value clamped to valid range"
+                );
             }
         }
 
         // Double pendulum – lengths and masses must be positive
-        Self::clamp_log_f64(&mut self.double_pendulum.m1, 0.01, 100.0, "double_pendulum.m1");
-        Self::clamp_log_f64(&mut self.double_pendulum.m2, 0.01, 100.0, "double_pendulum.m2");
-        Self::clamp_log_f64(&mut self.double_pendulum.l1, 0.01, 100.0, "double_pendulum.l1");
-        Self::clamp_log_f64(&mut self.double_pendulum.l2, 0.01, 100.0, "double_pendulum.l2");
+        Self::clamp_log_f64(
+            &mut self.double_pendulum.m1,
+            0.01,
+            100.0,
+            "double_pendulum.m1",
+        );
+        Self::clamp_log_f64(
+            &mut self.double_pendulum.m2,
+            0.01,
+            100.0,
+            "double_pendulum.m2",
+        );
+        Self::clamp_log_f64(
+            &mut self.double_pendulum.l1,
+            0.01,
+            100.0,
+            "double_pendulum.l1",
+        );
+        Self::clamp_log_f64(
+            &mut self.double_pendulum.l2,
+            0.01,
+            100.0,
+            "double_pendulum.l2",
+        );
 
         // Geodesic torus – radii must be positive
-        Self::clamp_log_f64(&mut self.geodesic_torus.big_r, 0.1,  100.0, "geodesic_torus.big_r");
-        Self::clamp_log_f64(&mut self.geodesic_torus.r,     0.01, 50.0,  "geodesic_torus.r");
+        Self::clamp_log_f64(
+            &mut self.geodesic_torus.big_r,
+            0.1,
+            100.0,
+            "geodesic_torus.big_r",
+        );
+        Self::clamp_log_f64(&mut self.geodesic_torus.r, 0.01, 50.0, "geodesic_torus.r");
 
         // Kuramoto
         let old_n = self.kuramoto.n_oscillators;
         self.kuramoto.n_oscillators = self.kuramoto.n_oscillators.max(2).min(256);
         if self.kuramoto.n_oscillators != old_n {
-            tracing::warn!(field = "kuramoto.n_oscillators", value = old_n as f64, min = 2.0_f64, max = 256.0_f64, "config value clamped to valid range");
+            tracing::warn!(
+                field = "kuramoto.n_oscillators",
+                value = old_n as f64,
+                min = 2.0_f64,
+                max = 256.0_f64,
+                "config value clamped to valid range"
+            );
         }
         Self::clamp_log_f64(&mut self.kuramoto.coupling, 0.0, 50.0, "kuramoto.coupling");
 
         // Duffing
-        Self::clamp_log_f64(&mut self.duffing.delta, 0.0,   10.0,  "duffing.delta");
-        Self::clamp_log_f64(&mut self.duffing.gamma, 0.0,   10.0,  "duffing.gamma");
+        Self::clamp_log_f64(&mut self.duffing.delta, 0.0, 10.0, "duffing.delta");
+        Self::clamp_log_f64(&mut self.duffing.gamma, 0.0, 10.0, "duffing.gamma");
         Self::clamp_log_f64(&mut self.duffing.omega, 0.001, 100.0, "duffing.omega");
 
         // Van der Pol
@@ -408,36 +576,56 @@ impl Config {
         Self::clamp_log_f64(&mut self.halvorsen.a, 0.0, 10.0, "halvorsen.a");
 
         // Aizawa
-        Self::clamp_log_f64(&mut self.aizawa.a, 0.0, 5.0,  "aizawa.a");
-        Self::clamp_log_f64(&mut self.aizawa.b, 0.0, 5.0,  "aizawa.b");
-        Self::clamp_log_f64(&mut self.aizawa.c, 0.0, 5.0,  "aizawa.c");
+        Self::clamp_log_f64(&mut self.aizawa.a, 0.0, 5.0, "aizawa.a");
+        Self::clamp_log_f64(&mut self.aizawa.b, 0.0, 5.0, "aizawa.b");
+        Self::clamp_log_f64(&mut self.aizawa.c, 0.0, 5.0, "aizawa.c");
         Self::clamp_log_f64(&mut self.aizawa.d, 0.0, 10.0, "aizawa.d");
-        Self::clamp_log_f64(&mut self.aizawa.e, 0.0, 5.0,  "aizawa.e");
-        Self::clamp_log_f64(&mut self.aizawa.f, 0.0, 5.0,  "aizawa.f");
+        Self::clamp_log_f64(&mut self.aizawa.e, 0.0, 5.0, "aizawa.e");
+        Self::clamp_log_f64(&mut self.aizawa.f, 0.0, 5.0, "aizawa.f");
 
         // Chua
         Self::clamp_log_f64(&mut self.chua.alpha, 0.0, 100.0, "chua.alpha");
-        Self::clamp_log_f64(&mut self.chua.beta,  0.0, 100.0, "chua.beta");
+        Self::clamp_log_f64(&mut self.chua.beta, 0.0, 100.0, "chua.beta");
 
         // Hindmarsh-Rose
-        Self::clamp_log_f64(&mut self.hindmarsh_rose.current_i, -5.0, 10.0, "hindmarsh_rose.current_i");
-        Self::clamp_log_f64(&mut self.hindmarsh_rose.r,          1e-6, 1.0,  "hindmarsh_rose.r");
+        Self::clamp_log_f64(
+            &mut self.hindmarsh_rose.current_i,
+            -5.0,
+            10.0,
+            "hindmarsh_rose.current_i",
+        );
+        Self::clamp_log_f64(&mut self.hindmarsh_rose.r, 1e-6, 1.0, "hindmarsh_rose.r");
 
         // CML
-        Self::clamp_log_f64(&mut self.coupled_map_lattice.r,   0.0, 4.0, "coupled_map_lattice.r");
-        Self::clamp_log_f64(&mut self.coupled_map_lattice.eps, 0.0, 1.0, "coupled_map_lattice.eps");
+        Self::clamp_log_f64(
+            &mut self.coupled_map_lattice.r,
+            0.0,
+            4.0,
+            "coupled_map_lattice.r",
+        );
+        Self::clamp_log_f64(
+            &mut self.coupled_map_lattice.eps,
+            0.0,
+            1.0,
+            "coupled_map_lattice.eps",
+        );
 
         // Mackey-Glass
-        Self::clamp_log_f64(&mut self.mackey_glass.beta,  0.0, 10.0,  "mackey_glass.beta");
-        Self::clamp_log_f64(&mut self.mackey_glass.gamma, 0.0, 10.0,  "mackey_glass.gamma");
-        Self::clamp_log_f64(&mut self.mackey_glass.tau,   1.0, 300.0, "mackey_glass.tau");
-        Self::clamp_log_f64(&mut self.mackey_glass.n,     1.0, 20.0,  "mackey_glass.n");
+        Self::clamp_log_f64(&mut self.mackey_glass.beta, 0.0, 10.0, "mackey_glass.beta");
+        Self::clamp_log_f64(
+            &mut self.mackey_glass.gamma,
+            0.0,
+            10.0,
+            "mackey_glass.gamma",
+        );
+        Self::clamp_log_f64(&mut self.mackey_glass.tau, 1.0, 300.0, "mackey_glass.tau");
+        Self::clamp_log_f64(&mut self.mackey_glass.n, 1.0, 20.0, "mackey_glass.n");
 
         // Nose-Hoover
         Self::clamp_log_f64(&mut self.nose_hoover.a, 0.1, 20.0, "nose_hoover.a");
 
         // Henon map
-        Self::clamp_log_f64(&mut self.henon_map.a, 0.0,  2.0, "henon_map.a");
+        Self::clamp_log_f64(&mut self.henon_map.a, 0.0, 2.0, "henon_map.a");
         Self::clamp_log_f64(&mut self.henon_map.b, -1.0, 1.0, "henon_map.b");
 
         // Lorenz96
@@ -449,7 +637,13 @@ impl Config {
         let old = *value;
         *value = old.clamp(min, max);
         if (*value - old).abs() > f64::EPSILON {
-            tracing::warn!(field = field, value = old, min = min, max = max, "config value clamped to valid range");
+            tracing::warn!(
+                field = field,
+                value = old,
+                min = min,
+                max = max,
+                "config value clamped to valid range"
+            );
         }
     }
 
@@ -458,7 +652,13 @@ impl Config {
         let old = *value;
         *value = old.clamp(min, max);
         if (*value - old).abs() > f32::EPSILON {
-            tracing::warn!(field = field, value = old as f64, min = min as f64, max = max as f64, "config value clamped to valid range");
+            tracing::warn!(
+                field = field,
+                value = old as f64,
+                min = min as f64,
+                max = max as f64,
+                "config value clamped to valid range"
+            );
         }
     }
 }
@@ -467,36 +667,45 @@ impl Config {
 
 impl From<&str> for SonifMode {
     fn from(s: &str) -> Self {
-        match s { "orbital" => Self::Orbital, "granular" => Self::Granular,
-                  "spectral" => Self::Spectral, "fm" => Self::FM,
-                  "vocal" => Self::Vocal, "waveguide" => Self::Waveguide,
-                  _ => Self::Direct }
+        match s {
+            "orbital" => Self::Orbital,
+            "granular" => Self::Granular,
+            "spectral" => Self::Spectral,
+            "fm" => Self::FM,
+            "vocal" => Self::Vocal,
+            "waveguide" => Self::Waveguide,
+            _ => Self::Direct,
+        }
     }
 }
 
 impl From<String> for SonifMode {
-    fn from(s: String) -> Self { Self::from(s.as_str()) }
+    fn from(s: String) -> Self {
+        Self::from(s.as_str())
+    }
 }
 
 impl From<&str> for Scale {
     fn from(s: &str) -> Self {
         match s {
-            "chromatic"       => Self::Chromatic,
+            "chromatic" => Self::Chromatic,
             "just_intonation" => Self::JustIntonation,
-            "microtonal"      => Self::Microtonal,
-            "edo19"           => Self::Edo19,
-            "edo31"           => Self::Edo31,
-            "edo24"           => Self::Edo24,
-            "whole_tone"      => Self::WholeTone,
-            "phrygian"        => Self::Phrygian,
-            "lydian"          => Self::Lydian,
-            _                 => Self::Pentatonic,
+            "microtonal" => Self::Microtonal,
+            "edo19" => Self::Edo19,
+            "edo31" => Self::Edo31,
+            "edo24" => Self::Edo24,
+            "whole_tone" => Self::WholeTone,
+            "phrygian" => Self::Phrygian,
+            "lydian" => Self::Lydian,
+            _ => Self::Pentatonic,
         }
     }
 }
 
 impl From<String> for Scale {
-    fn from(s: String) -> Self { Self::from(s.as_str()) }
+    fn from(s: String) -> Self {
+        Self::from(s.as_str())
+    }
 }
 
 /// Loads a `Config` from a TOML file, falling back to defaults on any error.
@@ -544,11 +753,14 @@ mod tests {
         deserialized.validate();
         // Compare key scalar fields to verify round-trip fidelity
         assert!((original.lorenz.sigma - deserialized.lorenz.sigma).abs() < 1e-9);
-        assert!((original.lorenz.rho   - deserialized.lorenz.rho).abs()   < 1e-9);
-        assert!((original.lorenz.beta  - deserialized.lorenz.beta).abs()  < 1e-9);
-        assert!((original.rossler.a    - deserialized.rossler.a).abs()    < 1e-9);
-        assert!((original.rossler.c    - deserialized.rossler.c).abs()    < 1e-9);
-        assert!((original.audio.master_volume as f64 - deserialized.audio.master_volume as f64).abs() < 1e-6);
+        assert!((original.lorenz.rho - deserialized.lorenz.rho).abs() < 1e-9);
+        assert!((original.lorenz.beta - deserialized.lorenz.beta).abs() < 1e-9);
+        assert!((original.rossler.a - deserialized.rossler.a).abs() < 1e-9);
+        assert!((original.rossler.c - deserialized.rossler.c).abs() < 1e-9);
+        assert!(
+            (original.audio.master_volume as f64 - deserialized.audio.master_volume as f64).abs()
+                < 1e-6
+        );
         assert_eq!(original.system.name, deserialized.system.name);
     }
 }

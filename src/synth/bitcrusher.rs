@@ -15,8 +15,8 @@ pub struct Bitcrusher {
     /// Sample-rate crush amount (0..1; 0 = bypass).
     pub rate_crush: f32,
     sample_hold: f32,
-    sample_counter: u32,  // integer counter for even timing
-    rate_period: u32,     // how many input samples per held sample
+    sample_counter: u32, // integer counter for even timing
+    rate_period: u32,    // how many input samples per held sample
     rng_state: u64,
     // #2 — Anti-aliased oversampling: previous input for interpolation
     prev_input: f32,

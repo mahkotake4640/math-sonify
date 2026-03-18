@@ -1,4 +1,4 @@
-use super::{AudioParams, Sonification, SonifMode, Scale, quantize_to_scale};
+use super::{quantize_to_scale, AudioParams, Scale, SonifMode, Sonification};
 use crate::config::SonificationConfig;
 
 /// Granular mode: trajectory speed → grain density; position → grain pitch.
@@ -12,7 +12,10 @@ impl GranularMapping {
     ///
     /// The window is populated lazily on the first call to [`Sonification::map`].
     pub fn new() -> Self {
-        Self { min_state: Vec::new(), max_state: Vec::new() }
+        Self {
+            min_state: Vec::new(),
+            max_state: Vec::new(),
+        }
     }
 }
 
@@ -24,8 +27,12 @@ impl Sonification for GranularMapping {
             self.max_state = state.to_vec();
         }
         for (i, &v) in state.iter().enumerate() {
-            if v < self.min_state[i] { self.min_state[i] = v; }
-            if v > self.max_state[i] { self.max_state[i] = v; }
+            if v < self.min_state[i] {
+                self.min_state[i] = v;
+            }
+            if v > self.max_state[i] {
+                self.max_state[i] = v;
+            }
         }
 
         let scale: Scale = config.scale.clone().into();
@@ -33,7 +40,9 @@ impl Sonification for GranularMapping {
         let oct = config.octave_range as f32;
 
         // Normalize first dimension to get base pitch
-        let t = if state.is_empty() { 0.5 } else {
+        let t = if state.is_empty() {
+            0.5
+        } else {
             let range = (self.max_state[0] - self.min_state[0]).abs().max(1e-9);
             ((state[0] - self.min_state[0]) / range) as f32
         };
@@ -45,7 +54,9 @@ impl Sonification for GranularMapping {
         let spread = if state.len() > 1 {
             let range = (self.max_state[1] - self.min_state[1]).abs().max(1e-9);
             ((state[1] - self.min_state[1]) / range) as f32
-        } else { 0.5 };
+        } else {
+            0.5
+        };
 
         let mut p = AudioParams {
             mode: SonifMode::Granular,

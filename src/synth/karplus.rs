@@ -18,12 +18,12 @@
 pub struct KarplusStrong {
     buf: Vec<f32>,
     write: usize,
-    pub decay: f32,       // per-loop gain (0 < decay < 1)
-    pub brightness: f32,  // IIR coeff: 0 = bright, 0.5 = balanced, 0.85 = dark
-    pub stretch: f32,     // allpass coefficient for stiffness (0 = none)
+    pub decay: f32,      // per-loop gain (0 < decay < 1)
+    pub brightness: f32, // IIR coeff: 0 = bright, 0.5 = balanced, 0.85 = dark
+    pub stretch: f32,    // allpass coefficient for stiffness (0 = none)
     pub active: bool,
     pub volume: f32,
-    length_f: f32,        // fractional delay line length (samples)
+    length_f: f32, // fractional delay line length (samples)
     // Filter states
     lp_state: f32,
     ap_state: f32,
@@ -54,8 +54,7 @@ impl KarplusStrong {
 
     /// Trigger a new note at the given frequency.
     pub fn trigger(&mut self, freq: f32, sample_rate: f32) {
-        self.length_f = (sample_rate / freq.max(20.0))
-            .clamp(2.0, self.buf.len() as f32 - 2.0);
+        self.length_f = (sample_rate / freq.max(20.0)).clamp(2.0, self.buf.len() as f32 - 2.0);
         let len = self.length_f as usize;
         // Seed with high-resolution nanoseconds so two voices triggered at the same
         // time (or same write position) produce genuinely different excitations.
@@ -64,16 +63,21 @@ impl KarplusStrong {
             .map(|d| d.subsec_nanos() as u64)
             .unwrap_or(self.write as u64 + 1);
         let mut rng = self.write as u64 ^ ns ^ 0xDEAD_BEEF_CAFE_BABE;
-        rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
         for i in 0..len {
-            rng = rng.wrapping_mul(6_364_136_223_846_793_005)
+            rng = rng
+                .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
             // >> 33 yields 31 bits; divide by 2^31 for unbiased [-1, 1) range.
             // Dividing by u32::MAX (≈ 2^32) would cap the max at ~0.5, producing
             // DC-biased initial excitation that clicks at note onset.
             self.buf[i] = (rng >> 33) as f32 / (1u64 << 31) as f32 * 2.0 - 1.0;
         }
-        for i in len..self.buf.len() { self.buf[i] = 0.0; }
+        for i in len..self.buf.len() {
+            self.buf[i] = 0.0;
+        }
         self.write = 0;
         self.lp_state = 0.0;
         self.ap_state = 0.0;
@@ -84,7 +88,9 @@ impl KarplusStrong {
     ///
     /// Returns 0.0 when the string has decayed to inaudible levels.
     pub fn next_sample(&mut self) -> f32 {
-        if !self.active { return 0.0; }
+        if !self.active {
+            return 0.0;
+        }
 
         let len = self.buf.len();
         let delay = self.length_f;
@@ -111,7 +117,9 @@ impl KarplusStrong {
         self.write = (self.write + 1) % len;
 
         // Silence detection — avoid running forever at inaudible levels
-        if fed.abs() < 1e-6 { self.active = false; }
+        if fed.abs() < 1e-6 {
+            self.active = false;
+        }
 
         read * self.volume
     }

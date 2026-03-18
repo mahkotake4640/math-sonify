@@ -6,17 +6,17 @@
 //! Grains also support harmonic stacking (octave / fifth copies at reduced
 //! amplitude) so the cloud has natural musical richness.
 
-use std::f32::consts::{TAU, PI};
+use std::f32::consts::{PI, TAU};
 
 const MAX_GRAINS: usize = 96; // increased from 64 for denser texture
 
 struct Grain {
     osc_phase: f32,
     freq: f32,
-    pan: f32,       // -1..1
+    pan: f32, // -1..1
     // Window state
-    window_phase: f32,  // 0..1 over grain lifetime
-    window_inc: f32,    // 1 / duration_samples
+    window_phase: f32, // 0..1 over grain lifetime
+    window_inc: f32,   // 1 / duration_samples
     amplitude: f32,
     active: bool,
 }
@@ -43,7 +43,9 @@ impl Grain {
     }
 
     fn next_sample(&mut self, sample_rate: f32) -> (f32, f32) {
-        if !self.active { return (0.0, 0.0); }
+        if !self.active {
+            return (0.0, 0.0);
+        }
 
         let env = Self::hann(self.window_phase) * self.amplitude;
         let sig = self.osc_phase.sin() * env;
@@ -51,7 +53,9 @@ impl Grain {
         self.osc_phase = (self.osc_phase + TAU * self.freq / sample_rate).rem_euclid(TAU);
         self.window_phase += self.window_inc;
 
-        if self.window_phase >= 1.0 { self.active = false; }
+        if self.window_phase >= 1.0 {
+            self.active = false;
+        }
 
         // Equal-power panning: constant loudness across the stereo field
         let pan_angle = (self.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4; // [0, π/2]
@@ -64,9 +68,9 @@ impl Grain {
 pub struct GrainEngine {
     grains: Vec<Grain>,
     sample_rate: f32,
-    pub spawn_rate: f32,    // grains per second
+    pub spawn_rate: f32, // grains per second
     pub base_freq: f32,
-    pub freq_spread: f32,   // semitones of random detune (±)
+    pub freq_spread: f32, // semitones of random detune (±)
     /// Grain overlap ratio (0.5 = 50% overlap, i.e., spawn rate relative to grain duration).
     /// Used externally to scale spawn_rate: spawn_rate = overlap * sample_rate / avg_grain_duration.
     pub overlap: f32,

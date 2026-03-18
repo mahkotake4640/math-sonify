@@ -44,11 +44,21 @@ impl GeodesicTorus {
 }
 
 impl DynamicalSystem for GeodesicTorus {
-    fn state(&self) -> &[f64] { &self.state }
-    fn dimension(&self) -> usize { 4 }
-    fn name(&self) -> &str { "Geodesic Torus" }
-    fn speed(&self) -> f64 { self.speed }
-    fn deriv_at(&self, state: &[f64]) -> Vec<f64> { Self::deriv(state, self.big_r, self.small_r) }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+    fn dimension(&self) -> usize {
+        4
+    }
+    fn name(&self) -> &str {
+        "Geodesic Torus"
+    }
+    fn speed(&self) -> f64 {
+        self.speed
+    }
+    fn deriv_at(&self, state: &[f64]) -> Vec<f64> {
+        Self::deriv(state, self.big_r, self.small_r)
+    }
 
     fn step(&mut self, dt: f64) {
         let (big_r, small_r) = (self.big_r, self.small_r);
@@ -57,8 +67,13 @@ impl DynamicalSystem for GeodesicTorus {
         // Wrap angles to [0, 2π)
         self.state[0] = self.state[0].rem_euclid(std::f64::consts::TAU);
         self.state[1] = self.state[1].rem_euclid(std::f64::consts::TAU);
-        let ds: f64 = self.state.iter().zip(prev.iter())
-            .map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt();
+        let ds: f64 = self
+            .state
+            .iter()
+            .zip(prev.iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
         self.speed = ds / dt;
     }
 }

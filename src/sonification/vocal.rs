@@ -1,14 +1,14 @@
-use super::{AudioParams, Sonification, SonifMode};
+use super::{AudioParams, SonifMode, Sonification};
 use crate::config::SonificationConfig;
 
 /// Vowel formant definitions: (F1, F2, F3) in Hz
 const VOWELS: [(f32, f32, f32); 6] = [
-    (800.0, 1200.0, 2500.0),  // /a/
-    (400.0, 2000.0, 2600.0),  // /e/
-    (300.0, 2300.0, 3000.0),  // /i/
-    (500.0,  900.0, 2500.0),  // /o/
-    (300.0,  800.0, 2300.0),  // /u/
-    (700.0, 1700.0, 2600.0),  // /æ/
+    (800.0, 1200.0, 2500.0), // /a/
+    (400.0, 2000.0, 2600.0), // /e/
+    (300.0, 2300.0, 3000.0), // /i/
+    (500.0, 900.0, 2500.0),  // /o/
+    (300.0, 800.0, 2300.0),  // /u/
+    (700.0, 1700.0, 2600.0), // /æ/
 ];
 
 /// Formant/vocal synthesis mode. Maps attractor state to vowel space.
@@ -38,14 +38,24 @@ impl VocalMapping {
             self.min = state.to_vec();
             self.max = state.to_vec();
         }
-        state.iter().enumerate().map(|(i, &v)| {
-            if v < self.min[i] { self.min[i] = v; }
-            else { self.min[i] += self.alpha * (v - self.min[i]); }
-            if v > self.max[i] { self.max[i] = v; }
-            else { self.max[i] += self.alpha * (v - self.max[i]); }
-            let range = (self.max[i] - self.min[i]).abs().max(1e-9);
-            ((v - self.min[i]) / range) as f32
-        }).collect()
+        state
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                if v < self.min[i] {
+                    self.min[i] = v;
+                } else {
+                    self.min[i] += self.alpha * (v - self.min[i]);
+                }
+                if v > self.max[i] {
+                    self.max[i] = v;
+                } else {
+                    self.max[i] += self.alpha * (v - self.max[i]);
+                }
+                let range = (self.max[i] - self.min[i]).abs().max(1e-9);
+                ((v - self.min[i]) / range) as f32
+            })
+            .collect()
     }
 
     /// Interpolate between two adjacent vowels using fractional position.

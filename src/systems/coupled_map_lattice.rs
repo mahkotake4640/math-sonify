@@ -29,11 +29,18 @@ pub struct CoupledMapLattice {
 impl CoupledMapLattice {
     pub fn new(r: f64, eps: f64) -> Self {
         // Seed with varied initial conditions to break symmetry
-        let state: Vec<f64> = (0..N).map(|i| {
-            let t = i as f64 / N as f64;
-            0.2 + 0.6 * (t * std::f64::consts::PI * 3.0).sin().abs()
-        }).collect();
-        Self { state, r, eps, speed: 0.0 }
+        let state: Vec<f64> = (0..N)
+            .map(|i| {
+                let t = i as f64 / N as f64;
+                0.2 + 0.6 * (t * std::f64::consts::PI * 3.0).sin().abs()
+            })
+            .collect();
+        Self {
+            state,
+            r,
+            eps,
+            speed: 0.0,
+        }
     }
 
     fn logistic(x: f64, r: f64) -> f64 {
@@ -42,10 +49,18 @@ impl CoupledMapLattice {
 }
 
 impl DynamicalSystem for CoupledMapLattice {
-    fn state(&self) -> &[f64] { &self.state }
-    fn dimension(&self) -> usize { N }
-    fn name(&self) -> &str { "Coupled Map Lattice" }
-    fn speed(&self) -> f64 { self.speed }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+    fn dimension(&self) -> usize {
+        N
+    }
+    fn name(&self) -> &str {
+        "Coupled Map Lattice"
+    }
+    fn speed(&self) -> f64 {
+        self.speed
+    }
 
     fn deriv_at(&self, _state: &[f64]) -> Vec<f64> {
         // Discrete map: derivative not meaningful, return zeros
@@ -55,7 +70,9 @@ impl DynamicalSystem for CoupledMapLattice {
     fn set_state(&mut self, s: &[f64]) {
         let n = self.state.len().min(s.len());
         for i in 0..n {
-            if s[i].is_finite() { self.state[i] = s[i].clamp(0.001, 0.999); }
+            if s[i].is_finite() {
+                self.state[i] = s[i].clamp(0.001, 0.999);
+            }
         }
     }
 
@@ -67,18 +84,21 @@ impl DynamicalSystem for CoupledMapLattice {
         let prev = self.state.clone();
 
         for i in 0..N {
-            let left  = (i + N - 1) % N;
+            let left = (i + N - 1) % N;
             let right = (i + 1) % N;
             let center = Self::logistic(prev[i], r);
-            let fl     = Self::logistic(prev[left], r);
-            let fr     = Self::logistic(prev[right], r);
+            let fl = Self::logistic(prev[left], r);
+            let fr = Self::logistic(prev[right], r);
             let val = (1.0 - eps) * center + (eps / 2.0) * (fl + fr);
             // Clamp to (0,1) — logistic map is only defined there
             self.state[i] = val.clamp(0.0001, 0.9999);
         }
 
         // Speed = max |Δx_i| across all sites
-        self.speed = self.state.iter().zip(prev.iter())
+        self.speed = self
+            .state
+            .iter()
+            .zip(prev.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f64, f64::max);
     }

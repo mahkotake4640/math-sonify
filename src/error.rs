@@ -82,7 +82,11 @@ mod tests {
         ];
         for v in variants {
             let s = v.to_string();
-            assert!(!s.is_empty(), "Error variant {:?} produced an empty Display string", v);
+            assert!(
+                !s.is_empty(),
+                "Error variant {:?} produced an empty Display string",
+                v
+            );
         }
     }
 
@@ -100,14 +104,20 @@ mod tests {
     #[test]
     fn test_error_display_contains_message() {
         let err = SonifyError::AudioDeviceError("no output device".into());
-        assert!(err.to_string().contains("no output device"),
-            "Display should contain the original message, got: {}", err);
+        assert!(
+            err.to_string().contains("no output device"),
+            "Display should contain the original message, got: {}",
+            err
+        );
     }
 
     #[test]
     fn test_config_error_display() {
         let err = SonifyError::ConfigError("invalid sigma".into());
-        assert!(err.to_string().contains("invalid sigma"),
-            "ConfigError display should contain 'invalid sigma', got: {}", err);
+        assert!(
+            err.to_string().contains("invalid sigma"),
+            "ConfigError display should contain 'invalid sigma', got: {}",
+            err
+        );
     }
 }

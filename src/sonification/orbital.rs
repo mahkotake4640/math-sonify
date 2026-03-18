@@ -1,4 +1,4 @@
-use super::{AudioParams, Sonification, SonifMode};
+use super::{AudioParams, SonifMode, Sonification};
 use crate::config::SonificationConfig;
 
 /// Orbital resonance: angular velocity in the projected 2D plane → fundamental.
@@ -84,7 +84,9 @@ impl Sonification for OrbitalResonance {
 
         // --- Lyapunov-based chaos estimate ------------------------------------
         if !self.prev_state.is_empty() {
-            let divergence: f64 = state.iter().zip(self.prev_state.iter())
+            let divergence: f64 = state
+                .iter()
+                .zip(self.prev_state.iter())
                 .map(|(a, b)| (a - b).powi(2))
                 .sum::<f64>()
                 .sqrt();
@@ -97,13 +99,14 @@ impl Sonification for OrbitalResonance {
         let stretch = (self.lyap_estimate.tanh() * 0.5 + 0.5) as f32; // 0 = ordered, 1 = chaotic
 
         // Raw fundamental from angular velocity
-        let raw_fund = (angular_vel.abs() as f32 * base * 0.05)
-            .clamp(base * 0.0625, base * 4.0);
+        let raw_fund = (angular_vel.abs() as f32 * base * 0.05).clamp(base * 0.0625, base * 4.0);
 
         // Smooth the fundamental to avoid jarring register jumps as the
         // attractor crosses its own path.  Coefficient 0.02 → ~50 control frames
         // (≈ 400 ms at 120 Hz) to reach a new pitch — legato character.
-        if self.smooth_fund < 10.0 { self.smooth_fund = raw_fund; }
+        if self.smooth_fund < 10.0 {
+            self.smooth_fund = raw_fund;
+        }
         self.smooth_fund += 0.02 * (raw_fund - self.smooth_fund);
         let fundamental = self.smooth_fund;
 
@@ -114,10 +117,10 @@ impl Sonification for OrbitalResonance {
             let n = (i + 1) as f32;
             // Inharmonic stretch: f_n = f₁ · n^(1 + stretch·0.35)
             params.freqs[i] = fundamental * n.powf(1.0 + stretch * 0.35);
-            params.amps[i]  = harmonic_amp(i, stretch);
+            params.amps[i] = harmonic_amp(i, stretch);
             // Stereo: even partials slightly left, odd slightly right — matches
             // how real instruments project different harmonics into the room.
-            params.pans[i]  = if i % 2 == 0 { -0.35 } else { 0.35 };
+            params.pans[i] = if i % 2 == 0 { -0.35 } else { 0.35 };
         }
 
         // If the state has a z-dimension, use it to add a sub-octave voice
@@ -126,14 +129,14 @@ impl Sonification for OrbitalResonance {
             let z_norm = (state[2].tanh() * 0.5 + 0.5) as f32;
             // Sub-octave at half fundamental, amplitude proportional to |z|
             params.freqs[0] = fundamental * 0.5 * (0.8 + z_norm * 0.4);
-            params.amps[0]  = harmonic_amp(0, stretch) * (0.5 + 0.5 * z_norm);
+            params.amps[0] = harmonic_amp(0, stretch) * (0.5 + 0.5 * z_norm);
         }
 
         // Filter: ordered → warm & dark, chaotic → bright & resonant
         params.filter_cutoff = 400.0 + 4000.0 * stretch;
-        params.filter_q      = 0.5 + 2.0 * stretch; // resonant filter peak at chaos
-        params.gain          = (0.15 + 0.08 * speed.tanh() as f32).min(0.35);
-        params.chaos_level   = stretch;
+        params.filter_q = 0.5 + 2.0 * stretch; // resonant filter peak at chaos
+        params.gain = (0.15 + 0.08 * speed.tanh() as f32).min(0.35);
+        params.chaos_level = stretch;
         params
     }
 }

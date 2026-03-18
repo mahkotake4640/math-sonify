@@ -3,44 +3,46 @@
 // To add unsafe code, you must justify it with #[allow(unsafe_code)] at the call site.
 #![deny(unsafe_code)]
 
-mod systems;
-mod sonification;
-mod synth;
+mod arrangement;
 mod audio;
 mod config;
 pub mod error;
-mod ui;
-mod ui_tips;
-mod ui_timeline;
-mod ui_waveform;
-mod patches;
-mod arrangement;
 mod osc;
+mod patches;
+mod sonification;
+mod synth;
+mod systems;
 #[cfg(test)]
 mod tests;
+mod ui;
+mod ui_timeline;
+mod ui_tips;
+mod ui_waveform;
 
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use std::path::Path;
 
-use notify::{Watcher, RecursiveMode, recommended_watcher};
+use notify::{recommended_watcher, RecursiveMode, Watcher};
 
 use crossbeam_channel::bounded;
 use parking_lot::Mutex;
 
-use crate::config::{Config, load_config};
-use crate::arrangement::{lerp_config, total_duration, scene_at};
-use crate::systems::{*, CustomOde, FractionalLorenz};
-use crate::sonification::{
-    AudioParams, Sonification, SonifMode,
-    DirectMapping, OrbitalResonance, GranularMapping, SpectralMapping, FmMapping, VocalMapping,
-    chord_intervals_for,
+use crate::arrangement::{lerp_config, scene_at, total_duration};
+use crate::audio::{
+    AudioEngine, ClipBuffer, LoopExportPending, SharedSnippetPlayback, SidechainLevel,
+    SnippetPlayback, StereoWidth, VuMeter, WavRecorder, XrunCounter,
 };
-use crate::audio::{AudioEngine, WavRecorder, LoopExportPending, VuMeter, SidechainLevel, ClipBuffer, SnippetPlayback, SharedSnippetPlayback, StereoWidth, XrunCounter};
+use crate::config::{load_config, Config};
+use crate::sonification::{
+    chord_intervals_for, AudioParams, DirectMapping, FmMapping, GranularMapping, OrbitalResonance,
+    SonifMode, Sonification, SpectralMapping, VocalMapping,
+};
 use crate::synth::OscShape;
+use crate::systems::{CustomOde, FractionalLorenz, *};
+use crate::ui::{draw_ui, AppState, SharedState};
 use midir;
-use crate::ui::{AppState, SharedState, draw_ui};
 
 // Channel capacity (sim -> audio). Only the latest value matters.
 const CHANNEL_CAP: usize = 16;
@@ -213,7 +215,8 @@ fn main() -> anyhow::Result<()> {
                 shutdown_timer: None,
             })
         }),
-    ).map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
+    )
+    .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
     // WOUND HEALING: clean exit — remove flag so next launch isn't "wounded"
     let _ = std::fs::remove_file("running.flag");
@@ -251,8 +254,15 @@ impl eframe::App for SonifyApp {
         }
 
         let points = self.viz_history.lock().clone();
-        draw_ui(ctx, &self.shared, &points, &self.waveform_buf, &self.recording,
-                &self.loop_export, &self.bifurc_data);
+        draw_ui(
+            ctx,
+            &self.shared,
+            &points,
+            &self.waveform_buf,
+            &self.recording,
+            &self.loop_export,
+            &self.bifurc_data,
+        );
         ctx.request_repaint_after(Duration::from_millis(33));
     }
 }
@@ -317,12 +327,14 @@ fn sim_thread(
     let mut osc_sender_key: (String, u16) = (String::new(), 0);
     let mut osc_tick_counter: u32 = 0;
 
-
     // ── Time-of-day awareness (invisible — no UI) ──────────────────────────────
     // 0.0 = midnight/dark, 1.0 = noon/bright
     let time_of_day: f32 = {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let hour_frac = (secs % 86400) as f64 / 86400.0;
         (-(std::f64::consts::TAU * hour_frac).cos() * 0.5 + 0.5) as f32
     };
@@ -330,8 +342,8 @@ fn sim_thread(
     {
         let mut st = shared.lock();
         let night = 1.0 - time_of_day;
-        st.macro_chaos  = (st.macro_chaos  - night * 0.10).clamp(0.05, 0.95);
-        st.macro_space  = (st.macro_space  + night * 0.18).clamp(0.05, 0.95);
+        st.macro_chaos = (st.macro_chaos - night * 0.10).clamp(0.05, 0.95);
+        st.macro_space = (st.macro_space + night * 0.18).clamp(0.05, 0.95);
         st.macro_rhythm = (st.macro_rhythm - night * 0.12).clamp(0.05, 0.95);
         st.macro_warmth = (st.macro_warmth + night * 0.15).clamp(0.05, 0.95);
     }
@@ -340,7 +352,10 @@ fn sim_thread(
     // Used to gently bias base frequency over the calendar year (±1.5%)
     let seasonal_freq_mult: f64 = {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let day_frac = (secs / 86400 % 365) as f64 / 365.0;
         // Sine wave: peaks in summer (day ~172), troughs in winter (day ~355)
         let angle = std::f64::consts::TAU * (day_frac - 172.0 / 365.0);
@@ -351,21 +366,30 @@ fn sim_thread(
     let wounded = std::path::Path::new("running.flag").exists();
     let mut wound_t: f32 = if wounded { 0.0 } else { 1.0 };
     std::fs::write("running.flag", b"1").ok();
-    { shared.lock().wounded = wounded; }
+    {
+        shared.lock().wounded = wounded;
+    }
 
     // ── STARTUP RAMP: ramp from silence over 2 seconds ────────────────────────
     let mut startup_ramp_t: f32 = 0.0;
-    { shared.lock().startup_ramp_t = startup_ramp_t; }
+    {
+        shared.lock().startup_ramp_t = startup_ramp_t;
+    }
 
     // ── HOUR OF DAY for circadian sleep ───────────────────────────────────────
     let hour_of_day: u32 = {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         ((secs % 86400) / 3600) as u32
     };
 
     // Push time_of_day to shared state for PHOTOTROPISM
-    { shared.lock().time_of_day_f = time_of_day; }
+    {
+        shared.lock().time_of_day_f = time_of_day;
+    }
 
     // ── ATTRACTOR state persistence ────────────────────────────────────────────
     // Load the last saved state so the attractor resumes from where it was
@@ -373,11 +397,16 @@ fn sim_thread(
         let state_path = std::path::PathBuf::from("attractor_state.bin");
         if state_path.exists() {
             if let Ok(bytes) = std::fs::read(&state_path) {
-                let floats: Vec<f64> = bytes.chunks_exact(8)
+                let floats: Vec<f64> = bytes
+                    .chunks_exact(8)
                     .filter_map(|c| {
                         let arr: [u8; 8] = c.try_into().ok()?;
                         let v = f64::from_le_bytes(arr);
-                        if v.is_finite() { Some(v) } else { None }
+                        if v.is_finite() {
+                            Some(v)
+                        } else {
+                            None
+                        }
                     })
                     .collect();
                 if floats.len() >= 3 {
@@ -397,7 +426,9 @@ fn sim_thread(
             for (i, chunk) in bytes.chunks_exact(4).take(400).enumerate() {
                 if let Ok(arr) = chunk.try_into() {
                     let v = f32::from_le_bytes(arr);
-                    if v.is_finite() && v >= 0.0 { gravity_map[i] = v; }
+                    if v.is_finite() && v >= 0.0 {
+                        gravity_map[i] = v;
+                    }
                 }
             }
         }
@@ -410,11 +441,16 @@ fn sim_thread(
     let mut excursion_ticks: u64 = 0;
     let mut excursion_return_chaos: f32 = 0.5;
     let mut excursion_return_speed: f64 = 2.0; // saved to restore speed after excursion
-    // Next excursion fires between 10–20 minutes (at 120 Hz)
-    let mut walk_seed_ex: u64 = 0xDEADBEEF ^ std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as u64;
+                                               // Next excursion fires between 10–20 minutes (at 120 Hz)
+    let mut walk_seed_ex: u64 = 0xDEADBEEF
+        ^ std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as u64;
     let lcg = |s: &mut u64| -> f32 {
-        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (*s >> 33) as f32 / u32::MAX as f32
     };
     let mut next_excursion_tick: u64 = {
@@ -436,7 +472,8 @@ fn sim_thread(
 
     // ── Trajectory buffer for analysis (permutation entropy, RQA, etc.) ───────
     // item 6: VecDeque gives O(1) pop_front instead of O(n) remove(0) used every 12 ticks
-    let mut analysis_trajectory: std::collections::VecDeque<Vec<f64>> = std::collections::VecDeque::with_capacity(500);
+    let mut analysis_trajectory: std::collections::VecDeque<Vec<f64>> =
+        std::collections::VecDeque::with_capacity(500);
 
     // ── Session transcript timer ──────────────────────────────────────────────
     let mut session_log_timer: u64 = 0;
@@ -447,41 +484,68 @@ fn sim_thread(
     // ── Lunar phase (29.5-day cycle, invisible palette influence) ─────────────
     let lunar_phase: f32 = {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         // Known new moon: Jan 6, 2000 = Unix 946684800
         let days_since_new = (secs.saturating_sub(946684800)) as f64 / 86400.0;
         let phase = (days_since_new % 29.53058770576) / 29.53058770576;
         // 0.5 = full moon. Map to 0.0=new 1.0=full 0.0=new via triangle:
-        let triangle = if phase < 0.5 { phase * 2.0 } else { (1.0 - phase) * 2.0 };
+        let triangle = if phase < 0.5 {
+            phase * 2.0
+        } else {
+            (1.0 - phase) * 2.0
+        };
         triangle as f32
     };
     // Push to shared state so draw_phase_portrait can use it
-    { shared.lock().lunar_phase = lunar_phase; }
+    {
+        shared.lock().lunar_phase = lunar_phase;
+    }
 
     // ── Attractor aging: instrument warms up over first hour ──────────────────
     let aging_path = std::path::PathBuf::from("aging.bin");
     let mut aging_secs: f32 = {
         if aging_path.exists() {
-            std::fs::read(&aging_path).ok()
-                .and_then(|b| b.get(0..4).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes))
+            std::fs::read(&aging_path)
+                .ok()
+                .and_then(|b| {
+                    b.get(0..4)
+                        .and_then(|s| s.try_into().ok())
+                        .map(f32::from_le_bytes)
+                })
                 .filter(|v| v.is_finite() && *v >= 0.0)
                 .unwrap_or(0.0)
-        } else { 0.0 }
+        } else {
+            0.0
+        }
     };
-    { shared.lock().aging_secs = aging_secs; }
+    {
+        shared.lock().aging_secs = aging_secs;
+    }
 
     // ── Entropy accumulation: instrument gains confidence with use ─────────────
     let entropy_path = std::path::PathBuf::from("entropy.bin");
     let mut entropy_pool: f32 = {
         if entropy_path.exists() {
-            std::fs::read(&entropy_path).ok()
-                .and_then(|b| b.get(0..4).and_then(|s| s.try_into().ok()).map(f32::from_le_bytes))
+            std::fs::read(&entropy_path)
+                .ok()
+                .and_then(|b| {
+                    b.get(0..4)
+                        .and_then(|s| s.try_into().ok())
+                        .map(f32::from_le_bytes)
+                })
                 .filter(|v| v.is_finite() && *v >= 0.0)
                 .unwrap_or(0.0)
-        } else { 0.0 }
+        } else {
+            0.0
+        }
     };
     // Sync with AppState (UI may have deposited entropy already)
-    { entropy_pool = entropy_pool.max(shared.lock().entropy_pool); }
+    {
+        entropy_pool = entropy_pool.max(shared.lock().entropy_pool);
+    }
 
     // ── Volume creep: draws listener closer over an hour ──────────────────────
     // 1.0 → 0.87 over 3600 seconds (≈ -1.2 dB). Reset when user touches volume.
@@ -496,7 +560,9 @@ fn sim_thread(
         let state_path_fp = std::path::PathBuf::from("attractor_state.bin");
         if !state_path_fp.exists() {
             let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
             let pid = std::process::id() as u64;
             let hostname = std::env::var("COMPUTERNAME")
                 .or_else(|_| std::env::var("HOSTNAME"))
@@ -506,7 +572,9 @@ fn sim_thread(
             });
             let mut fp = ts ^ pid.wrapping_mul(0xDEAD) ^ host_hash ^ 0xCAFEBABEDEADBEEF;
             let fp_f = |s: &mut u64| -> f64 {
-                *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                *s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 ((*s >> 33) as f64 / u32::MAX as f64) * 2.0 - 1.0
             };
             // Stay within attractor basin
@@ -543,7 +611,9 @@ fn sim_thread(
                 // Poll common key codes (letters, numbers, space, return)
                 #[cfg(target_os = "windows")]
                 {
-                    extern "system" { fn GetAsyncKeyState(vKey: i32) -> i16; }
+                    extern "system" {
+                        fn GetAsyncKeyState(vKey: i32) -> i16;
+                    }
                     for vk in (65i32..=90).chain(48..=57).chain([32, 13, 8, 9]) {
                         let idx = vk as usize;
                         if idx < 128 {
@@ -558,7 +628,8 @@ fn sim_thread(
                     }
                 }
                 report_ticks += 1;
-                if report_ticks >= 10 { // report every ~1 second
+                if report_ticks >= 10 {
+                    // report every ~1 second
                     // Store as fixed-point: keys_per_second * 100 as u32
                     let kps_fixed = (key_count * 10).min(2000); // cap at 20 kps
                     typing_arc.store(kps_fixed, Ordering::Relaxed);
@@ -594,8 +665,7 @@ fn sim_thread(
         });
     }
     // Sender socket (non-blocking, best effort)
-    let empathy_sender = std::net::UdpSocket::bind("127.0.0.1:47833")
-        .ok(); // None if port taken (primary instance handles this)
+    let empathy_sender = std::net::UdpSocket::bind("127.0.0.1:47833").ok(); // None if port taken (primary instance handles this)
 
     // Automation state
     let mut auto_snapshot_timer = 0u64;
@@ -644,8 +714,8 @@ fn sim_thread(
         if scar_path.exists() {
             if let Ok(bytes) = std::fs::read(&scar_path) {
                 for chunk in bytes.chunks_exact(8) {
-                    let x = f32::from_le_bytes(chunk[0..4].try_into().unwrap_or([0;4]));
-                    let y = f32::from_le_bytes(chunk[4..8].try_into().unwrap_or([0;4]));
+                    let x = f32::from_le_bytes(chunk[0..4].try_into().unwrap_or([0; 4]));
+                    let y = f32::from_le_bytes(chunk[4..8].try_into().unwrap_or([0; 4]));
                     if x.is_finite() && y.is_finite() {
                         scars.push((x, y));
                     }
@@ -653,7 +723,9 @@ fn sim_thread(
             }
         }
     }
-    { shared.lock().scars = scars.clone(); }
+    {
+        shared.lock().scars = scars.clone();
+    }
 
     // ── PAIR BONDING: favorite presets become richer ───────────────────────────
     let mut preset_affinity: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
@@ -662,8 +734,8 @@ fn sim_thread(
         if aff_path.exists() {
             if let Ok(bytes) = std::fs::read(&aff_path) {
                 for chunk in bytes.chunks_exact(12) {
-                    let key = u64::from_le_bytes(chunk[0..8].try_into().unwrap_or([0;8]));
-                    let val = u32::from_le_bytes(chunk[8..12].try_into().unwrap_or([0;4]));
+                    let key = u64::from_le_bytes(chunk[0..8].try_into().unwrap_or([0; 8]));
+                    let val = u32::from_le_bytes(chunk[8..12].try_into().unwrap_or([0; 4]));
                     preset_affinity.insert(key, val);
                 }
             }
@@ -672,7 +744,9 @@ fn sim_thread(
 
     // Feature #10: xorshift64 RNG for noise injection (no external crate needed)
     let mut noise_rng: u64 = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as u64
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as u64
         ^ 0xDEADBEEFCAFEBABE;
 
     // Feature #9: secondary system for attractor interpolation
@@ -706,11 +780,34 @@ fn sim_thread(
             log::info!("config.toml reloaded");
         }
 
-        let (paused, mut config, sys_changed, mode_changed, bpm_sync, bpm, auto_recording, auto_playing,
-             poly_defs, sidechain_enabled, sidechain_level_shared, sidechain_target, sidechain_amount,
-             coupled_enabled, coupled_src_name, coupled_strength, coupled_target_param, coupled_bidirectional,
-             noise_inject, interp_enabled, interp_system_name, interp_t,
-             bv_dreams, bv_aging, bv_seasonal, bv_empathy) = {
+        let (
+            paused,
+            mut config,
+            sys_changed,
+            mode_changed,
+            bpm_sync,
+            bpm,
+            auto_recording,
+            auto_playing,
+            poly_defs,
+            sidechain_enabled,
+            sidechain_level_shared,
+            sidechain_target,
+            sidechain_amount,
+            coupled_enabled,
+            coupled_src_name,
+            coupled_strength,
+            coupled_target_param,
+            coupled_bidirectional,
+            noise_inject,
+            interp_enabled,
+            interp_system_name,
+            interp_t,
+            bv_dreams,
+            bv_aging,
+            bv_seasonal,
+            bv_empathy,
+        ) = {
             let mut st = shared.lock();
             let p = st.paused;
             let c = st.config.clone();
@@ -736,17 +833,20 @@ fn sim_thread(
             let ie = st.interp_enabled;
             let isn = st.interp_system.clone();
             let it = st.interp_t;
-            let bvd  = st.behav_dreams;
+            let bvd = st.behav_dreams;
             let bvag = st.behav_aging;
             let bvse = st.behav_seasonal_drift;
             let bvem = st.behav_instance_empathy;
-            (p, c, sc, mc, bs, bm, ar, ap, pd, se, sl, st_target, sa, ce, cs, cstr, ct, cbd, ni, ie, isn, it,
-             bvd, bvag, bvse, bvem)
+            (
+                p, c, sc, mc, bs, bm, ar, ap, pd, se, sl, st_target, sa, ce, cs, cstr, ct, cbd, ni,
+                ie, isn, it, bvd, bvag, bvse, bvem,
+            )
         };
         // METABOLISM: resting drift when paused — keeps attractor alive like breathing
         if paused {
             // Step at 1.5% of normal speed, no audio sent
-            let metabolic_steps = ((config.system.speed * 0.015 / CONTROL_RATE_HZ) / config.system.dt)
+            let metabolic_steps = ((config.system.speed * 0.015 / CONTROL_RATE_HZ)
+                / config.system.dt)
                 .round() as usize;
             for _ in 0..metabolic_steps.clamp(1, 100) {
                 system.step(config.system.dt);
@@ -769,7 +869,9 @@ fn sim_thread(
 
         // STARTUP RAMP: ramp from 0 to 1 over 2 seconds (240 ticks)
         startup_ramp_t = (startup_ramp_t + 1.0 / (2.0 * 120.0)).min(1.0);
-        { shared.lock().startup_ramp_t = startup_ramp_t; }
+        {
+            shared.lock().startup_ramp_t = startup_ramp_t;
+        }
 
         let silence_secs = { shared.lock().last_interaction_time.elapsed().as_secs_f32() };
         let silence_expanded = silence_secs > 300.0;
@@ -781,11 +883,15 @@ fn sim_thread(
         let typing_kps = typing_rate_atomic.load(Ordering::Relaxed) as f32 / 100.0;
         let typing_walk_scale = 0.6 + (typing_kps / 10.0).min(1.0) * 0.8;
 
-        if sys_changed  {
+        if sys_changed {
             system = if config.system.name == "custom" {
                 let (ex, ey, ez) = {
                     let st = shared.lock();
-                    (st.custom_ode_x.clone(), st.custom_ode_y.clone(), st.custom_ode_z.clone())
+                    (
+                        st.custom_ode_x.clone(),
+                        st.custom_ode_y.clone(),
+                        st.custom_ode_z.clone(),
+                    )
                 };
                 Box::new(CustomOde::new(ex, ey, ez))
             } else {
@@ -793,12 +899,19 @@ fn sim_thread(
             };
             last_arr_sys = config.system.name.clone();
         }
-        if mode_changed { mapper = build_mapper(&config.sonification.mode); last_arr_mode = config.sonification.mode.clone(); }
+        if mode_changed {
+            mapper = build_mapper(&config.sonification.mode);
+            last_arr_mode = config.sonification.mode.clone();
+        }
 
         // PAIR BONDING: track sys_hash and increment affinity when system changes
-        let sys_hash: u64 = config.system.name.bytes().fold(0xcbf29ce484222325u64, |h, b| {
-            (h ^ b as u64).wrapping_mul(0x100000001b3)
-        });
+        let sys_hash: u64 = config
+            .system
+            .name
+            .bytes()
+            .fold(0xcbf29ce484222325u64, |h, b| {
+                (h ^ b as u64).wrapping_mul(0x100000001b3)
+            });
         if sys_changed {
             let count = preset_affinity.entry(sys_hash).or_insert(0);
             *count = count.saturating_add(1);
@@ -830,7 +943,9 @@ fn sim_thread(
         let flinch_delta = (raw_speed - prev_speed_for_flinch).abs();
         if flinch_delta > 3.0 && flinch_remaining <= 0 {
             // lcg for rand 0..5
-            walk_seed_ex = walk_seed_ex.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            walk_seed_ex = walk_seed_ex
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let rand_extra = (walk_seed_ex >> 33) as i32 % 5;
             flinch_remaining = 10 + rand_extra;
             flinch_held_speed = prev_speed_for_flinch;
@@ -854,7 +969,8 @@ fn sim_thread(
                 // Fixed lerp rate toward target — only damps, never drives speed to zero
                 smoothed_speed += (config.system.speed - smoothed_speed) * 0.04;
                 let drag = warmup_ticks_remaining as f64 / 600.0; // 1.0 → 0.0 over 5s
-                config.system.speed = config.system.speed * (1.0 - drag * 0.15) + smoothed_speed * (drag * 0.15);
+                config.system.speed =
+                    config.system.speed * (1.0 - drag * 0.15) + smoothed_speed * (drag * 0.15);
                 warmup_ticks_remaining -= 1;
             }
         }
@@ -875,7 +991,13 @@ fn sim_thread(
         // Apply LFO modulation
         let (lfo_enabled, lfo_rate, lfo_depth, lfo_target, lfo_phase) = {
             let st = shared.lock();
-            (st.lfo_enabled, st.lfo_rate, st.lfo_depth, st.lfo_target.clone(), st.lfo_phase)
+            (
+                st.lfo_enabled,
+                st.lfo_rate,
+                st.lfo_depth,
+                st.lfo_target.clone(),
+                st.lfo_phase,
+            )
         };
 
         let effective_lfo_rate = if bpm_sync {
@@ -890,12 +1012,16 @@ fn sim_thread(
             let lfo_val = new_phase.sin() * lfo_depth as f64;
             match lfo_target.as_str() {
                 "sigma" => config.lorenz.sigma *= 1.0 + lfo_val,
-                "rho"   => config.lorenz.rho *= 1.0 + lfo_val,
-                "beta"  => config.lorenz.beta *= 1.0 + lfo_val,
-                "a"     => config.rossler.a = (config.rossler.a * (1.0 + lfo_val)).max(0.001),
-                "c"     => config.rossler.c *= 1.0 + lfo_val,
-                "coupling" => config.kuramoto.coupling = (config.kuramoto.coupling * (1.0 + lfo_val)).max(0.0),
-                "speed" => config.system.speed = (config.system.speed * (1.0 + lfo_val)).clamp(0.05, 20.0),
+                "rho" => config.lorenz.rho *= 1.0 + lfo_val,
+                "beta" => config.lorenz.beta *= 1.0 + lfo_val,
+                "a" => config.rossler.a = (config.rossler.a * (1.0 + lfo_val)).max(0.001),
+                "c" => config.rossler.c *= 1.0 + lfo_val,
+                "coupling" => {
+                    config.kuramoto.coupling = (config.kuramoto.coupling * (1.0 + lfo_val)).max(0.0)
+                }
+                "speed" => {
+                    config.system.speed = (config.system.speed * (1.0 + lfo_val)).clamp(0.05, 20.0)
+                }
                 _ => {}
             }
         }
@@ -910,9 +1036,21 @@ fn sim_thread(
                     st.auto_start_time.elapsed().as_secs_f64()
                 };
                 let events = vec![
-                    (elapsed, "master_volume".to_string(), config.audio.master_volume as f64),
-                    (elapsed, "reverb_wet".to_string(), config.audio.reverb_wet as f64),
-                    (elapsed, "delay_ms".to_string(), config.audio.delay_ms as f64),
+                    (
+                        elapsed,
+                        "master_volume".to_string(),
+                        config.audio.master_volume as f64,
+                    ),
+                    (
+                        elapsed,
+                        "reverb_wet".to_string(),
+                        config.audio.reverb_wet as f64,
+                    ),
+                    (
+                        elapsed,
+                        "delay_ms".to_string(),
+                        config.audio.delay_ms as f64,
+                    ),
                     (elapsed, "speed".to_string(), config.system.speed),
                     (elapsed, "sigma".to_string(), config.lorenz.sigma),
                     (elapsed, "rho".to_string(), config.lorenz.rho),
@@ -937,7 +1075,9 @@ fn sim_thread(
                 // Collect all parameter mutations into a local buffer, then apply in one lock
                 let mut mutations: Vec<(&str, f64)> = Vec::new();
                 for (i, (t, ref param, val)) in events_clone.iter().enumerate() {
-                    if i < pos { continue; }
+                    if i < pos {
+                        continue;
+                    }
                     if *t <= elapsed {
                         mutations.push((param.as_str(), *val));
                         new_pos = i + 1;
@@ -948,12 +1088,12 @@ fn sim_thread(
                     for (param, val) in &mutations {
                         match *param {
                             "master_volume" => st.config.audio.master_volume = *val as f32,
-                            "reverb_wet"    => st.config.audio.reverb_wet    = *val as f32,
-                            "delay_ms"      => st.config.audio.delay_ms      = *val as f32,
-                            "speed"         => st.config.system.speed        = *val,
-                            "sigma"         => st.config.lorenz.sigma        = *val,
-                            "rho"           => st.config.lorenz.rho          = *val,
-                            "coupling"      => st.config.kuramoto.coupling   = *val,
+                            "reverb_wet" => st.config.audio.reverb_wet = *val as f32,
+                            "delay_ms" => st.config.audio.delay_ms = *val as f32,
+                            "speed" => st.config.system.speed = *val,
+                            "sigma" => st.config.lorenz.sigma = *val,
+                            "rho" => st.config.lorenz.rho = *val,
+                            "coupling" => st.config.kuramoto.coupling = *val,
                             _ => {}
                         }
                     }
@@ -982,15 +1122,23 @@ fn sim_thread(
                             .filter(|&i| st.scenes[i].active)
                             .collect();
                         if !active_indices.is_empty() {
-                            let total_w: f32 = active_indices.iter().map(|&i| st.scenes[i].transition_prob.max(0.0)).sum();
+                            let total_w: f32 = active_indices
+                                .iter()
+                                .map(|&i| st.scenes[i].transition_prob.max(0.0))
+                                .sum();
                             if total_w > 0.0 {
-                                walk_seed = walk_seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                                walk_seed = walk_seed
+                                    .wrapping_mul(6364136223846793005)
+                                    .wrapping_add(1442695040888963407);
                                 let r = (walk_seed >> 33) as f32 / u32::MAX as f32 * total_w;
                                 let mut acc = 0.0f32;
                                 let mut chosen = active_indices[0];
                                 for &i in &active_indices {
                                     acc += st.scenes[i].transition_prob.max(0.0);
-                                    if r <= acc { chosen = i; break; }
+                                    if r <= acc {
+                                        chosen = i;
+                                        break;
+                                    }
                                 }
                                 // Reorder scenes so chosen is first; just restart from beginning
                                 // but jump elapsed to start of that scene
@@ -1018,7 +1166,8 @@ fn sim_thread(
         if let Some(elapsed) = arr_tick {
             let scenes = shared.lock().scenes.clone();
             if let Some((idx, is_morphing, t)) = scene_at(&scenes, elapsed) {
-                let active_indices: Vec<usize> = (0..scenes.len()).filter(|&i| scenes[i].active).collect();
+                let active_indices: Vec<usize> =
+                    (0..scenes.len()).filter(|&i| scenes[i].active).collect();
                 let new_config = if is_morphing {
                     let ord = active_indices.iter().position(|&i| i == idx).unwrap_or(0);
                     if ord > 0 {
@@ -1055,7 +1204,10 @@ fn sim_thread(
                 let mood = { shared.lock().arr_mood.clone() };
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64 ^ (d.subsec_nanos() as u64).wrapping_mul(0x9e3779b97f4a7c15))
+                    .map(|d| {
+                        d.as_nanos() as u64
+                            ^ (d.subsec_nanos() as u64).wrapping_mul(0x9e3779b97f4a7c15)
+                    })
                     .unwrap_or(0xdeadbeef);
                 let mut st = shared.lock();
                 st.scenes = crate::arrangement::generate_song(&mood, seed);
@@ -1069,14 +1221,21 @@ fn sim_thread(
         if simple_mode {
             let (macro_chaos, macro_space, macro_walk_enabled, macro_walk_rate) = {
                 let st = shared.lock();
-                (st.macro_chaos, st.macro_space, st.macro_walk_enabled, st.macro_walk_rate)
+                (
+                    st.macro_chaos,
+                    st.macro_space,
+                    st.macro_walk_enabled,
+                    st.macro_walk_rate,
+                )
             };
 
             // Macro random walk (Brownian motion)
             if macro_walk_enabled {
                 let dt = 1.0 / CONTROL_RATE_HZ as f32;
                 let r = |seed: &mut u64| -> f32 {
-                    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    *seed = seed
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
                     (*seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
                 };
 
@@ -1111,9 +1270,17 @@ fn sim_thread(
                 // CIRCADIAN SLEEP: boost step size 1.3x in 3am-5am window
                 let sleep_step_mult = if circadian_sleep_active { 1.3 } else { 1.0 };
 
-                let step = macro_walk_rate * dt * tidal_scale * tod_rate_mult * silence_mult
-                    * entropy_walk_scale * typing_walk_scale * tempo_walk_mult
-                    * cooldown_mult * wound_step_mult * sleep_step_mult;
+                let step = macro_walk_rate
+                    * dt
+                    * tidal_scale
+                    * tod_rate_mult
+                    * silence_mult
+                    * entropy_walk_scale
+                    * typing_walk_scale
+                    * tempo_walk_mult
+                    * cooldown_mult
+                    * wound_step_mult
+                    * sleep_step_mult;
 
                 // Gravitational memory: find gradient in histogram, apply tiny nudge toward
                 // frequently-visited regions — the instrument learns your taste over sessions
@@ -1122,10 +1289,26 @@ fn sim_thread(
                     let ci = ((st.macro_chaos * 19.0) as usize).min(19);
                     let si = ((st.macro_space * 19.0) as usize).min(19);
                     let here = gravity_map[ci * 20 + si];
-                    let right  = if ci < 19 { gravity_map[(ci+1)*20+si] } else { here };
-                    let left   = if ci > 0  { gravity_map[(ci-1)*20+si] } else { here };
-                    let up     = if si < 19 { gravity_map[ci*20+(si+1)] } else { here };
-                    let down   = if si > 0  { gravity_map[ci*20+(si-1)] } else { here };
+                    let right = if ci < 19 {
+                        gravity_map[(ci + 1) * 20 + si]
+                    } else {
+                        here
+                    };
+                    let left = if ci > 0 {
+                        gravity_map[(ci - 1) * 20 + si]
+                    } else {
+                        here
+                    };
+                    let up = if si < 19 {
+                        gravity_map[ci * 20 + (si + 1)]
+                    } else {
+                        here
+                    };
+                    let down = if si > 0 {
+                        gravity_map[ci * 20 + (si - 1)]
+                    } else {
+                        here
+                    };
                     // Gradient points toward higher-density regions (home territory)
                     let g_chaos = (right - left) * 0.003; // very subtle pull
                     let g_space = (up - down) * 0.003;
@@ -1136,8 +1319,12 @@ fn sim_thread(
 
                 // Night walk: wider excursions (tod multiplier on noise amplitude)
                 let night_width = 1.0 + night * 0.6;
-                st.macro_chaos  = (st.macro_chaos  + r(&mut walk_seed) * step * night_width + gravity_nudge_chaos).clamp(0.05, 0.95);
-                st.macro_space  = (st.macro_space  + r(&mut walk_seed) * step * night_width + gravity_nudge_space).clamp(0.05, 0.95);
+                st.macro_chaos =
+                    (st.macro_chaos + r(&mut walk_seed) * step * night_width + gravity_nudge_chaos)
+                        .clamp(0.05, 0.95);
+                st.macro_space =
+                    (st.macro_space + r(&mut walk_seed) * step * night_width + gravity_nudge_space)
+                        .clamp(0.05, 0.95);
                 st.macro_rhythm = (st.macro_rhythm + r(&mut walk_seed) * step).clamp(0.05, 0.95);
                 st.macro_warmth = (st.macro_warmth + r(&mut walk_seed) * step).clamp(0.05, 0.95);
 
@@ -1167,11 +1354,12 @@ fn sim_thread(
                     st.macro_chaos = target_chaos;
                     drop(st);
                     let r01b = lcg(&mut walk_seed_ex);
-                    next_excursion_tick = idle_ticks + (10*60*120) + (r01b * 10.0*60.0*120.0) as u64;
+                    next_excursion_tick =
+                        idle_ticks + (10 * 60 * 120) + (r01b * 10.0 * 60.0 * 120.0) as u64;
                 } else if excursion_active {
                     excursion_ticks += 1;
-                    let bloom_dur = 10 * 120u64;   // 10 seconds of bloom
-                    let return_dur = 15 * 120u64;  // 15 seconds drifting back
+                    let bloom_dur = 10 * 120u64; // 10 seconds of bloom
+                    let return_dur = 15 * 120u64; // 15 seconds drifting back
                     if excursion_ticks >= bloom_dur + return_dur {
                         // Bloom finished; restore original speed and let normal walk take over
                         config.system.speed = excursion_return_speed;
@@ -1181,7 +1369,8 @@ fn sim_thread(
                         let t = (excursion_ticks - bloom_dur) as f32 / return_dur as f32;
                         let ease = t * t * (3.0 - 2.0 * t); // smoothstep
                         let mut st = shared.lock();
-                        st.macro_chaos = st.macro_chaos + (excursion_return_chaos - st.macro_chaos) * ease * 0.04;
+                        st.macro_chaos = st.macro_chaos
+                            + (excursion_return_chaos - st.macro_chaos) * ease * 0.04;
                     }
                 }
                 // NESTING: long-period oscillations after 2+ hours uptime
@@ -1202,7 +1391,6 @@ fn sim_thread(
                     st.macro_space = st.macro_space + (0.55 - st.macro_space) * hunger;
                     drop(st);
                 }
-
             } else {
                 idle_ticks = 0; // reset idle counter when walk is off
             }
@@ -1211,13 +1399,14 @@ fn sim_thread(
             let affinity_count = preset_affinity.get(&sys_hash).copied().unwrap_or(0);
             if affinity_count > 20 {
                 let bond_strength = (affinity_count as f32 / 100.0).min(0.3);
-                config.audio.reverb_wet = (config.audio.reverb_wet + bond_strength * 0.08).min(0.82);
+                config.audio.reverb_wet =
+                    (config.audio.reverb_wet + bond_strength * 0.08).min(0.82);
             }
 
             // Chaos → speed, sigma, rho
             config.system.speed = 0.5 + macro_chaos as f64 * 9.5;
             config.lorenz.sigma = 5.0 + macro_chaos as f64 * 20.0;
-            config.lorenz.rho   = 20.0 + macro_chaos as f64 * 25.0;
+            config.lorenz.rho = 20.0 + macro_chaos as f64 * 25.0;
             tracing::debug!(system = %config.system.name, param = "sigma", value = config.lorenz.sigma, "bifurcation parameter updated");
             tracing::debug!(system = %config.system.name, param = "rho",   value = config.lorenz.rho,   "bifurcation parameter updated");
             tracing::debug!(system = %config.system.name, param = "speed", value = config.system.speed, "bifurcation parameter updated");
@@ -1253,11 +1442,24 @@ fn sim_thread(
                 if bv_dreams && !dream_active && dream_idle_ticks >= dream_idle_threshold {
                     // Start a dream: pick a random different system
                     let cur_sys = config.system.name.clone();
-                    let dream_systems = ["lorenz", "rossler", "halvorsen", "aizawa", "chua",
-                                          "van_der_pol", "duffing", "geodesic_torus"];
-                    let idx = (walk_seed_ex.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 33)
-                        as usize % dream_systems.len();
-                    walk_seed_ex = walk_seed_ex.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    let dream_systems = [
+                        "lorenz",
+                        "rossler",
+                        "halvorsen",
+                        "aizawa",
+                        "chua",
+                        "van_der_pol",
+                        "duffing",
+                        "geodesic_torus",
+                    ];
+                    let idx = (walk_seed_ex
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407)
+                        >> 33) as usize
+                        % dream_systems.len();
+                    walk_seed_ex = walk_seed_ex
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1);
                     let dream_sys = dream_systems[idx];
                     if dream_sys != cur_sys.as_str() {
                         let mut dcfg = config.clone();
@@ -1298,9 +1500,9 @@ fn sim_thread(
 
                     if dream_active {
                         // item 3: clamp dream params to non-divergent bounds before applying
-                        config.system.speed   = dream_config.system.speed.clamp(0.05, 15.0);
-                        config.lorenz.sigma   = dream_config.lorenz.sigma.clamp(1.0, 50.0);
-                        config.lorenz.rho     = dream_config.lorenz.rho.clamp(1.0, 60.0);
+                        config.system.speed = dream_config.system.speed.clamp(0.05, 15.0);
+                        config.lorenz.sigma = dream_config.lorenz.sigma.clamp(1.0, 50.0);
+                        config.lorenz.rho = dream_config.lorenz.rho.clamp(1.0, 60.0);
                         config.audio.reverb_wet = dream_config.audio.reverb_wet.clamp(0.0, 0.95);
                     }
                 }
@@ -1313,7 +1515,9 @@ fn sim_thread(
         // ── Instance empathy: receive chaos nudge from peer instance ───────────────
         let empathy_nudge: f32 = {
             let raw = empathy_rx.load(Ordering::Relaxed);
-            if raw == u32::MAX { 0.0 } else {
+            if raw == u32::MAX {
+                0.0
+            } else {
                 // Convert fixed-point chaos (0-10000 → 0.0-1.0) to a tiny nudge
                 (raw as f32 / 10000.0 - 0.5) * 0.004 // ±0.002 max nudge per tick
             }
@@ -1349,14 +1553,18 @@ fn sim_thread(
 
         // Step coupled system and compute normalized output
         let coupled_norm = if let Some(ref mut cs) = coupled_system {
-            let coupled_steps = ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt)
-                .round() as usize;
+            let coupled_steps =
+                ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt).round() as usize;
             for _ in 0..coupled_steps.clamp(1, 10_000) {
                 cs.step(config.system.dt);
             }
             let cx = cs.state().first().copied().unwrap_or(0.0);
-            if cx < coupled_min { coupled_min = cx; }
-            if cx > coupled_max { coupled_max = cx; }
+            if cx < coupled_min {
+                coupled_min = cx;
+            }
+            if cx > coupled_max {
+                coupled_max = cx;
+            }
             let range = (coupled_max - coupled_min).abs().max(1e-9);
             (cx - coupled_min) / range
         } else {
@@ -1367,12 +1575,19 @@ fn sim_thread(
         if coupled_enabled && coupled_system.is_some() {
             let delta = (coupled_norm - 0.5) * coupled_strength as f64 * 2.0;
             match coupled_target_param.as_str() {
-                "rho"      => config.lorenz.rho      = (config.lorenz.rho      + delta * 10.0).clamp(1.0, 60.0),
-                "sigma"    => config.lorenz.sigma    = (config.lorenz.sigma    + delta *  5.0).clamp(0.1, 30.0),
-                "speed"    => config.system.speed    = (config.system.speed    + delta *  2.0).clamp(0.05, 20.0),
-                "a"        => config.rossler.a       = (config.rossler.a       + delta *  0.1).clamp(0.001, 1.0),
-                "c"        => config.rossler.c       = (config.rossler.c       + delta *  1.0).clamp(0.1, 15.0),
-                "coupling" => config.kuramoto.coupling = (config.kuramoto.coupling + delta * 0.5).clamp(0.0, 5.0),
+                "rho" => config.lorenz.rho = (config.lorenz.rho + delta * 10.0).clamp(1.0, 60.0),
+                "sigma" => {
+                    config.lorenz.sigma = (config.lorenz.sigma + delta * 5.0).clamp(0.1, 30.0)
+                }
+                "speed" => {
+                    config.system.speed = (config.system.speed + delta * 2.0).clamp(0.05, 20.0)
+                }
+                "a" => config.rossler.a = (config.rossler.a + delta * 0.1).clamp(0.001, 1.0),
+                "c" => config.rossler.c = (config.rossler.c + delta * 1.0).clamp(0.1, 15.0),
+                "coupling" => {
+                    config.kuramoto.coupling =
+                        (config.kuramoto.coupling + delta * 0.5).clamp(0.0, 5.0)
+                }
                 _ => {}
             }
         }
@@ -1385,7 +1600,9 @@ fn sim_thread(
                 let reciprocal_delta = (main_norm - 0.5) * coupled_strength as f64 * 1.0;
                 // Apply to coupled system speed via a transient nudge (not persisted)
                 // We do this by stepping the coupled system with a modified dt
-                let nudge_steps = ((config.system.speed * (1.0 + reciprocal_delta) / CONTROL_RATE_HZ) / config.system.dt)
+                let nudge_steps = ((config.system.speed * (1.0 + reciprocal_delta)
+                    / CONTROL_RATE_HZ)
+                    / config.system.dt)
                     .round() as usize;
                 // We already stepped it above; just update the coupled_strength feedback display
                 let _ = nudge_steps;
@@ -1428,16 +1645,15 @@ fn sim_thread(
             interp_sys_last_name.clear();
         }
         if let Some(ref mut isys) = interp_sys_instance {
-            let isteps = ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt)
-                .round() as usize;
+            let isteps =
+                ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt).round() as usize;
             for _ in 0..isteps.clamp(1, 10_000) {
                 isys.step(config.system.dt);
             }
         }
 
         // Integrate enough steps to cover one control period at the configured speed
-        let steps = ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt)
-            .round() as usize;
+        let steps = ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt).round() as usize;
         for _ in 0..steps.clamp(1, 10_000) {
             system.step(config.system.dt);
         }
@@ -1452,7 +1668,7 @@ fn sim_thread(
                 system.set_state(&[0.1, 0.1, 0.1]);
                 let mut st_lock = shared.lock();
                 st_lock.toast_queue.push(crate::ui::Toast::warning(
-                    "Attractor diverged — reset to safe initial conditions"
+                    "Attractor diverged — reset to safe initial conditions",
                 ));
             }
         }
@@ -1504,8 +1720,7 @@ fn sim_thread(
         // SCARRING: detect near-divergence and record scar position
         {
             let st = system.state();
-            let near_diverge = system.speed() > 800.0
-                || st.iter().any(|&v| v.abs() > 300.0);
+            let near_diverge = system.speed() > 800.0 || st.iter().any(|&v| v.abs() > 300.0);
             if near_diverge && scars.len() < 500 {
                 let sx = st.first().copied().unwrap_or(0.0) as f32;
                 let sy = if st.len() >= 2 { st[1] as f32 } else { 0.0 };
@@ -1516,10 +1731,18 @@ fn sim_thread(
 
         // Feature #8: Poincaré section — detect z=27 crossing from below
         {
-            let z_now = if effective_state.len() >= 3 { effective_state[2] } else { 0.0 };
+            let z_now = if effective_state.len() >= 3 {
+                effective_state[2]
+            } else {
+                0.0
+            };
             if poincare_z_prev < POINCARE_THRESHOLD && z_now >= POINCARE_THRESHOLD {
                 let px = effective_state.first().copied().unwrap_or(0.0) as f32;
-                let py = if effective_state.len() >= 2 { effective_state[1] as f32 } else { 0.0 };
+                let py = if effective_state.len() >= 2 {
+                    effective_state[1] as f32
+                } else {
+                    0.0
+                };
                 if px.is_finite() && py.is_finite() {
                     let mut st = shared.lock();
                     st.poincare_points.push((px, py));
@@ -1543,7 +1766,11 @@ fn sim_thread(
                     vh.drain(0..excess);
                 }
                 let speed_norm = (system.speed() as f32 / 100.0).clamp(0.0, 1.0);
-                let z = if state.len() >= 3 { state[2] as f32 } else { 0.0 };
+                let z = if state.len() >= 3 {
+                    state[2] as f32
+                } else {
+                    0.0
+                };
                 let sx = state[0] as f32;
                 let sy = state[1] as f32;
                 // NaN/inf guard: skip viz push if state diverged
@@ -1582,9 +1809,9 @@ fn sim_thread(
         // EQ fields from AppState
         {
             let st = shared.lock();
-            params.eq_low_db   = st.eq_low_db;
-            params.eq_mid_db   = st.eq_mid_db;
-            params.eq_high_db  = st.eq_high_db;
+            params.eq_low_db = st.eq_low_db;
+            params.eq_mid_db = st.eq_mid_db;
+            params.eq_high_db = st.eq_high_db;
             params.eq_mid_freq = st.eq_mid_freq;
         }
 
@@ -1614,7 +1841,9 @@ fn sim_thread(
             // Normalize x to 0..1 for tension
             let x_norm = if !state.is_empty() {
                 ((state[0] + 30.0) / 60.0).clamp(0.0, 1.0) as f32
-            } else { 0.5 };
+            } else {
+                0.5
+            };
             params.waveguide_tension = x_norm;
             params.waveguide_damping = (params.chaos_level * 0.3 + 0.5).clamp(0.5, 0.99);
             params.waveguide_excite = is_poincare_crossing;
@@ -1627,8 +1856,10 @@ fn sim_thread(
             params.spectral_freeze_active = st.spectral_freeze_active;
             if st.spectral_freeze_active {
                 for i in 0..16 {
-                    params.spectral_freeze_freqs[i] = st.spectral_freeze_freqs.get(i).copied().unwrap_or(0.0);
-                    params.spectral_freeze_amps[i]  = st.spectral_freeze_amps.get(i).copied().unwrap_or(0.0);
+                    params.spectral_freeze_freqs[i] =
+                        st.spectral_freeze_freqs.get(i).copied().unwrap_or(0.0);
+                    params.spectral_freeze_amps[i] =
+                        st.spectral_freeze_amps.get(i).copied().unwrap_or(0.0);
                 }
             }
             // Update live partials in AppState so the UI can capture real spectral content
@@ -1640,8 +1871,8 @@ fn sim_thread(
             let st = shared.lock();
             if st.midi_in_enabled {
                 let note_norm = st.midi_in_last_note as f32 / 127.0;
-                let vel_norm  = st.midi_in_last_vel  as f32 / 127.0;
-                let cc_norm   = st.midi_in_last_cc   as f32 / 127.0;
+                let vel_norm = st.midi_in_last_vel as f32 / 127.0;
+                let cc_norm = st.midi_in_last_cc as f32 / 127.0;
                 drop(st);
                 let _apply = |target: &str, val: f64| {
                     // We clone config here so we need to apply after drop
@@ -1649,21 +1880,23 @@ fn sim_thread(
                 };
                 let (note_target, vel_target, cc_target) = {
                     let st2 = shared.lock();
-                    (st2.midi_in_note_target.clone(), st2.midi_in_vel_target.clone(), st2.midi_in_cc_target.clone())
+                    (
+                        st2.midi_in_note_target.clone(),
+                        st2.midi_in_vel_target.clone(),
+                        st2.midi_in_cc_target.clone(),
+                    )
                 };
-                let apply_param = |target: &str, norm: f32, cfg: &mut Config| {
-                    match target {
-                        "rho"       => cfg.lorenz.rho       = 10.0 + norm as f64 * 50.0,
-                        "sigma"     => cfg.lorenz.sigma     = 1.0  + norm as f64 * 25.0,
-                        "speed"     => cfg.system.speed     = 0.1  + norm as f64 * 10.0,
-                        "base_freq" => cfg.sonification.base_frequency = 55.0 + norm as f64 * 880.0,
-                        "coupling"  => cfg.kuramoto.coupling = norm as f64 * 5.0,
-                        _ => {}
-                    }
+                let apply_param = |target: &str, norm: f32, cfg: &mut Config| match target {
+                    "rho" => cfg.lorenz.rho = 10.0 + norm as f64 * 50.0,
+                    "sigma" => cfg.lorenz.sigma = 1.0 + norm as f64 * 25.0,
+                    "speed" => cfg.system.speed = 0.1 + norm as f64 * 10.0,
+                    "base_freq" => cfg.sonification.base_frequency = 55.0 + norm as f64 * 880.0,
+                    "coupling" => cfg.kuramoto.coupling = norm as f64 * 5.0,
+                    _ => {}
                 };
                 apply_param(&note_target, note_norm, &mut config);
-                apply_param(&vel_target,  vel_norm,  &mut config);
-                apply_param(&cc_target,   cc_norm,   &mut config);
+                apply_param(&vel_target, vel_norm, &mut config);
+                apply_param(&cc_target, cc_norm, &mut config);
             }
         }
 
@@ -1673,9 +1906,16 @@ fn sim_thread(
             if st.replay_recording {
                 let elapsed_ms = st.replay_start_time.elapsed().as_millis() as u32;
                 // Only snapshot when crossing approximate 500ms boundary
-                if elapsed_ms / 500 > (if st.replay_events.is_empty() { 0 } else {
-                    st.replay_events.last().map(|e| e.timestamp_ms / 500).unwrap_or(0)
-                }) {
+                if elapsed_ms / 500
+                    > (if st.replay_events.is_empty() {
+                        0
+                    } else {
+                        st.replay_events
+                            .last()
+                            .map(|e| e.timestamp_ms / 500)
+                            .unwrap_or(0)
+                    })
+                {
                     let evts = [
                         (0u8, config.system.speed as f32),
                         (1u8, config.lorenz.rho as f32),
@@ -1689,7 +1929,11 @@ fn sim_thread(
                         (9u8, config.sonification.base_frequency as f32),
                     ];
                     for (pid, val) in evts {
-                        st.replay_events.push(crate::ui::ReplayEvent { timestamp_ms: elapsed_ms, param_id: pid, value: val });
+                        st.replay_events.push(crate::ui::ReplayEvent {
+                            timestamp_ms: elapsed_ms,
+                            param_id: pid,
+                            value: val,
+                        });
                     }
                 }
             }
@@ -1701,19 +1945,41 @@ fn sim_thread(
                 let events = st.replay_events.clone();
                 let mut new_pos = pos;
                 for (i, ev) in events.iter().enumerate() {
-                    if i < pos { continue; }
+                    if i < pos {
+                        continue;
+                    }
                     if ev.timestamp_ms <= elapsed_ms {
                         match ev.param_id {
-                            0 => { st.config.system.speed = ev.value as f64; }
-                            1 => { st.config.lorenz.rho   = ev.value as f64; }
-                            2 => { st.config.lorenz.sigma  = ev.value as f64; }
-                            3 => { st.config.lorenz.beta   = ev.value as f64; }
-                            4 => { st.config.audio.reverb_wet    = ev.value; }
-                            5 => { st.config.audio.master_volume = ev.value; }
-                            6 => { st.config.audio.chorus_mix    = ev.value; }
-                            7 => { st.config.audio.delay_ms      = ev.value; }
-                            8 => { st.config.kuramoto.coupling    = ev.value as f64; }
-                            9 => { st.config.sonification.base_frequency = ev.value as f64; }
+                            0 => {
+                                st.config.system.speed = ev.value as f64;
+                            }
+                            1 => {
+                                st.config.lorenz.rho = ev.value as f64;
+                            }
+                            2 => {
+                                st.config.lorenz.sigma = ev.value as f64;
+                            }
+                            3 => {
+                                st.config.lorenz.beta = ev.value as f64;
+                            }
+                            4 => {
+                                st.config.audio.reverb_wet = ev.value;
+                            }
+                            5 => {
+                                st.config.audio.master_volume = ev.value;
+                            }
+                            6 => {
+                                st.config.audio.chorus_mix = ev.value;
+                            }
+                            7 => {
+                                st.config.audio.delay_ms = ev.value;
+                            }
+                            8 => {
+                                st.config.kuramoto.coupling = ev.value as f64;
+                            }
+                            9 => {
+                                st.config.sonification.base_frequency = ev.value as f64;
+                            }
                             _ => {}
                         }
                         new_pos = i + 1;
@@ -1757,7 +2023,11 @@ fn sim_thread(
 
                 let t_step = arp_pos as f32 / arp_steps as f32;
                 let state = system.state();
-                let modulation = if !state.is_empty() { (state[0] as f32).tanh() * 0.05 } else { 0.0 };
+                let modulation = if !state.is_empty() {
+                    (state[0] as f32).tanh() * 0.05
+                } else {
+                    0.0
+                };
                 let t = (t_step + modulation).clamp(0.0, 1.0);
 
                 let arp_freq = crate::sonification::quantize_to_scale(t, base, oct, scale);
@@ -1808,14 +2078,29 @@ fn sim_thread(
 
         // Apply sidechain input modulation
         if sidechain_enabled {
-            let sc_rms = if let Some(lvl) = sidechain_level_shared.try_lock() { *lvl } else { 0.0 };
+            let sc_rms = if let Some(lvl) = sidechain_level_shared.try_lock() {
+                *lvl
+            } else {
+                0.0
+            };
             let sc_delta = sc_rms * sidechain_amount;
             match sidechain_target.as_str() {
-                "speed"  => config.system.speed  = (config.system.speed  * (1.0 + sc_delta as f64)).clamp(0.05, 20.0),
-                "reverb" => params.reverb_wet     = (params.reverb_wet    + sc_delta).clamp(0.0, 1.0),
-                "filter" => params.filter_cutoff  = (params.filter_cutoff * (1.0 + sc_delta * 4.0)).clamp(20.0, 20000.0),
-                "sigma"  => config.lorenz.sigma   = (config.lorenz.sigma  * (1.0 + sc_delta as f64)).clamp(0.1, 50.0),
-                "volume" => params.master_volume  = (params.master_volume + sc_delta).clamp(0.0, 1.0),
+                "speed" => {
+                    config.system.speed =
+                        (config.system.speed * (1.0 + sc_delta as f64)).clamp(0.05, 20.0)
+                }
+                "reverb" => params.reverb_wet = (params.reverb_wet + sc_delta).clamp(0.0, 1.0),
+                "filter" => {
+                    params.filter_cutoff =
+                        (params.filter_cutoff * (1.0 + sc_delta * 4.0)).clamp(20.0, 20000.0)
+                }
+                "sigma" => {
+                    config.lorenz.sigma =
+                        (config.lorenz.sigma * (1.0 + sc_delta as f64)).clamp(0.1, 50.0)
+                }
+                "volume" => {
+                    params.master_volume = (params.master_volume + sc_delta).clamp(0.0, 1.0)
+                }
                 _ => {}
             }
         }
@@ -1827,19 +2112,29 @@ fn sim_thread(
             let state_now = &effective_state;
             // Normalize Lorenz-typical range [-30, 30] to [-1, 1]
             let x_norm = state_now.first().copied().unwrap_or(0.0) as f32 / 30.0;
-            let y_norm = if state_now.len() >= 2 { state_now[1] as f32 / 30.0 } else { 0.0 };
-            let z_norm = if state_now.len() >= 3 { (state_now[2] as f32 - 25.0) / 25.0 } else { 0.0 };
+            let y_norm = if state_now.len() >= 2 {
+                state_now[1] as f32 / 30.0
+            } else {
+                0.0
+            };
+            let z_norm = if state_now.len() >= 3 {
+                (state_now[2] as f32 - 25.0) / 25.0
+            } else {
+                0.0
+            };
             // speed normalized: map [0, 10] to [-1, 1] centred at 5
             let speed_norm = ((system.speed() as f32 / 10.0) - 0.5) * 2.0;
             let mut base_freq_mult: f32 = 1.0;
             for route in &mod_routes {
-                if !route.enabled { continue; }
+                if !route.enabled {
+                    continue;
+                }
                 let source_norm = match route.source.as_str() {
-                    "x"     => x_norm,
-                    "y"     => y_norm,
-                    "z"     => z_norm,
+                    "x" => x_norm,
+                    "y" => y_norm,
+                    "z" => z_norm,
                     "speed" => speed_norm,
-                    _       => 0.0,
+                    _ => 0.0,
                 };
                 let modulation = (source_norm * route.depth).clamp(-1.0, 1.0);
                 match route.target.as_str() {
@@ -1851,29 +2146,33 @@ fn sim_thread(
                     }
                     "speed" => {
                         // Modulate delay time as rhythmic proxy for speed (no config mutation)
-                        let effective_speed = (config.system.speed as f32 + modulation * 2.0).clamp(0.01, 10.0);
+                        let effective_speed =
+                            (config.system.speed as f32 + modulation * 2.0).clamp(0.01, 10.0);
                         params.delay_ms = (60000.0 / effective_speed.max(0.01)).clamp(1.0, 2000.0);
                     }
                     "chorus_mix" => {
                         params.chorus_mix = (params.chorus_mix + modulation * 0.3).clamp(0.0, 1.0);
                     }
                     "master_volume" => {
-                        params.master_volume = (params.master_volume + modulation * 0.2).clamp(0.0, 1.0);
+                        params.master_volume =
+                            (params.master_volume + modulation * 0.2).clamp(0.0, 1.0);
                     }
                     "base_freq_mult" => {
                         base_freq_mult *= 1.0 + modulation * 0.5;
                     }
                     "chaos" => {
                         // Interpretive: chaos modulation sweeps filter cutoff
-                        params.filter_cutoff = (params.filter_cutoff * (1.0 + modulation * 0.4))
-                            .clamp(20.0, 20000.0);
+                        params.filter_cutoff =
+                            (params.filter_cutoff * (1.0 + modulation * 0.4)).clamp(20.0, 20000.0);
                     }
                     _ => {}
                 }
             }
             // Apply accumulated base_freq multiplier to all voice frequencies
             if (base_freq_mult - 1.0).abs() > 1e-4 {
-                for f in &mut params.freqs { *f *= base_freq_mult; }
+                for f in &mut params.freqs {
+                    *f *= base_freq_mult;
+                }
                 params.grain_base_freq *= base_freq_mult;
                 params.partials_base_freq *= base_freq_mult;
             }
@@ -1888,7 +2187,11 @@ fn sim_thread(
                         let cfg = crate::patches::load_preset(&def.preset_name);
                         let sys = build_system(&cfg);
                         let mpr = build_mapper(&cfg.sonification.mode);
-                        extra_layers[i] = Some(ExtraLayer { system: sys, mapper: mpr, config: cfg });
+                        extra_layers[i] = Some(ExtraLayer {
+                            system: sys,
+                            mapper: mpr,
+                            config: cfg,
+                        });
                     } else {
                         extra_layers[i] = None;
                     }
@@ -1898,7 +2201,9 @@ fn sim_thread(
         // Clear changed flags
         {
             let mut st = shared.lock();
-            for d in &mut st.poly_layers { d.changed = false; }
+            for d in &mut st.poly_layers {
+                d.changed = false;
+            }
         }
 
         // Tick extra layers and build their AudioParams
@@ -1908,22 +2213,28 @@ fn sim_thread(
             if let Some(el) = el_opt {
                 let steps = ((el.config.system.speed / CONTROL_RATE_HZ) / el.config.system.dt)
                     .round() as usize;
-                for _ in 0..steps.clamp(1, 10_000) { el.system.step(el.config.system.dt); }
-                let mut lp = el.mapper.map(el.system.state(), el.system.speed(), &el.config.sonification);
+                for _ in 0..steps.clamp(1, 10_000) {
+                    el.system.step(el.config.system.dt);
+                }
+                let mut lp = el.mapper.map(
+                    el.system.state(),
+                    el.system.speed(),
+                    &el.config.sonification,
+                );
                 lp.transpose_semitones = el.config.sonification.transpose_semitones;
-                lp.chord_intervals     = chord_intervals_for(&el.config.sonification.chord_mode);
-                lp.voice_levels        = el.config.sonification.voice_levels;
-                lp.portamento_ms       = el.config.sonification.portamento_ms;
-                lp.master_volume       = el.config.audio.master_volume;
-                lp.reverb_wet          = el.config.audio.reverb_wet;
-                lp.delay_ms            = el.config.audio.delay_ms;
-                lp.delay_feedback      = el.config.audio.delay_feedback;
-                lp.bit_depth           = el.config.audio.bit_depth;
-                lp.rate_crush          = el.config.audio.rate_crush;
-                lp.chorus_mix          = el.config.audio.chorus_mix;
-                lp.waveshaper_drive    = el.config.audio.waveshaper_drive;
-                lp.waveshaper_mix      = el.config.audio.waveshaper_mix;
-                lp.voice_shapes        = [
+                lp.chord_intervals = chord_intervals_for(&el.config.sonification.chord_mode);
+                lp.voice_levels = el.config.sonification.voice_levels;
+                lp.portamento_ms = el.config.sonification.portamento_ms;
+                lp.master_volume = el.config.audio.master_volume;
+                lp.reverb_wet = el.config.audio.reverb_wet;
+                lp.delay_ms = el.config.audio.delay_ms;
+                lp.delay_feedback = el.config.audio.delay_feedback;
+                lp.bit_depth = el.config.audio.bit_depth;
+                lp.rate_crush = el.config.audio.rate_crush;
+                lp.chorus_mix = el.config.audio.chorus_mix;
+                lp.waveshaper_drive = el.config.audio.waveshaper_drive;
+                lp.waveshaper_mix = el.config.audio.waveshaper_mix;
+                lp.voice_shapes = [
                     osc_shape_from_str(&el.config.sonification.voice_shapes[0]),
                     osc_shape_from_str(&el.config.sonification.voice_shapes[1]),
                     osc_shape_from_str(&el.config.sonification.voice_shapes[2]),
@@ -1932,16 +2243,19 @@ fn sim_thread(
                 // Per-layer ADSR and mix from poly_defs
                 if li < poly_defs.len() {
                     let def = &poly_defs[li];
-                    lp.layer_level       = if def.mute { 0.0 } else { def.level };
-                    lp.layer_pan         = def.pan;
-                    lp.adsr_attack_ms    = def.adsr_attack_ms;
-                    lp.adsr_decay_ms     = def.adsr_decay_ms;
-                    lp.adsr_sustain      = def.adsr_sustain;
-                    lp.adsr_release_ms   = def.adsr_release_ms;
+                    lp.layer_level = if def.mute { 0.0 } else { def.level };
+                    lp.layer_pan = def.pan;
+                    lp.adsr_attack_ms = def.adsr_attack_ms;
+                    lp.adsr_decay_ms = def.adsr_decay_ms;
+                    lp.adsr_sustain = def.adsr_sustain;
+                    lp.adsr_release_ms = def.adsr_release_ms;
                 }
                 lp.layer_id = li + 1;
-                if li == 0 { layer1_params = Some(lp); }
-                else       { layer2_params = Some(lp); }
+                if li == 0 {
+                    layer1_params = Some(lp);
+                } else {
+                    layer2_params = Some(lp);
+                }
             }
         }
 
@@ -1949,13 +2263,13 @@ fn sim_thread(
         {
             let st = shared.lock();
             if !st.simple_mode {
-                params.adsr_attack_ms  = st.adsr_attack_ms;
-                params.adsr_decay_ms   = st.adsr_decay_ms;
-                params.adsr_sustain    = st.adsr_sustain;
+                params.adsr_attack_ms = st.adsr_attack_ms;
+                params.adsr_decay_ms = st.adsr_decay_ms;
+                params.adsr_sustain = st.adsr_sustain;
                 params.adsr_release_ms = st.adsr_release_ms;
             }
             params.layer_level = if st.layer0_mute { 0.0 } else { st.layer0_level };
-            params.layer_pan   = st.layer0_pan;
+            params.layer_pan = st.layer0_pan;
         }
         params.layer_id = 0;
 
@@ -1965,15 +2279,15 @@ fn sim_thread(
                 let st = shared.lock();
                 (st.macro_space, st.macro_rhythm, st.macro_warmth)
             };
-            params.reverb_wet       = macro_space * 0.9;
-            params.chorus_mix       = macro_space * 0.7;
-            params.delay_feedback   = macro_space * 0.7;
-            params.adsr_attack_ms   = 200.0 - macro_rhythm * 195.0;
+            params.reverb_wet = macro_space * 0.9;
+            params.chorus_mix = macro_space * 0.7;
+            params.delay_feedback = macro_space * 0.7;
+            params.adsr_attack_ms = 200.0 - macro_rhythm * 195.0;
             // Warmth slider: 1200 Hz (very warm) to 8000 Hz (bright) — never below 1200
-            params.filter_cutoff    = 1200.0 + (1.0 - macro_warmth) * 6800.0;
+            params.filter_cutoff = 1200.0 + (1.0 - macro_warmth) * 6800.0;
             params.waveshaper_drive = 1.0 + macro_warmth * 4.0;
             // Volume slider always wins — arrangement scene volumes are ignored in simple mode
-            params.master_volume    = shared.lock().config.audio.master_volume;
+            params.master_volume = shared.lock().config.audio.master_volume;
         }
 
         // ── Attractor aging: filter opens fractionally over first hour ────────────
@@ -1991,15 +2305,31 @@ fn sim_thread(
         // Dissonance is available but you have to push for it.
         {
             let pull = 0.0008f32; // per-tick pull strength (subtle, not jarring)
-            let harmonic_targets = [0.5f32, 2.0/3.0, 3.0/4.0, 4.0/5.0, 5.0/6.0,
-                                     1.0, 5.0/4.0, 4.0/3.0, 3.0/2.0, 5.0/3.0, 2.0, 3.0, 4.0];
+            let harmonic_targets = [
+                0.5f32,
+                2.0 / 3.0,
+                3.0 / 4.0,
+                4.0 / 5.0,
+                5.0 / 6.0,
+                1.0,
+                5.0 / 4.0,
+                4.0 / 3.0,
+                3.0 / 2.0,
+                5.0 / 3.0,
+                2.0,
+                3.0,
+                4.0,
+            ];
             // Pull voice 1 toward nearest harmonic of voice 0
             if params.freqs[0] > 20.0 && params.freqs[1] > 20.0 {
                 let ratio = (params.freqs[1] / params.freqs[0]).clamp(0.4, 5.0);
                 if ratio.is_finite() {
-                    if let Some(&nearest_r) = harmonic_targets.iter()
-                        .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs())
-                            .unwrap_or(std::cmp::Ordering::Equal)) {
+                    if let Some(&nearest_r) = harmonic_targets.iter().min_by(|&&a, &&b| {
+                        (a - ratio)
+                            .abs()
+                            .partial_cmp(&(b - ratio).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    }) {
                         let ideal = params.freqs[0] * nearest_r;
                         if ideal > 0.0 {
                             let cents_off = (params.freqs[1] / ideal).ln() / (2f32.ln() / 12.0);
@@ -2014,9 +2344,12 @@ fn sim_thread(
             if params.freqs[0] > 20.0 && params.freqs[2] > 20.0 {
                 let ratio = (params.freqs[2] / params.freqs[0]).clamp(0.4, 5.0);
                 if ratio.is_finite() {
-                    if let Some(&nearest_r) = harmonic_targets.iter()
-                        .min_by(|&&a, &&b| (a - ratio).abs().partial_cmp(&(b - ratio).abs())
-                            .unwrap_or(std::cmp::Ordering::Equal)) {
+                    if let Some(&nearest_r) = harmonic_targets.iter().min_by(|&&a, &&b| {
+                        (a - ratio)
+                            .abs()
+                            .partial_cmp(&(b - ratio).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    }) {
                         let ideal = params.freqs[0] * nearest_r;
                         if ideal > 0.0 {
                             let cents_off = (params.freqs[2] / ideal).ln() / (2f32.ln() / 12.0);
@@ -2049,7 +2382,8 @@ fn sim_thread(
         // 4.5-second cycle, ±0.034 linear gain — subliminal organic warmth.
         // Every acoustic instrument has this. Synthesizers don't. This closes the gap.
         breathing_phase = (breathing_phase + BREATHING_RATE / CONTROL_RATE_HZ) % 1.0;
-        let breathing_gain = (breathing_phase * std::f64::consts::TAU).sin() as f32 * BREATHING_DEPTH + 1.0;
+        let breathing_gain =
+            (breathing_phase * std::f64::consts::TAU).sin() as f32 * BREATHING_DEPTH + 1.0;
         params.master_volume = (params.master_volume * breathing_gain).clamp(0.0, 1.2);
 
         // ── Seasonal drift: barely perceptible frequency shift over the calendar year ──
@@ -2057,7 +2391,9 @@ fn sim_thread(
         // Someone who uses Math Sonify for six months will notice the feel changed.
         if bv_seasonal {
             let sf = seasonal_freq_mult as f32;
-            for f in &mut params.freqs { *f *= sf; }
+            for f in &mut params.freqs {
+                *f *= sf;
+            }
             params.grain_base_freq *= sf;
         }
 
@@ -2095,7 +2431,9 @@ fn sim_thread(
                 // Simpler: use the shutdown_timer elapsed via shared state — but it's in the UI thread
                 // Best approach: just decay master_volume quickly
                 params.master_volume *= 0.992; // decay ~3s to silence at 120Hz
-                if params.master_volume < 0.01 { params.master_volume = 0.0; }
+                if params.master_volume < 0.01 {
+                    params.master_volume = 0.0;
+                }
             }
         }
 
@@ -2109,24 +2447,32 @@ fn sim_thread(
                 // Compute all metrics outside the lock
                 let state_snap = system.state().to_vec();
                 let lyap = crate::systems::lyapunov_spectrum(
-                    &state_snap, dim, dim, 300, config.system.dt, &|s| system.deriv_at(s),
+                    &state_snap,
+                    dim,
+                    dim,
+                    300,
+                    config.system.dt,
+                    &|s| system.deriv_at(s),
                 );
                 let atype = crate::systems::classify_attractor(&lyap);
                 let k_entropy = crate::systems::kolmogorov_entropy(&lyap);
 
                 // Permutation entropy of x-component
                 let perm_ent = if analysis_trajectory.len() >= 20 {
-                    let ts: Vec<f64> = analysis_trajectory.iter()
-                        .filter_map(|s| s.first().copied()).collect();
+                    let ts: Vec<f64> = analysis_trajectory
+                        .iter()
+                        .filter_map(|s| s.first().copied())
+                        .collect();
                     crate::systems::permutation_entropy(&ts, 4, 1)
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
 
                 // RK4 vs RK45 validation (every 6th lyap cycle = ~30s)
                 let integrator_div = if lyap_cycles % 6 == 0 {
-                    crate::systems::compare_integrators(
-                        &state_snap, config.system.dt, 1000,
-                        &|s| system.deriv_at(s),
-                    )
+                    crate::systems::compare_integrators(&state_snap, config.system.dt, 1000, &|s| {
+                        system.deriv_at(s)
+                    })
                 } else {
                     shared.lock().integrator_divergence
                 };
@@ -2134,7 +2480,11 @@ fn sim_thread(
                 // Single lock write for all results
                 {
                     let lyapunov_exp = lyap.first().copied().unwrap_or(0.0);
-                    tracing::debug!(lyapunov = lyapunov_exp, tick = uptime_ticks, "lyapunov exponent updated");
+                    tracing::debug!(
+                        lyapunov = lyapunov_exp,
+                        tick = uptime_ticks,
+                        "lyapunov exponent updated"
+                    );
                     let mut st = shared.lock();
                     st.lyapunov_spectrum = lyap;
                     st.attractor_type = atype.to_string();
@@ -2162,7 +2512,8 @@ fn sim_thread(
             };
             let mut st = shared.lock();
             st.session_log.push(entry);
-            if st.session_log.len() > 1440 { // cap at 24 hours
+            if st.session_log.len() > 1440 {
+                // cap at 24 hours
                 st.session_log.remove(0);
             }
         }
@@ -2177,8 +2528,10 @@ fn sim_thread(
             let _ = std::fs::write("attractor_state.bin", &state_bytes);
             // Normalize and save gravity map
             let g_max = gravity_map.iter().cloned().fold(1.0f32, f32::max);
-            let gravity_bytes: Vec<u8> = gravity_map.iter()
-                .flat_map(|f| (f / g_max).to_le_bytes()).collect();
+            let gravity_bytes: Vec<u8> = gravity_map
+                .iter()
+                .flat_map(|f| (f / g_max).to_le_bytes())
+                .collect();
             let _ = std::fs::write("gravity_map.bin", &gravity_bytes);
             // Save aging seconds
             let _ = std::fs::write("aging.bin", &aging_secs.to_le_bytes());
@@ -2187,13 +2540,27 @@ fn sim_thread(
             entropy_pool = ep;
             let _ = std::fs::write("entropy.bin", &entropy_pool.to_le_bytes());
             // SCARRING: save scars every 2 min
-            let scar_bytes: Vec<u8> = scars.iter()
-                .flat_map(|(x, y)| x.to_le_bytes().iter().chain(y.to_le_bytes().iter()).copied().collect::<Vec<u8>>())
+            let scar_bytes: Vec<u8> = scars
+                .iter()
+                .flat_map(|(x, y)| {
+                    x.to_le_bytes()
+                        .iter()
+                        .chain(y.to_le_bytes().iter())
+                        .copied()
+                        .collect::<Vec<u8>>()
+                })
                 .collect();
             let _ = std::fs::write("scars.bin", &scar_bytes);
             // PAIR BONDING: save preset affinity
-            let aff_bytes: Vec<u8> = preset_affinity.iter()
-                .flat_map(|(k, v)| k.to_le_bytes().iter().chain(v.to_le_bytes().iter()).copied().collect::<Vec<u8>>())
+            let aff_bytes: Vec<u8> = preset_affinity
+                .iter()
+                .flat_map(|(k, v)| {
+                    k.to_le_bytes()
+                        .iter()
+                        .chain(v.to_le_bytes().iter())
+                        .copied()
+                        .collect::<Vec<u8>>()
+                })
                 .collect();
             let _ = std::fs::write("preset_affinity.bin", &aff_bytes);
         }
@@ -2205,7 +2572,10 @@ fn sim_thread(
         {
             let elapsed = tick_start.elapsed();
             if elapsed.as_millis() > 8 {
-                tracing::warn!(elapsed_ms = elapsed.as_millis(), "simulation tick exceeded control period budget");
+                tracing::warn!(
+                    elapsed_ms = elapsed.as_millis(),
+                    "simulation tick exceeded control period budget"
+                );
             }
         }
 
@@ -2223,7 +2593,8 @@ fn sim_thread(
                     match crate::osc::OscSender::new(&osc_host, osc_port) {
                         Ok(s) => {
                             osc_sender = Some(s);
-                            shared.lock().osc_status = format!("Sending to {}:{}", osc_host, osc_port);
+                            shared.lock().osc_status =
+                                format!("Sending to {}:{}", osc_host, osc_port);
                         }
                         Err(e) => {
                             osc_sender = None;
@@ -2234,8 +2605,16 @@ fn sim_thread(
                 if let Some(ref sender) = osc_sender {
                     let state_now = system.state();
                     let x = state_now.first().copied().unwrap_or(0.0) as f32;
-                    let y = if state_now.len() >= 2 { state_now[1] as f32 } else { 0.0 };
-                    let z = if state_now.len() >= 3 { state_now[2] as f32 } else { 0.0 };
+                    let y = if state_now.len() >= 2 {
+                        state_now[1] as f32
+                    } else {
+                        0.0
+                    };
+                    let z = if state_now.len() >= 3 {
+                        state_now[2] as f32
+                    } else {
+                        0.0
+                    };
                     let speed = config.system.speed as f32;
                     let lyapunov = {
                         let st = shared.lock();
@@ -2257,10 +2636,10 @@ fn sim_thread(
 fn osc_shape_from_str(s: &str) -> OscShape {
     match s {
         "triangle" => OscShape::Triangle,
-        "saw"      => OscShape::Saw,
-        "square"   => OscShape::Square,
-        "noise"    => OscShape::Noise,
-        _          => OscShape::Sine,
+        "saw" => OscShape::Saw,
+        "square" => OscShape::Square,
+        "noise" => OscShape::Noise,
+        _ => OscShape::Sine,
     }
 }
 
@@ -2268,34 +2647,46 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
     // NOTE: The list of valid system names is defined in systems::SYSTEM_REGISTRY (src/systems/mod.rs).
     // To add a new system: add an entry there and add a match arm here.
     match config.system.name.as_str() {
-        "rossler"         => Box::new(Rossler::new(config.rossler.a, config.rossler.b, config.rossler.c)),
-        "double_pendulum" => Box::new(DoublePendulum::new(
-            config.double_pendulum.m1, config.double_pendulum.m2,
-            config.double_pendulum.l1, config.double_pendulum.l2,
+        "rossler" => Box::new(Rossler::new(
+            config.rossler.a,
+            config.rossler.b,
+            config.rossler.c,
         )),
-        "geodesic_torus"  => Box::new(GeodesicTorus::new(config.geodesic_torus.big_r, config.geodesic_torus.r)),
-        "kuramoto"        => Box::new(Kuramoto::new(config.kuramoto.n_oscillators, config.kuramoto.coupling)),
-        "three_body"      => Box::new(ThreeBody::new([1.0, 1.0, 1.0])),
-        "duffing"         => {
+        "double_pendulum" => Box::new(DoublePendulum::new(
+            config.double_pendulum.m1,
+            config.double_pendulum.m2,
+            config.double_pendulum.l1,
+            config.double_pendulum.l2,
+        )),
+        "geodesic_torus" => Box::new(GeodesicTorus::new(
+            config.geodesic_torus.big_r,
+            config.geodesic_torus.r,
+        )),
+        "kuramoto" => Box::new(Kuramoto::new(
+            config.kuramoto.n_oscillators,
+            config.kuramoto.coupling,
+        )),
+        "three_body" => Box::new(ThreeBody::new([1.0, 1.0, 1.0])),
+        "duffing" => {
             let mut s = Duffing::new();
             s.delta = config.duffing.delta;
             s.alpha = config.duffing.alpha;
-            s.beta  = config.duffing.beta;
+            s.beta = config.duffing.beta;
             s.gamma = config.duffing.gamma;
             s.omega = config.duffing.omega;
             Box::new(s)
         }
-        "van_der_pol"     => {
+        "van_der_pol" => {
             let mut s = VanDerPol::new();
             s.mu = config.van_der_pol.mu;
             Box::new(s)
         }
-        "halvorsen"       => {
+        "halvorsen" => {
             let mut s = Halvorsen::new();
             s.a = config.halvorsen.a;
             Box::new(s)
         }
-        "aizawa"          => {
+        "aizawa" => {
             let mut s = Aizawa::new();
             s.a = config.aizawa.a;
             s.b = config.aizawa.b;
@@ -2305,15 +2696,15 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
             s.f = config.aizawa.f;
             Box::new(s)
         }
-        "chua"            => {
+        "chua" => {
             let mut s = Chua::new();
             s.alpha = config.chua.alpha;
-            s.beta  = config.chua.beta;
-            s.m0    = config.chua.m0;
-            s.m1    = config.chua.m1;
+            s.beta = config.chua.beta;
+            s.m0 = config.chua.m0;
+            s.m1 = config.chua.m1;
             Box::new(s)
         }
-        "custom"          => {
+        "custom" => {
             let (ex, ey, ez) = {
                 // Read custom ODE expressions from... we pass them via config or use defaults
                 // Since Config doesn't have custom ODE fields, we use placeholder defaults here;
@@ -2327,52 +2718,61 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
             Box::new(CustomOde::new(ex, ey, ez))
         }
         "fractional_lorenz" => Box::new(FractionalLorenz::new(
-            1.0, config.lorenz.sigma, config.lorenz.rho, config.lorenz.beta
+            1.0,
+            config.lorenz.sigma,
+            config.lorenz.rho,
+            config.lorenz.beta,
         )),
-        "hindmarsh_rose"  => Box::new(HindmarshRose::new(
-            config.hindmarsh_rose.current_i, config.hindmarsh_rose.r,
+        "hindmarsh_rose" => Box::new(HindmarshRose::new(
+            config.hindmarsh_rose.current_i,
+            config.hindmarsh_rose.r,
         )),
         "coupled_map_lattice" => Box::new(CoupledMapLattice::new(
-            config.coupled_map_lattice.r, config.coupled_map_lattice.eps,
+            config.coupled_map_lattice.r,
+            config.coupled_map_lattice.eps,
         )),
-        "mackey_glass"    => {
+        "mackey_glass" => {
             let mut s = MackeyGlass::new();
-            s.beta  = config.mackey_glass.beta;
+            s.beta = config.mackey_glass.beta;
             s.gamma = config.mackey_glass.gamma;
-            s.tau   = config.mackey_glass.tau;
-            s.n     = config.mackey_glass.n;
+            s.tau = config.mackey_glass.tau;
+            s.n = config.mackey_glass.n;
             Box::new(s)
         }
-        "nose_hoover"     => {
+        "nose_hoover" => {
             let mut s = NoseHoover::new();
             s.a = config.nose_hoover.a;
             Box::new(s)
         }
-        "sprott_b"        => Box::new(SprottB::new()),
-        "henon_map"       => {
+        "sprott_b" => Box::new(SprottB::new()),
+        "henon_map" => {
             let mut s = HenonMap::new();
             s.a = config.henon_map.a;
             s.b = config.henon_map.b;
             Box::new(s)
         }
-        "lorenz96"        => {
+        "lorenz96" => {
             let mut s = Lorenz96::new();
             s.f = config.lorenz96.f;
             Box::new(s)
         }
-        _                 => Box::new(Lorenz::new(config.lorenz.sigma, config.lorenz.rho, config.lorenz.beta)),
+        _ => Box::new(Lorenz::new(
+            config.lorenz.sigma,
+            config.lorenz.rho,
+            config.lorenz.beta,
+        )),
     }
 }
 
 fn build_mapper(mode: &str) -> Box<dyn Sonification> {
     match mode {
-        "orbital"   => Box::new(OrbitalResonance::new()),
-        "granular"  => Box::new(GranularMapping::new()),
-        "spectral"  => Box::new(SpectralMapping::new()),
-        "fm"        => Box::new(FmMapping::new()),
-        "vocal"     => Box::new(VocalMapping::new()),
+        "orbital" => Box::new(OrbitalResonance::new()),
+        "granular" => Box::new(GranularMapping::new()),
+        "spectral" => Box::new(SpectralMapping::new()),
+        "fm" => Box::new(FmMapping::new()),
+        "vocal" => Box::new(VocalMapping::new()),
         "waveguide" => Box::new(DirectMapping::new()), // waveguide synthesis driven by direct mapping
-        _           => Box::new(DirectMapping::new()),
+        _ => Box::new(DirectMapping::new()),
     }
 }
 
@@ -2384,7 +2784,10 @@ fn start_midi_thread(shared: SharedState) {
     std::thread::spawn(move || {
         let midi_out = match midir::MidiOutput::new("Math Sonify") {
             Ok(m) => m,
-            Err(e) => { log::warn!("MIDI init failed: {e}"); return; }
+            Err(e) => {
+                log::warn!("MIDI init failed: {e}");
+                return;
+            }
         };
         let ports = midi_out.ports();
         if ports.is_empty() {
@@ -2396,7 +2799,10 @@ fn start_midi_thread(shared: SharedState) {
         log::info!("MIDI output: {port_name}");
         let mut conn = match midi_out.connect(port, "math-sonify-out") {
             Ok(c) => c,
-            Err(e) => { log::warn!("MIDI connect failed: {e}"); return; }
+            Err(e) => {
+                log::warn!("MIDI connect failed: {e}");
+                return;
+            }
         };
 
         let mut last_notes = [255u8; 4];
@@ -2420,7 +2826,9 @@ fn start_midi_thread(shared: SharedState) {
                 }
             };
 
-            if !midi_enabled { continue; }
+            if !midi_enabled {
+                continue;
+            }
 
             for (i, (&freq, &amp)) in freqs.iter().zip(amps.iter()).enumerate() {
                 let channel = i as u8;
@@ -2450,8 +2858,12 @@ fn start_midi_thread(shared: SharedState) {
 }
 
 fn hz_to_midi(hz: f32) -> u8 {
-    if hz < 20.0 { return 255; }
-    (69.0 + 12.0 * (hz / 440.0).log2()).round().clamp(0.0, 127.0) as u8
+    if hz < 20.0 {
+        return 255;
+    }
+    (69.0 + 12.0 * (hz / 440.0).log2())
+        .round()
+        .clamp(0.0, 127.0) as u8
 }
 
 // ---------------------------------------------------------------------------
@@ -2462,7 +2874,10 @@ fn start_midi_input_thread(shared: SharedState) {
     std::thread::spawn(move || {
         let midi_in = match midir::MidiInput::new("Math Sonify In") {
             Ok(m) => m,
-            Err(e) => { log::warn!("MIDI input init failed: {e}"); return; }
+            Err(e) => {
+                log::warn!("MIDI input init failed: {e}");
+                return;
+            }
         };
         let ports = midi_in.ports();
         if ports.is_empty() {
@@ -2478,23 +2893,28 @@ fn start_midi_input_thread(shared: SharedState) {
             port,
             "math-sonify-in",
             move |_ts, msg, _| {
-                if msg.len() < 2 { return; }
+                if msg.len() < 2 {
+                    return;
+                }
                 let status = msg[0] & 0xF0;
                 match status {
-                    0x90 => { // Note On
+                    0x90 => {
+                        // Note On
                         let note = msg[1].min(127);
-                        let vel  = if msg.len() > 2 { msg[2].min(127) } else { 0 };
+                        let vel = if msg.len() > 2 { msg[2].min(127) } else { 0 };
                         let mut st = shared_cb.lock();
                         st.midi_in_last_note = note;
-                        st.midi_in_last_vel  = vel;
+                        st.midi_in_last_vel = vel;
                     }
-                    0x80 => { // Note Off
+                    0x80 => {
+                        // Note Off
                         let note = msg[1].min(127);
                         let mut st = shared_cb.lock();
                         st.midi_in_last_note = note;
-                        st.midi_in_last_vel  = 0;
+                        st.midi_in_last_vel = 0;
                     }
-                    0xB0 => { // CC
+                    0xB0 => {
+                        // CC
                         if msg.len() >= 3 {
                             let cc_num = msg[1];
                             let cc_val = msg[2].min(127);
@@ -2525,7 +2945,10 @@ fn start_midi_clock_thread(shared: SharedState) {
     std::thread::spawn(move || {
         let midi_out = match midir::MidiOutput::new("Math Sonify Clock") {
             Ok(m) => m,
-            Err(e) => { log::warn!("MIDI clock init failed: {e}"); return; }
+            Err(e) => {
+                log::warn!("MIDI clock init failed: {e}");
+                return;
+            }
         };
         let ports = midi_out.ports();
         if ports.is_empty() {
@@ -2535,7 +2958,10 @@ fn start_midi_clock_thread(shared: SharedState) {
         let port = &ports[0];
         let mut conn = match midi_out.connect(port, "math-sonify-clock") {
             Ok(c) => c,
-            Err(e) => { log::warn!("MIDI clock connect failed: {e}"); return; }
+            Err(e) => {
+                log::warn!("MIDI clock connect failed: {e}");
+                return;
+            }
         };
 
         let mut was_enabled = false;
@@ -2583,12 +3009,14 @@ fn run_headless(args: &[String]) -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10.0);
     let output_path = arg_after(args, "--output").unwrap_or("headless_render.wav");
-    let patch_name  = arg_after(args, "--patch");
+    let patch_name = arg_after(args, "--patch");
 
     println!("Math Sonify headless render");
     println!("  Duration : {} s", duration_secs);
     println!("  Output   : {}", output_path);
-    if let Some(p) = patch_name { println!("  Patch    : {}", p); }
+    if let Some(p) = patch_name {
+        println!("  Patch    : {}", p);
+    }
 
     // Load config / patch
     let mut config = crate::config::load_config(std::path::Path::new("config.toml"));
@@ -2601,7 +3029,11 @@ fn run_headless(args: &[String]) -> anyhow::Result<()> {
         }
     }
 
-    let sample_rate = if config.audio.sample_rate > 0 { config.audio.sample_rate } else { 44100 };
+    let sample_rate = if config.audio.sample_rate > 0 {
+        config.audio.sample_rate
+    } else {
+        44100
+    };
     let total_samples = (duration_secs * sample_rate as f32) as usize;
 
     // WAV writer
@@ -2625,7 +3057,8 @@ fn run_headless(args: &[String]) -> anyhow::Result<()> {
     );
 
     let steps_per_sample = {
-        let steps = (config.system.speed / (sample_rate as f64 * config.system.dt)).round() as usize;
+        let steps =
+            (config.system.speed / (sample_rate as f64 * config.system.dt)).round() as usize;
         steps.clamp(1, 10_000)
     };
 
@@ -2665,4 +3098,3 @@ fn run_headless(args: &[String]) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 // MIDI clock output thread (#17)
 // ---------------------------------------------------------------------------
-

@@ -1,4 +1,4 @@
-use super::{DynamicalSystem, rk4};
+use super::{rk4, DynamicalSystem};
 
 /// Aizawa toroidal attractor — exhibits a slow polar wobble around a torus-like surface.
 ///
@@ -41,9 +41,15 @@ impl Aizawa {
 }
 
 impl DynamicalSystem for Aizawa {
-    fn state(&self) -> &[f64] { &self.state }
-    fn dimension(&self) -> usize { 3 }
-    fn name(&self) -> &str { "Aizawa" }
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+    fn dimension(&self) -> usize {
+        3
+    }
+    fn name(&self) -> &str {
+        "Aizawa"
+    }
 
     #[allow(clippy::many_single_char_names)]
     fn step(&mut self, dt: f64) {

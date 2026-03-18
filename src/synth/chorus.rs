@@ -49,7 +49,9 @@ impl Chorus {
     /// Returns the input unchanged when `self.mix < 0.001`.
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
         use std::f32::consts::TAU;
-        if self.mix < 0.001 { return (l, r); }
+        if self.mix < 0.001 {
+            return (l, r);
+        }
 
         self.buf_l[self.pos] = l;
         self.buf_r[self.pos] = r;
@@ -81,8 +83,8 @@ impl Chorus {
         }
         // Normalise each channel by its actual total voice weight so the wet
         // level is equal on L and R regardless of the panning distribution.
-        out_l /= 2.0;   // L weights: 1 + 0.5 + 0.5 = 2.0
-        out_r /= 2.5;   // R weights: 0.5 + 1   + 1   = 2.5
+        out_l /= 2.0; // L weights: 1 + 0.5 + 0.5 = 2.0
+        out_r /= 2.5; // R weights: 0.5 + 1   + 1   = 2.5
 
         self.pos = (self.pos + 1) % self.buf_l.len();
 

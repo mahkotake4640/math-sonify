@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
-use super::{AudioParams, Sonification, SonifMode};
+use super::{AudioParams, SonifMode, Sonification};
 use crate::config::SonificationConfig;
+use std::collections::VecDeque;
 
 const NUM_PARTIALS: usize = 32;
 const HISTORY_LEN: usize = 64; // ~0.53s of trajectory at 120 Hz
@@ -58,7 +58,10 @@ impl SpectralMapping {
 impl Sonification for SpectralMapping {
     fn map(&mut self, state: &[f64], _speed: f64, config: &SonificationConfig) -> AudioParams {
         if state.is_empty() {
-            return AudioParams { mode: SonifMode::Spectral, ..Default::default() };
+            return AudioParams {
+                mode: SonifMode::Spectral,
+                ..Default::default()
+            };
         }
 
         self.history.push_back(state.to_vec());
@@ -74,12 +77,17 @@ impl Sonification for SpectralMapping {
             let n_bins = NUM_PARTIALS.min(hn / 2 + 1);
 
             // Build zero-mean signals per dimension
-            let signals: Vec<Vec<f64>> = (0..n_dims).map(|d| {
-                let s: Vec<f64> = self.history.iter()
-                    .map(|h| h.get(d).copied().unwrap_or(0.0)).collect();
-                let mean = s.iter().sum::<f64>() / s.len() as f64;
-                s.iter().map(|&v| v - mean).collect()
-            }).collect();
+            let signals: Vec<Vec<f64>> = (0..n_dims)
+                .map(|d| {
+                    let s: Vec<f64> = self
+                        .history
+                        .iter()
+                        .map(|h| h.get(d).copied().unwrap_or(0.0))
+                        .collect();
+                    let mean = s.iter().sum::<f64>() / s.len() as f64;
+                    s.iter().map(|&v| v - mean).collect()
+                })
+                .collect();
 
             // Sum DFT magnitudes across all dimensions for each bin
             for k in 0..n_bins {
@@ -88,10 +96,16 @@ impl Sonification for SpectralMapping {
 
             // Normalize to [0, 1]
             let max_val = raw.iter().cloned().fold(0.0f32, f32::max).max(1e-9);
-            for r in &mut raw { *r /= max_val; }
+            for r in &mut raw {
+                *r /= max_val;
+            }
         } else {
             // Fallback while history fills: cyclic state mapping
-            let max_abs = state.iter().map(|v| v.abs()).fold(0.0f64, f64::max).max(1e-9);
+            let max_abs = state
+                .iter()
+                .map(|v| v.abs())
+                .fold(0.0f64, f64::max)
+                .max(1e-9);
             for (k, slot) in raw.iter_mut().enumerate() {
                 let i = k % state.len();
                 *slot = (state[i].abs() / max_abs) as f32;
