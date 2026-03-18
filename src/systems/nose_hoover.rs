@@ -8,6 +8,12 @@ pub struct NoseHoover {
 }
 
 impl NoseHoover {
+    /// Creates a Nosé-Hoover thermostat with default parameter a=3.0.
+    ///
+    /// The initial state (x=0, y=5, z=0) places the trajectory far from the
+    /// fixed point so that the attractor is immediately engaged.
+    /// The `a` parameter controls the coupling strength to the thermal reservoir;
+    /// a=3.0 gives a persistent chaotic torus-like attractor.
     pub fn new() -> Self {
         Self {
             state: vec![0.0, 5.0, 0.0],

@@ -20,6 +20,11 @@ pub struct MackeyGlass {
 }
 
 impl MackeyGlass {
+    /// Creates a Mackey-Glass system with default physiological parameters.
+    ///
+    /// Defaults: β=0.2, γ=0.1, τ=17.0, n=10.  With τ=17 the system is chaotic;
+    /// τ<7 gives a stable limit cycle; τ>17 increases the complexity of the attractor.
+    /// The history buffer is pre-filled with x₀=1.5 (near the stable fixed point without delay).
     pub fn new() -> Self {
         let beta = 0.2;
         let gamma = 0.1;

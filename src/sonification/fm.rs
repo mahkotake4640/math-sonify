@@ -1,9 +1,15 @@
 use crate::config::SonificationConfig;
 use super::{AudioParams, Sonification, SonifMode, quantize_to_scale, Scale};
 
+/// FM synthesis mapping: attractor state drives carrier frequency, modulator ratio, and index.
+///
+/// The first state variable is quantized to the configured scale to set the carrier.
+/// The second variable controls the modulator-to-carrier ratio (1..8).
+/// Trajectory speed modulates the FM index, producing brighter timbre during chaotic bursts.
 pub struct FmMapping;
 
 impl FmMapping {
+    /// Creates a new `FmMapping` (stateless; no initialization required).
     pub fn new() -> Self { Self }
 }
 

@@ -7,6 +7,11 @@ pub struct SprottB {
 }
 
 impl SprottB {
+    /// Creates a Sprott B attractor with initial state (0, 3, 0).
+    ///
+    /// The Sprott B system is one of the simplest three-dimensional chaotic
+    /// flows with only quadratic nonlinearities.  It has no free parameters;
+    /// the strange attractor is an invariant set of the fixed equations.
     pub fn new() -> Self {
         Self {
             state: vec![0.0, 3.0, 0.0],

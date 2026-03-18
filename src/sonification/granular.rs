@@ -8,6 +8,9 @@ pub struct GranularMapping {
 }
 
 impl GranularMapping {
+    /// Creates a new `GranularMapping` with an empty min/max normalization window.
+    ///
+    /// The window is populated lazily on the first call to [`Sonification::map`].
     pub fn new() -> Self {
         Self { min_state: Vec::new(), max_state: Vec::new() }
     }

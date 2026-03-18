@@ -20,6 +20,11 @@ pub struct Duffing {
 }
 
 impl Duffing {
+    /// Creates a Duffing oscillator with default chaotic parameters.
+    ///
+    /// Defaults: δ=0.3 (damping), α=-1 (linear stiffness, double-well), β=1 (nonlinear
+    /// stiffness), γ=0.5 (driving amplitude), ω=1.2 (driving frequency).
+    /// Initial state: x=1.0, v=0.0, φ=0.0 (at rest in the right potential well).
     pub fn new() -> Self {
         Self {
             state: vec![1.0, 0.0, 0.0],

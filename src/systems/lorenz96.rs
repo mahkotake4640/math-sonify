@@ -14,6 +14,10 @@ pub struct Lorenz96 {
 }
 
 impl Lorenz96 {
+    /// Creates a Lorenz-96 instance with N=8 oscillators and forcing F=8.0.
+    ///
+    /// The perturbation x[0]=0.01 breaks perfect symmetry to seed interesting dynamics.
+    /// F=8.0 is the classical chaotic regime; F<5 gives periodic behaviour.
     pub fn new() -> Self {
         let n = 8;
         let f = 8.0;
