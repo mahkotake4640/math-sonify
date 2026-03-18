@@ -71,6 +71,25 @@ Communication between the simulation thread and audio thread uses a bounded cros
 
 ---
 
+## Installation
+
+### From crates.io (recommended)
+
+Requires [Rust](https://rustup.rs/) 1.75 or later.
+
+```bash
+cargo install math-sonify
+math-sonify
+```
+
+Audio starts immediately using the system default output device.
+
+### Pre-built binaries
+
+Download a pre-built executable from the [latest GitHub release](https://github.com/Mattbusel/math-sonify/releases/latest).
+
+---
+
 ## Quickstart
 
 ### Run the standalone application
@@ -200,6 +219,63 @@ The application has three top-level tabs:
 - **WAVEFORM** -- oscilloscope and spectrum analyzer.
 
 Performance mode (press F) switches to fullscreen phase portrait only.
+
+---
+
+## Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `F` | Toggle fullscreen performance mode (phase portrait only) |
+| `Space` | Pause / resume simulation |
+| `R` | Reset attractor to default initial condition |
+| `S` | Save clip (last 60 seconds as WAV + PNG) |
+| `Ctrl+S` | Save current configuration to `config.toml` |
+| `1` – `7` | Switch sonification mode (Direct, Orbital, Granular, Spectral, FM, Vocal, Waveguide) |
+| `←` / `→` | Previous / next dynamical system |
+| `↑` / `↓` | Increase / decrease simulation speed by 10% |
+| `E` | Toggle Evolve (autonomous parameter wandering) |
+| `A` | Toggle AUTO arrangement playback |
+| `P` | Play / stop scene arranger |
+| `Escape` | Exit fullscreen |
+
+---
+
+## Troubleshooting
+
+### No audio / audio device not found
+
+- **Check your default output device.** math-sonify uses the system default audio output (`cpal::default_host().default_output_device()`). Make sure a device is selected in your OS audio settings.
+- **Exclusive mode conflicts (Windows).** If another application has taken the audio device in exclusive mode (e.g., some games or audio interfaces), close that application first.
+- **ALSA errors on Linux.** Install `libasound2-dev` (`sudo apt install libasound2-dev`) and ensure your user is in the `audio` group (`sudo usermod -aG audio $USER`, then log out and back in).
+- **Sample rate mismatch.** If you see an `AudioDeviceError` in the log, your device may not support 44100 Hz. Set `sample_rate = 48000` in `config.toml`.
+
+### High CPU usage
+
+- Reduce `buffer_size` in `config.toml` (try `1024` or `2048`).
+- Disable Evolve if you are not using it.
+- For the Three-Body and Lorenz96 systems, reduce `system.speed` to lower the integration rate.
+
+### Distorted / clipping audio
+
+- Lower `audio.master_volume` in `config.toml` (default 0.7).
+- The Lookahead Limiter on the master bus prevents true clipping; audible distortion usually means the waveshaper drive is too high — set `waveshaper_drive = 1.0` and `waveshaper_mix = 0.0`.
+
+### The phase portrait is blank
+
+- The attractor needs a few seconds to build up a trail from scratch. After a reset press (`R`) wait 2–3 seconds.
+- If the system diverges (all-zero or all-NaN state), the engine resets automatically; this is logged as an `OdeIntegrationError`.
+
+### Config file not loading
+
+- math-sonify looks for `config.toml` in the **current working directory** at startup. Run the binary from the directory containing your `config.toml`, or pass an absolute path via `--config /path/to/config.toml`.
+- Validation errors (values out of range) are logged as warnings; the field is clamped to its valid range rather than rejected.
+
+### VST3 / CLAP plugin not appearing in DAW
+
+- Ensure you copied the `.dll` (Windows) or `.so` (Linux) to the correct system VST3 folder and triggered a plugin rescan in your DAW.
+- Some DAWs require a full restart after installing new plugins.
+- Check that the plugin was built with `cargo build --release --lib` (not `--bin`).
 
 ---
 
