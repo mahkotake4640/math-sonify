@@ -689,6 +689,7 @@ fn sim_thread(
             thread::sleep(next_tick - now);
         }
         next_tick += control_period;
+        let tick_start = Instant::now();
 
         // ── Config hot-reload ─────────────────────────────────────────────────
         // Drain all pending file-change events; on any event reload config.toml.
@@ -1217,6 +1218,9 @@ fn sim_thread(
             config.system.speed = 0.5 + macro_chaos as f64 * 9.5;
             config.lorenz.sigma = 5.0 + macro_chaos as f64 * 20.0;
             config.lorenz.rho   = 20.0 + macro_chaos as f64 * 25.0;
+            tracing::debug!(system = %config.system.name, param = "sigma", value = config.lorenz.sigma, "bifurcation parameter updated");
+            tracing::debug!(system = %config.system.name, param = "rho",   value = config.lorenz.rho,   "bifurcation parameter updated");
+            tracing::debug!(system = %config.system.name, param = "speed", value = config.system.speed, "bifurcation parameter updated");
 
             // Space → reverb_wet, chorus_mix, portamento_ms, delay_feedback
             // (these will be overwritten into params below after mapping)
@@ -1444,6 +1448,7 @@ fn sim_thread(
             let diverged = st.iter().any(|&v| !v.is_finite() || v.abs() > 1e5);
             if diverged {
                 log::warn!("Attractor diverged — resetting state to safe initial conditions");
+                tracing::warn!(system = %config.system.name, "simulation state diverged, resetting to initial conditions");
                 system.set_state(&[0.1, 0.1, 0.1]);
                 let mut st_lock = shared.lock();
                 st_lock.toast_queue.push(crate::ui::Toast::warning(
@@ -2128,6 +2133,8 @@ fn sim_thread(
 
                 // Single lock write for all results
                 {
+                    let lyapunov_exp = lyap.first().copied().unwrap_or(0.0);
+                    tracing::debug!(lyapunov = lyapunov_exp, tick = uptime_ticks, "lyapunov exponent updated");
                     let mut st = shared.lock();
                     st.lyapunov_spectrum = lyap;
                     st.attractor_type = atype.to_string();
@@ -2193,6 +2200,14 @@ fn sim_thread(
 
         let batch: [Option<AudioParams>; 3] = [Some(params), layer1_params, layer2_params];
         let _ = tx.try_send(batch);
+
+        // Tick timing: warn if tick exceeded the 8.33ms control period budget
+        {
+            let elapsed = tick_start.elapsed();
+            if elapsed.as_millis() > 8 {
+                tracing::warn!(elapsed_ms = elapsed.as_millis(), "simulation tick exceeded control period budget");
+            }
+        }
 
         // ── OSC output (throttled to ~30 Hz: every 4 ticks at 120 Hz) ──────
         osc_tick_counter = osc_tick_counter.wrapping_add(1);

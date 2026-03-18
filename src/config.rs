@@ -336,103 +336,130 @@ impl Config {
     /// Call this after deserializing from user-supplied config files.
     pub fn validate(&mut self) {
         // System
-        self.system.dt = self.system.dt.clamp(0.0001, 0.1);
-        self.system.speed = self.system.speed.clamp(0.0, 100.0);
+        Self::clamp_log_f64(&mut self.system.dt,    0.0001, 0.1,   "system.dt");
+        Self::clamp_log_f64(&mut self.system.speed, 0.0,    100.0, "system.speed");
 
         // Lorenz
-        self.lorenz.sigma = self.lorenz.sigma.clamp(0.1, 100.0);
-        self.lorenz.rho   = self.lorenz.rho.clamp(0.1, 200.0);
-        self.lorenz.beta  = self.lorenz.beta.clamp(0.01, 20.0);
+        Self::clamp_log_f64(&mut self.lorenz.sigma, 0.1,  100.0, "lorenz.sigma");
+        Self::clamp_log_f64(&mut self.lorenz.rho,   0.1,  200.0, "lorenz.rho");
+        Self::clamp_log_f64(&mut self.lorenz.beta,  0.01,  20.0, "lorenz.beta");
 
         // Rossler
-        self.rossler.a = self.rossler.a.clamp(0.0, 20.0);
-        self.rossler.b = self.rossler.b.clamp(0.0, 20.0);
-        self.rossler.c = self.rossler.c.clamp(0.0, 20.0);
+        Self::clamp_log_f64(&mut self.rossler.a, 0.0, 20.0, "rossler.a");
+        Self::clamp_log_f64(&mut self.rossler.b, 0.0, 20.0, "rossler.b");
+        Self::clamp_log_f64(&mut self.rossler.c, 0.0, 20.0, "rossler.c");
 
         // Audio
-        self.audio.reverb_wet     = self.audio.reverb_wet.clamp(0.0, 1.0);
-        self.audio.delay_ms       = self.audio.delay_ms.clamp(1.0, 5000.0);
-        self.audio.delay_feedback = self.audio.delay_feedback.clamp(0.0, 0.99);
-        self.audio.master_volume  = self.audio.master_volume.clamp(0.0, 1.0);
+        Self::clamp_log_f32(&mut self.audio.reverb_wet,     0.0,  1.0,    "audio.reverb_wet");
+        Self::clamp_log_f32(&mut self.audio.delay_ms,       1.0,  5000.0, "audio.delay_ms");
+        Self::clamp_log_f32(&mut self.audio.delay_feedback, 0.0,  0.99,   "audio.delay_feedback");
+        Self::clamp_log_f32(&mut self.audio.master_volume,  0.0,  1.0,    "audio.master_volume");
         if self.audio.sample_rate != 44100 && self.audio.sample_rate != 48000 {
+            tracing::warn!(field = "audio.sample_rate", value = self.audio.sample_rate as f64, min = 44100.0_f64, max = 48000.0_f64, "config value clamped to valid range");
             self.audio.sample_rate = 44100;
         }
-        self.audio.chorus_mix         = self.audio.chorus_mix.clamp(0.0, 1.0);
-        self.audio.chorus_rate        = self.audio.chorus_rate.clamp(0.01, 20.0);
-        self.audio.chorus_depth       = self.audio.chorus_depth.clamp(0.0, 50.0);
-        self.audio.waveshaper_drive   = self.audio.waveshaper_drive.clamp(0.0, 100.0);
-        self.audio.waveshaper_mix     = self.audio.waveshaper_mix.clamp(0.0, 1.0);
-        self.audio.rate_crush         = self.audio.rate_crush.clamp(0.0, 1.0);
-        self.audio.bit_depth          = self.audio.bit_depth.clamp(1.0, 32.0);
+        Self::clamp_log_f32(&mut self.audio.chorus_mix,       0.0,  1.0,   "audio.chorus_mix");
+        Self::clamp_log_f32(&mut self.audio.chorus_rate,      0.01, 20.0,  "audio.chorus_rate");
+        Self::clamp_log_f32(&mut self.audio.chorus_depth,     0.0,  50.0,  "audio.chorus_depth");
+        Self::clamp_log_f32(&mut self.audio.waveshaper_drive, 0.0,  100.0, "audio.waveshaper_drive");
+        Self::clamp_log_f32(&mut self.audio.waveshaper_mix,   0.0,  1.0,   "audio.waveshaper_mix");
+        Self::clamp_log_f32(&mut self.audio.rate_crush,       0.0,  1.0,   "audio.rate_crush");
+        Self::clamp_log_f32(&mut self.audio.bit_depth,        1.0,  32.0,  "audio.bit_depth");
 
         // Sonification
-        self.sonification.base_frequency  = self.sonification.base_frequency.clamp(20.0, 2000.0);
-        self.sonification.octave_range    = self.sonification.octave_range.clamp(0.1, 8.0);
-        self.sonification.portamento_ms   = self.sonification.portamento_ms.clamp(1.0, 5000.0);
+        Self::clamp_log_f64(&mut self.sonification.base_frequency, 20.0, 2000.0, "sonification.base_frequency");
+        Self::clamp_log_f64(&mut self.sonification.octave_range,   0.1,  8.0,    "sonification.octave_range");
+        Self::clamp_log_f32(&mut self.sonification.portamento_ms,  1.0,  5000.0, "sonification.portamento_ms");
         for v in &mut self.sonification.voice_levels {
+            let old = *v;
             *v = v.clamp(0.0, 1.0);
+            if (*v - old).abs() > 1e-9 {
+                tracing::warn!(field = "sonification.voice_levels", value = old as f64, min = 0.0_f64, max = 1.0_f64, "config value clamped to valid range");
+            }
         }
 
         // Double pendulum – lengths and masses must be positive
-        self.double_pendulum.m1 = self.double_pendulum.m1.clamp(0.01, 100.0);
-        self.double_pendulum.m2 = self.double_pendulum.m2.clamp(0.01, 100.0);
-        self.double_pendulum.l1 = self.double_pendulum.l1.clamp(0.01, 100.0);
-        self.double_pendulum.l2 = self.double_pendulum.l2.clamp(0.01, 100.0);
+        Self::clamp_log_f64(&mut self.double_pendulum.m1, 0.01, 100.0, "double_pendulum.m1");
+        Self::clamp_log_f64(&mut self.double_pendulum.m2, 0.01, 100.0, "double_pendulum.m2");
+        Self::clamp_log_f64(&mut self.double_pendulum.l1, 0.01, 100.0, "double_pendulum.l1");
+        Self::clamp_log_f64(&mut self.double_pendulum.l2, 0.01, 100.0, "double_pendulum.l2");
 
         // Geodesic torus – radii must be positive
-        self.geodesic_torus.big_r = self.geodesic_torus.big_r.clamp(0.1, 100.0);
-        self.geodesic_torus.r     = self.geodesic_torus.r.clamp(0.01, 50.0);
+        Self::clamp_log_f64(&mut self.geodesic_torus.big_r, 0.1,  100.0, "geodesic_torus.big_r");
+        Self::clamp_log_f64(&mut self.geodesic_torus.r,     0.01, 50.0,  "geodesic_torus.r");
 
         // Kuramoto
+        let old_n = self.kuramoto.n_oscillators;
         self.kuramoto.n_oscillators = self.kuramoto.n_oscillators.max(2).min(256);
-        self.kuramoto.coupling      = self.kuramoto.coupling.clamp(0.0, 50.0);
+        if self.kuramoto.n_oscillators != old_n {
+            tracing::warn!(field = "kuramoto.n_oscillators", value = old_n as f64, min = 2.0_f64, max = 256.0_f64, "config value clamped to valid range");
+        }
+        Self::clamp_log_f64(&mut self.kuramoto.coupling, 0.0, 50.0, "kuramoto.coupling");
 
         // Duffing
-        self.duffing.delta = self.duffing.delta.clamp(0.0, 10.0);
-        self.duffing.gamma = self.duffing.gamma.clamp(0.0, 10.0);
-        self.duffing.omega = self.duffing.omega.clamp(0.001, 100.0);
+        Self::clamp_log_f64(&mut self.duffing.delta, 0.0,   10.0,  "duffing.delta");
+        Self::clamp_log_f64(&mut self.duffing.gamma, 0.0,   10.0,  "duffing.gamma");
+        Self::clamp_log_f64(&mut self.duffing.omega, 0.001, 100.0, "duffing.omega");
 
         // Van der Pol
-        self.van_der_pol.mu = self.van_der_pol.mu.clamp(0.0, 100.0);
+        Self::clamp_log_f64(&mut self.van_der_pol.mu, 0.0, 100.0, "van_der_pol.mu");
 
         // Halvorsen
-        self.halvorsen.a = self.halvorsen.a.clamp(0.0, 10.0);
+        Self::clamp_log_f64(&mut self.halvorsen.a, 0.0, 10.0, "halvorsen.a");
 
         // Aizawa
-        self.aizawa.a = self.aizawa.a.clamp(0.0, 5.0);
-        self.aizawa.b = self.aizawa.b.clamp(0.0, 5.0);
-        self.aizawa.c = self.aizawa.c.clamp(0.0, 5.0);
-        self.aizawa.d = self.aizawa.d.clamp(0.0, 10.0);
-        self.aizawa.e = self.aizawa.e.clamp(0.0, 5.0);
-        self.aizawa.f = self.aizawa.f.clamp(0.0, 5.0);
+        Self::clamp_log_f64(&mut self.aizawa.a, 0.0, 5.0,  "aizawa.a");
+        Self::clamp_log_f64(&mut self.aizawa.b, 0.0, 5.0,  "aizawa.b");
+        Self::clamp_log_f64(&mut self.aizawa.c, 0.0, 5.0,  "aizawa.c");
+        Self::clamp_log_f64(&mut self.aizawa.d, 0.0, 10.0, "aizawa.d");
+        Self::clamp_log_f64(&mut self.aizawa.e, 0.0, 5.0,  "aizawa.e");
+        Self::clamp_log_f64(&mut self.aizawa.f, 0.0, 5.0,  "aizawa.f");
 
         // Chua
-        self.chua.alpha = self.chua.alpha.clamp(0.0, 100.0);
-        self.chua.beta  = self.chua.beta.clamp(0.0, 100.0);
+        Self::clamp_log_f64(&mut self.chua.alpha, 0.0, 100.0, "chua.alpha");
+        Self::clamp_log_f64(&mut self.chua.beta,  0.0, 100.0, "chua.beta");
 
         // Hindmarsh-Rose
-        self.hindmarsh_rose.current_i = self.hindmarsh_rose.current_i.clamp(-5.0, 10.0);
-        self.hindmarsh_rose.r         = self.hindmarsh_rose.r.clamp(1e-6, 1.0);
+        Self::clamp_log_f64(&mut self.hindmarsh_rose.current_i, -5.0, 10.0, "hindmarsh_rose.current_i");
+        Self::clamp_log_f64(&mut self.hindmarsh_rose.r,          1e-6, 1.0,  "hindmarsh_rose.r");
 
         // CML
-        self.coupled_map_lattice.r   = self.coupled_map_lattice.r.clamp(0.0, 4.0);
-        self.coupled_map_lattice.eps = self.coupled_map_lattice.eps.clamp(0.0, 1.0);
+        Self::clamp_log_f64(&mut self.coupled_map_lattice.r,   0.0, 4.0, "coupled_map_lattice.r");
+        Self::clamp_log_f64(&mut self.coupled_map_lattice.eps, 0.0, 1.0, "coupled_map_lattice.eps");
 
         // Mackey-Glass
-        self.mackey_glass.beta  = self.mackey_glass.beta.clamp(0.0, 10.0);
-        self.mackey_glass.gamma = self.mackey_glass.gamma.clamp(0.0, 10.0);
-        self.mackey_glass.tau   = self.mackey_glass.tau.clamp(1.0, 300.0);
-        self.mackey_glass.n     = self.mackey_glass.n.clamp(1.0, 20.0);
+        Self::clamp_log_f64(&mut self.mackey_glass.beta,  0.0, 10.0,  "mackey_glass.beta");
+        Self::clamp_log_f64(&mut self.mackey_glass.gamma, 0.0, 10.0,  "mackey_glass.gamma");
+        Self::clamp_log_f64(&mut self.mackey_glass.tau,   1.0, 300.0, "mackey_glass.tau");
+        Self::clamp_log_f64(&mut self.mackey_glass.n,     1.0, 20.0,  "mackey_glass.n");
 
         // Nose-Hoover
-        self.nose_hoover.a = self.nose_hoover.a.clamp(0.1, 20.0);
+        Self::clamp_log_f64(&mut self.nose_hoover.a, 0.1, 20.0, "nose_hoover.a");
 
         // Henon map
-        self.henon_map.a = self.henon_map.a.clamp(0.0, 2.0);
-        self.henon_map.b = self.henon_map.b.clamp(-1.0, 1.0);
+        Self::clamp_log_f64(&mut self.henon_map.a, 0.0,  2.0, "henon_map.a");
+        Self::clamp_log_f64(&mut self.henon_map.b, -1.0, 1.0, "henon_map.b");
 
         // Lorenz96
-        self.lorenz96.f = self.lorenz96.f.clamp(0.0, 50.0);
+        Self::clamp_log_f64(&mut self.lorenz96.f, 0.0, 50.0, "lorenz96.f");
+    }
+
+    /// Clamp a `f64` field to `[min, max]`, emitting a tracing warning if clamped.
+    fn clamp_log_f64(value: &mut f64, min: f64, max: f64, field: &'static str) {
+        let old = *value;
+        *value = old.clamp(min, max);
+        if (*value - old).abs() > f64::EPSILON {
+            tracing::warn!(field = field, value = old, min = min, max = max, "config value clamped to valid range");
+        }
+    }
+
+    /// Clamp a `f32` field to `[min, max]`, emitting a tracing warning if clamped.
+    fn clamp_log_f32(value: &mut f32, min: f32, max: f32, field: &'static str) {
+        let old = *value;
+        *value = old.clamp(min, max);
+        if (*value - old).abs() > f32::EPSILON {
+            tracing::warn!(field = field, value = old as f64, min = min as f64, max = max as f64, "config value clamped to valid range");
+        }
     }
 }
 

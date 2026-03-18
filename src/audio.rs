@@ -212,6 +212,7 @@ impl LayerSynth {
             let rel = p.adsr_release_ms * (0.7 + velocity * 0.6);
             // #1 — Voice stealing: steal oldest sustaining voice
             let stolen = self.steal_oldest_voice();
+            tracing::debug!(stolen_voice = stolen, "voice stolen for new note");
             self.voice_adsr[stolen].set_params(att, p.adsr_decay_ms, p.adsr_sustain, rel);
             self.voice_adsr[stolen].trigger();
             self.voice_age[stolen] = 0;
@@ -273,7 +274,10 @@ impl LayerSynth {
         };
 
         // NaN guard after raw synthesis
-        let raw_l = if raw_l.is_finite() { raw_l } else { 0.0 };
+        let raw_l = if raw_l.is_finite() { raw_l } else {
+            tracing::warn!(stage = "synthesis", "NaN detected in audio output, clamped to zero");
+            0.0
+        };
         let raw_r = if raw_r.is_finite() { raw_r } else { 0.0 };
 
         // Karplus-Strong mixed before per-layer waveshaper
@@ -283,7 +287,10 @@ impl LayerSynth {
         let r = self.waveshaper.process(raw_r + ks * 0.5);
 
         // NaN guard after waveshaper
-        let l = if l.is_finite() { l } else { 0.0 };
+        let l = if l.is_finite() { l } else {
+            tracing::warn!(stage = "waveshaper", "NaN detected in audio output, clamped to zero");
+            0.0
+        };
         let r = if r.is_finite() { r } else { 0.0 };
 
         // Per-layer bitcrusher
@@ -291,8 +298,11 @@ impl LayerSynth {
         let r = self.bitcrusher.process(r);
 
         // NaN guard after bitcrusher
-        let l = if l.is_finite() { l } else { 0.0 };
-        let r = if r.is_finite() { r } else { 0.0 };
+        let l = if l.is_finite() { l } else {
+            tracing::warn!(stage = "bitcrusher", "NaN detected in audio output, clamped to zero");
+            0.0
+        };
+        let r = if r.is_finite() { r } else { 0.0};
 
         // Apply level + equal-power pan
         let pan = (self.pan + p.layer_pan).clamp(-1.0, 1.0);
@@ -919,7 +929,8 @@ impl AudioEngine {
         let make_err_fn = |xc: XrunCounter| {
             move |err: cpal::StreamError| {
                 log::error!("Audio stream error: {err}");
-                xc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let count = xc.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                tracing::warn!(xrun_count = count, "audio xrun detected");
             }
         };
 
