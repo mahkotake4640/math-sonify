@@ -41,6 +41,7 @@ impl HindmarshRose {
         }
     }
 
+    #[allow(clippy::similar_names, clippy::many_single_char_names)]
     fn deriv(s: &[f64], a: f64, b: f64, c: f64, d: f64, r_: f64, sr: f64, x_rest: f64, i: f64) -> Vec<f64> {
         let x = s[0]; let y = s[1]; let z = s[2];
         vec![
@@ -68,6 +69,7 @@ impl DynamicalSystem for HindmarshRose {
         }
     }
 
+    #[allow(clippy::similar_names, clippy::many_single_char_names)]
     fn step(&mut self, dt: f64) {
         let (a, b, c, d, r, s, x_rest, i) = (self.a, self.b, self.c, self.d, self.r, self.s, self.x_rest, self.current_i);
         let prev = self.state.clone();

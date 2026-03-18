@@ -27,7 +27,7 @@ pub struct Bitcrusher {
 impl Bitcrusher {
     /// Create a bitcrusher with default parameters and a fixed internal seed.
     pub fn new() -> Self {
-        Self::with_seed(0xDEADBEEFCAFEBABE)
+        Self::with_seed(0xDEAD_BEEF_CAFE_BABE)
     }
 
     /// Construct with a caller-supplied seed so per-layer dither is decorrelated.
@@ -49,7 +49,7 @@ impl Bitcrusher {
         self.rng_state ^= self.rng_state << 13;
         self.rng_state ^= self.rng_state >> 7;
         self.rng_state ^= self.rng_state << 17;
-        let bits = 0x3F800000u32 | ((self.rng_state >> 41) as u32 & 0x007FFFFF);
+        let bits = 0x3F80_0000u32 | ((self.rng_state >> 41) as u32 & 0x007F_FFFF);
         f32::from_bits(bits) - 1.0
     }
 

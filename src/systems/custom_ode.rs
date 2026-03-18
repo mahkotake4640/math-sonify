@@ -1,5 +1,5 @@
-/// Custom ODE system: user-defined expressions for dx/dt, dy/dt, dz/dt.
-/// Uses a simple recursive-descent evaluator.
+//! Custom ODE system: user-defined expressions for dx/dt, dy/dt, dz/dt.
+//! Uses a simple recursive-descent evaluator.
 
 use super::{DynamicalSystem, rk4};
 

@@ -27,6 +27,7 @@ impl Aizawa {
         }
     }
 
+    #[allow(clippy::many_single_char_names)]
     fn deriv(state: &[f64], a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) -> Vec<f64> {
         let x = state[0];
         let y = state[1];
@@ -44,6 +45,7 @@ impl DynamicalSystem for Aizawa {
     fn dimension(&self) -> usize { 3 }
     fn name(&self) -> &str { "Aizawa" }
 
+    #[allow(clippy::many_single_char_names)]
     fn step(&mut self, dt: f64) {
         let (a, b, c, d, e, f) = (self.a, self.b, self.c, self.d, self.e, self.f);
         rk4(&mut self.state, dt, |s| Self::deriv(s, a, b, c, d, e, f));

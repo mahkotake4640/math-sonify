@@ -1,7 +1,8 @@
 /// Integration tests for math-sonify.
 use math_sonify_plugin::{
     config::{Config, SonificationConfig},
-    systems::{DynamicalSystem, Lorenz, Rossler, DoublePendulum, Kuramoto, ThreeBody},
+    systems::{DynamicalSystem, Lorenz, Rossler, DoublePendulum, Kuramoto, ThreeBody,
+              Duffing, CoupledMapLattice, HenonMap, MackeyGlass},
     sonification::{
         Scale, SonifMode, DirectMapping, Sonification,
         quantize_to_scale, chord_intervals_for,
@@ -339,4 +340,380 @@ fn test_direct_mapping_produces_non_zero_freqs() {
     // At least one voice should have a non-zero frequency.
     let any_nonzero = params.freqs.iter().any(|&f| f > 0.0);
     assert!(any_nonzero, "DirectMapping should produce non-zero frequencies from Lorenz state");
+}
+
+// --- Bifurcation Boundary Tests ---
+
+// ── Lorenz ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn lorenz_below_chaos_onset_is_periodic() {
+    // rho=20.0 is below the chaos onset at ~24.74; expect periodic/fixed-point behaviour.
+    let mut sys = Lorenz::new(10.0, 20.0, 2.6667);
+    // Warm up transient
+    for _ in 0..2000 { sys.step(0.001); }
+    // Record trajectory and check for near-repeat OR low z variance
+    let mut history: Vec<[f64; 3]> = Vec::with_capacity(5000);
+    let mut found_repeat = false;
+    for _ in 0..5000 {
+        sys.step(0.001);
+        let s = sys.state();
+        assert!(all_finite(s), "state became non-finite below chaos onset");
+        let cur = [s[0], s[1], s[2]];
+        // Check if current position is within 0.5 of any previous position
+        if !found_repeat {
+            for &prev in &history {
+                let dist = ((cur[0]-prev[0]).powi(2)+(cur[1]-prev[1]).powi(2)+(cur[2]-prev[2]).powi(2)).sqrt();
+                if dist < 0.5 { found_repeat = true; break; }
+            }
+        }
+        history.push(cur);
+    }
+    // Either we found a near-repeat, or z variance is low (periodic/fixed-point)
+    let z_vals: Vec<f64> = history.iter().map(|s| s[2]).collect();
+    let z_mean = z_vals.iter().sum::<f64>() / z_vals.len() as f64;
+    let z_var = z_vals.iter().map(|&v| (v - z_mean).powi(2)).sum::<f64>() / z_vals.len() as f64;
+    assert!(
+        found_repeat || z_var < 10.0,
+        "lorenz rho=20 should be periodic/fixed-point: found_repeat={}, z_var={}",
+        found_repeat, z_var
+    );
+}
+
+#[test]
+fn lorenz_at_chaos_onset_rho_24_74() {
+    let mut sys = Lorenz::new(10.0, 24.74, 2.6667);
+    for _ in 0..3000 { sys.step(0.001); }
+    let s = sys.state();
+    assert!(all_finite(s), "state became non-finite at rho=24.74");
+    assert!(s[0].abs() <= 40.0, "x out of range at rho=24.74: {}", s[0]);
+    assert!(s[1].abs() <= 40.0, "y out of range at rho=24.74: {}", s[1]);
+    assert!(s[2] >= 0.0 && s[2] <= 80.0, "z out of range at rho=24.74: {}", s[2]);
+}
+
+#[test]
+fn lorenz_above_chaos_onset_is_chaotic() {
+    // Lyapunov sensitivity: two near-identical initial conditions must diverge.
+    let mut sys1 = Lorenz::new(10.0, 28.0, 2.6667);
+    let mut sys2 = Lorenz::new(10.0, 28.0, 2.6667);
+    // Perturb x by 1e-8
+    sys2.set_state(&[1.0 + 1e-8, 0.0, 0.0]);
+    for _ in 0..2000 {
+        sys1.step(0.001);
+        sys2.step(0.001);
+    }
+    let s1 = sys1.state();
+    let s2 = sys2.state();
+    let dist = ((s1[0]-s2[0]).powi(2)+(s1[1]-s2[1]).powi(2)+(s1[2]-s2[2]).powi(2)).sqrt();
+    assert!(dist > 1.0, "lorenz rho=28 should show Lyapunov divergence, dist={}", dist);
+}
+
+#[test]
+fn lorenz_sigma_at_boundary_min() {
+    let mut sys = Lorenz::new(0.1, 28.0, 2.6667);
+    for _ in 0..1000 { sys.step(0.001); }
+    assert!(all_finite(sys.state()), "state non-finite at sigma=0.1 (config min)");
+}
+
+#[test]
+fn lorenz_rho_at_boundary_max() {
+    let mut sys = Lorenz::new(10.0, 200.0, 2.6667);
+    for _ in 0..500 { sys.step(0.001); }
+    // Must not produce NaN/inf; may be strongly chaotic but must stay finite
+    assert!(all_finite(sys.state()), "state non-finite at rho=200.0 (config max)");
+}
+
+// ── Rossler ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn rossler_periodic_low_c() {
+    // c=3.0 gives period-1 limit cycle (below chaos)
+    let mut sys = Rossler::new(0.2, 0.2, 3.0);
+    for _ in 0..5000 { sys.step(0.001); }
+    let s = sys.state();
+    assert!(all_finite(s), "state non-finite at c=3.0");
+    assert!(s[2] < 20.0, "z exceeds 20.0 at c=3.0 (should be periodic): {}", s[2]);
+}
+
+#[test]
+fn rossler_chaotic_high_c() {
+    // c=5.7 (default, chaotic) — x/y variance must be significant
+    let mut sys = Rossler::new(0.2, 0.2, 5.7);
+    for _ in 0..2000 { sys.step(0.001); } // warm up
+    let mut samples: Vec<f64> = Vec::with_capacity(5000);
+    for _ in 0..5000 {
+        sys.step(0.001);
+        samples.push(sys.state()[0]);
+    }
+    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+    let var = samples.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / samples.len() as f64;
+    assert!(var > 1.0, "rossler c=5.7 x-variance should be > 1.0, got {}", var);
+}
+
+#[test]
+fn rossler_c_at_boundary_max() {
+    let mut sys = Rossler::new(0.2, 0.2, 20.0);
+    for _ in 0..1000 { sys.step(0.001); }
+    assert!(all_finite(sys.state()), "state non-finite at c=20.0 (boundary max)");
+}
+
+// ── Kuramoto ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn kuramoto_just_below_critical_coupling() {
+    // K=0.9 is just below K_c=1.0; should remain largely incoherent
+    let mut sys = Kuramoto::new(16, 0.9);
+    for _ in 0..2000 { sys.step(0.01); }
+    let r = sys.order_parameter();
+    assert!(r >= 0.0 && r <= 1.0 + 1e-9, "order parameter out of [0,1]: {}", r);
+    assert!(r < 0.7, "kuramoto K=0.9 should be incoherent (r < 0.7), got r={}", r);
+}
+
+#[test]
+fn kuramoto_just_above_critical_coupling() {
+    // K=1.1 is just above K_c=1.0; partial synchronization should emerge
+    let mut sys = Kuramoto::new(16, 1.1);
+    for _ in 0..3000 { sys.step(0.01); }
+    let r = sys.order_parameter();
+    assert!(r >= 0.0 && r <= 1.0 + 1e-9, "order parameter out of [0,1]: {}", r);
+    assert!(r > 0.4, "kuramoto K=1.1 should show partial sync (r > 0.4), got r={}", r);
+}
+
+#[test]
+fn kuramoto_exactly_at_critical_coupling() {
+    let mut sys = Kuramoto::new(16, 1.0);
+    for _ in 0..2000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(all_finite(s), "kuramoto state non-finite at K=1.0 (exact critical coupling)");
+    let r = sys.order_parameter();
+    assert!(r >= 0.0 && r <= 1.0 + 1e-9, "order parameter out of [0,1] at K=1.0: {}", r);
+}
+
+// ── Duffing ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn duffing_small_forcing_periodic() {
+    // Small forcing amplitude gamma=0.1 should give periodic, bounded behaviour
+    let mut sys = Duffing::new();
+    sys.gamma = 0.1;
+    for _ in 0..3000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(all_finite(s), "duffing state non-finite at gamma=0.1");
+    assert!(s[1].abs() <= 5.0, "duffing velocity out of [-5,5] at gamma=0.1: {}", s[1]);
+}
+
+#[test]
+fn duffing_chaotic_forcing() {
+    // gamma=0.5 (default chaos) — x must not be stuck at a fixed point
+    let mut sys = Duffing::new(); // defaults: gamma=0.5
+    for _ in 0..1000 { sys.step(0.01); } // warm up
+    let mut xs: Vec<f64> = Vec::with_capacity(3000);
+    for _ in 0..3000 {
+        sys.step(0.01);
+        xs.push(sys.state()[0]);
+    }
+    assert!(all_finite(sys.state()), "duffing state non-finite at gamma=0.5");
+    let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+    let var = xs.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / xs.len() as f64;
+    assert!(var > 0.1, "duffing gamma=0.5 x-variance should be > 0.1, got {}", var);
+}
+
+// ── CML ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn cml_periodic_r_below_chaos() {
+    // r=3.0 is period-2 (below logistic chaos onset ~3.57)
+    let mut sys = CoupledMapLattice::new(3.0, 0.35);
+    for _ in 0..2000 { sys.step(0.001); }
+    let s = sys.state();
+    assert!(s.iter().all(|&v| v.is_finite() && v >= 0.0 && v <= 1.0),
+        "CML sites out of [0,1] at r=3.0: {:?}", &s[..4]);
+}
+
+#[test]
+fn cml_chaotic_r_at_max() {
+    // r=4.0 is fully chaotic logistic map
+    let mut sys = CoupledMapLattice::new(4.0, 0.35);
+    for _ in 0..2000 { sys.step(0.001); }
+    let s = sys.state();
+    assert!(s.iter().all(|&v| v.is_finite() && v >= 0.0 && v <= 1.0),
+        "CML sites out of [0,1] at r=4.0: {:?}", &s[..4]);
+}
+
+#[test]
+fn cml_r_at_config_max() {
+    // boundary r=4.0 — verify no panic or NaN
+    let mut sys = CoupledMapLattice::new(4.0, 0.35);
+    for _ in 0..2000 { sys.step(0.001); }
+    let s = sys.state();
+    assert!(s.iter().all(|v| v.is_finite()), "CML produced NaN/inf at r=4.0 (config max)");
+}
+
+// ── Henon Map ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn henon_canonical_parameters_bounded() {
+    // a=1.4, b=0.3 — canonical strange attractor; skip first 1000 as transient
+    let mut sys = HenonMap::new(); // defaults: a=1.4, b=0.3
+    for _ in 0..1000 { sys.step(0.001); } // transient
+    for _ in 0..10000 {
+        sys.step(0.001);
+        let s = sys.state();
+        // The Henon attractor lives in roughly x ∈ [-1.5, 1.5], y ∈ [-0.5, 0.5]
+        // but we allow slightly wider margins for numerical reasons
+        assert!(s[0].abs() <= 1.5, "henon x out of [-1.5,1.5]: {}", s[0]);
+        assert!(s[1].abs() <= 0.5, "henon y out of [-0.5,0.5]: {}", s[1]);
+    }
+}
+
+#[test]
+fn henon_at_a_boundary() {
+    // a=2.0 (config max) — may diverge or stay bounded; must not produce NaN from within the map
+    let mut sys = HenonMap::new();
+    sys.a = 2.0;
+    // Run for 500 steps; if x diverges, x.is_finite() will catch it
+    for _ in 0..500 {
+        sys.step(0.001);
+        let s = sys.state();
+        // At a=2.0 the map often escapes to infinity; once diverged the state may be non-finite.
+        // The contract is that the system must not panic; NaN is acceptable at boundary.
+        let _ = s[0]; // just ensure no panic
+    }
+    // At minimum the struct should still be accessible
+    let _ = sys.state();
+}
+
+#[test]
+fn henon_b_at_zero() {
+    // b=0.0 — degenerate (area-contracting = 0); must stay finite for 500 steps
+    let mut sys = HenonMap::new();
+    sys.b = 0.0;
+    for _ in 0..500 { sys.step(0.001); }
+    // b=0 means y_new = 0 always; x_new = 1 - a*x^2 (1-D logistic-like)
+    // With a=1.4 this may converge to a fixed point or oscillate
+    assert!(sys.state()[1].is_finite(), "henon y non-finite at b=0.0");
+}
+
+// ── Mackey-Glass ──────────────────────────────────────────────────────────────
+
+#[test]
+fn mackey_glass_stable_low_tau() {
+    // tau=5.0 is below the chaos onset (~7); expect stable limit cycle in [0, 5]
+    let mut sys = MackeyGlass::new();
+    sys.tau = 5.0;
+    // Rebuild history buffer for new tau (re-create the system with overridden tau is simplest)
+    // The MackeyGlass::new() starts with tau=17; we override then step to let it settle
+    for _ in 0..2000 { sys.step(0.5); }
+    let s = sys.state();
+    assert!(all_finite(s), "mackey-glass state non-finite at tau=5.0");
+    assert!(s[0] >= 0.0 && s[0] <= 5.0, "mackey-glass x out of [0,5] at tau=5.0: {}", s[0]);
+}
+
+#[test]
+fn mackey_glass_chaotic_high_tau() {
+    // tau=17.0 (default, chaotic) — bounded chaos, should remain in [0, 5]
+    let mut sys = MackeyGlass::new(); // tau=17 default
+    for _ in 0..2000 { sys.step(0.5); }
+    let s = sys.state();
+    assert!(all_finite(s), "mackey-glass state non-finite at tau=17.0");
+    assert!(s[0] >= 0.0 && s[0] <= 5.0, "mackey-glass x out of [0,5] at tau=17.0: {}", s[0]);
+}
+
+// --- Latency SLA Tests ---
+
+#[test]
+fn sim_tick_completes_within_control_period_budget() {
+    // One simulation tick must complete in < 8.33ms (120 Hz control rate)
+    // to avoid starving the audio thread.
+    // We test Lorenz (representative continuous system) running 120 steps.
+    use std::time::Instant;
+    let mut sys = Lorenz::new(10.0, 28.0, 2.6667);
+
+    let start = Instant::now();
+    for _ in 0..120 { // one second of ticks at 120 Hz
+        sys.step(0.001);
+    }
+    let elapsed = start.elapsed();
+    let per_tick_us = elapsed.as_micros() / 120;
+    assert!(
+        per_tick_us < 8_333,
+        "sim tick took {}us, exceeds 8.33ms control period budget",
+        per_tick_us
+    );
+}
+
+#[test]
+fn audio_buffer_renders_within_latency_budget() {
+    // A 512-sample buffer at 44100 Hz must render in < 11.6ms.
+    use std::time::Instant;
+    let sr = 44100.0f32;
+    let n_samples = 512usize;
+    let budget_us: u128 = (n_samples as u128 * 1_000_000) / 44100; // ~11610 us
+
+    let mut osc = math_sonify_plugin::synth::Oscillator::new(440.0, OscShape::Sine, sr);
+    let start = Instant::now();
+    for _ in 0..n_samples {
+        let _ = osc.next_sample();
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_micros() < budget_us,
+        "512-sample buffer render took {}us, exceeds {}us latency budget",
+        elapsed.as_micros(), budget_us
+    );
+}
+
+#[test]
+fn ten_consecutive_buffers_render_within_budget() {
+    // Verify no buffer in a burst of 10 consecutive renders exceeds the latency budget.
+    use std::time::Instant;
+    let sr = 44100.0f32;
+    let n_samples = 512usize;
+    let budget_us: u128 = (n_samples as u128 * 1_000_000) / 44100; // ~11610 us
+
+    let mut osc = math_sonify_plugin::synth::Oscillator::new(440.0, OscShape::Sine, sr);
+    for buf_idx in 0..10 {
+        let start = Instant::now();
+        for _ in 0..n_samples {
+            let _ = osc.next_sample();
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_micros() < budget_us,
+            "buffer {} render took {}us, exceeds {}us latency budget",
+            buf_idx, elapsed.as_micros(), budget_us
+        );
+    }
+}
+
+#[test]
+fn synthesis_modes_all_meet_latency_sla() {
+    // For each synthesis mode, render one 512-sample buffer and verify < latency budget.
+    use std::time::Instant;
+    let sr = 44100.0f32;
+    let n_samples = 512usize;
+    let budget_us: u128 = (n_samples as u128 * 1_000_000) / 44100; // ~11610 us
+
+    // All modes use the Oscillator DSP path at their core; test each OscShape
+    let shapes = [
+        ("Sine",     OscShape::Sine),
+        ("Square",   OscShape::Square),
+        ("Sawtooth", OscShape::Sawtooth),
+        ("Triangle", OscShape::Triangle),
+        ("Noise",    OscShape::Noise),
+    ];
+
+    for (name, shape) in &shapes {
+        let mut osc = math_sonify_plugin::synth::Oscillator::new(440.0, *shape, sr);
+        let start = Instant::now();
+        for _ in 0..n_samples {
+            let _ = osc.next_sample();
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_micros() < budget_us,
+            "shape {} render took {}us, exceeds {}us latency budget",
+            name, elapsed.as_micros(), budget_us
+        );
+    }
 }

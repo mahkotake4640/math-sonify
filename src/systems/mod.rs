@@ -133,6 +133,7 @@ where
 
 /// Dormand-Prince RK4(5) embedded pair. Advances `state` using the 4th-order solution.
 /// Returns `(rms_error, suggested_next_dt)`.
+#[allow(clippy::unreadable_literal)]
 pub fn rk45_step<F>(state: &mut Vec<f64>, dt: f64, f: &F) -> (f64, f64)
 where
     F: Fn(&[f64]) -> Vec<f64>,
@@ -571,9 +572,11 @@ pub fn correlation_dimension(trajectory: &[Vec<f64>], n_pairs: usize) -> f64 {
     let n = trajectory.len();
     if n < 2 || n_pairs == 0 { return 0.0; }
     // Sample random pairs using a simple LCG
-    let mut seed: u64 = 12345678901234567;
+    #[allow(clippy::unreadable_literal)]
+    let mut seed: u64 = 12_345_678_901_234_567;
     let lcg_next = |s: &mut u64| -> usize {
-        *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        #[allow(clippy::unreadable_literal)]
+        { *s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407); }
         (*s >> 33) as usize
     };
     let mut distances: Vec<f64> = Vec::with_capacity(n_pairs);
@@ -816,6 +819,7 @@ pub fn transfer_entropy(x: &[f64], y: &[f64], lag: usize, n_bins: usize) -> f64 
 /// I(X;Y) = H(X) + H(Y) - H(X,Y)
 /// `n_bins`: histogram bins per axis (8-16 typical).
 /// Returns mutual information in nats.
+#[allow(clippy::similar_names)]
 pub fn mutual_information(x: &[f64], y: &[f64], n_bins: usize) -> f64 {
     if x.len() != y.len() || x.is_empty() || n_bins < 2 { return 0.0; }
     let n = n_bins;

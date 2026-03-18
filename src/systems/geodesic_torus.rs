@@ -33,6 +33,7 @@ impl GeodesicTorus {
         }
     }
 
+    #[allow(clippy::similar_names)]
     fn deriv(s: &[f64], big_r: f64, small_r: f64) -> Vec<f64> {
         let (_phi, theta, dphi, dtheta) = (s[0], s[1], s[2], s[3]);
         let factor = big_r + small_r * theta.cos();

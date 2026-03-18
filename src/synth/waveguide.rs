@@ -1,22 +1,22 @@
-/// Digital waveguide string — two traveling-wave delay lines.
-///
-/// Improvements over the original:
-///
-/// 1. **Fractional-delay read** via linear interpolation: the delay length in
-///    samples is rarely an integer, so integer rounding causes pitch quantization
-///    errors (audible beating at low frequencies).  Interpolation gives true
-///    intonation.
-///
-/// 2. **First-order IIR loop filter** (tunable brightness): replaces the naive
-///    `(a + b) * 0.5` average.  The filter coefficient `b` trades off between a
-///    bright metallic string (b ≈ 0) and a dark muffled one (b ≈ 0.9), with
-///    independent control from the overall damping envelope.
-///
-/// 3. **Allpass dispersion filter** in the loop: a first-order allpass shifts
-///    the phase of higher partials, causing the upper harmonics to arrive
-///    slightly later than the fundamental — the defining "stiff string" quality
-///    of piano and other struck/plucked strings.  Without this every partial
-///    decays in exact lockstep and the result sounds like a pure electronic tone.
+//! Digital waveguide string — two traveling-wave delay lines.
+//!
+//! Improvements over the original:
+//!
+//! 1. **Fractional-delay read** via linear interpolation: the delay length in
+//!    samples is rarely an integer, so integer rounding causes pitch quantization
+//!    errors (audible beating at low frequencies).  Interpolation gives true
+//!    intonation.
+//!
+//! 2. **First-order IIR loop filter** (tunable brightness): replaces the naive
+//!    `(a + b) * 0.5` average.  The filter coefficient `b` trades off between a
+//!    bright metallic string (b ≈ 0) and a dark muffled one (b ≈ 0.9), with
+//!    independent control from the overall damping envelope.
+//!
+//! 3. **Allpass dispersion filter** in the loop: a first-order allpass shifts
+//!    the phase of higher partials, causing the upper harmonics to arrive
+//!    slightly later than the fundamental — the defining "stiff string" quality
+//!    of piano and other struck/plucked strings.  Without this every partial
+//!    decays in exact lockstep and the result sounds like a pure electronic tone.
 
 pub struct WaveguideString {
     delay_fwd: Vec<f32>,
@@ -60,7 +60,7 @@ impl WaveguideString {
             length: (sample_rate / 220.0).clamp(2.0, MAX_DELAY as f32 - 2.0),
             excite: false,
             excite_pos: 0.5,
-            noise_seed: 1234567,
+            noise_seed: 1_234_567,
             lp_state: 0.0,
             ap_state: 0.0,
         }

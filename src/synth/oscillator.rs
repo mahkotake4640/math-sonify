@@ -64,7 +64,7 @@ impl Oscillator {
     /// # Returns
     /// An `Oscillator` instance with phase initialized to zero.
     pub fn new(freq: f32, shape: OscShape, sample_rate: f32) -> Self {
-        Self { phase: 0.0, freq, shape, sample_rate, tri_state: 0.0, sq_dc: 0.0, noise_seed: 0x9E3779B97F4A7C15 }
+        Self { phase: 0.0, freq, shape, sample_rate, tri_state: 0.0, sq_dc: 0.0, noise_seed: 0x9E37_79B9_7F4A_7C15 }
     }
 
     /// Advances the oscillator by one sample and returns the output value in `[-1, 1]`.

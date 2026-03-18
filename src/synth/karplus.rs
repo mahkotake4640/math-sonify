@@ -1,19 +1,19 @@
-/// Karplus-Strong plucked string synthesis.
-///
-/// Improvements over the naive two-point average:
-///
-/// 1. **First-order IIR loop filter** — replaces `(a+b)*0.5`.  The coefficient
-///    `b` (0 = bright steel, 0.5 = classical guitar, 0.9 = bass/cello dark) lets
-///    the simulation model different string/body characteristics.
-///
-/// 2. **Allpass stretch** — a first-order allpass in the delay loop adds slight
-///    inharmonicity (stiffness), giving the characteristic piano-like pitch
-///    "bloom" where upper partials go slightly sharp.  Set to 0 for an ideal
-///    string.
-///
-/// 3. **Fractional delay** — integer rounding of delay length causes pitch
-///    quantisation errors; linear interpolation gives exact intonation at all
-///    frequencies.
+//! Karplus-Strong plucked string synthesis.
+//!
+//! Improvements over the naive two-point average:
+//!
+//! 1. **First-order IIR loop filter** — replaces `(a+b)*0.5`.  The coefficient
+//!    `b` (0 = bright steel, 0.5 = classical guitar, 0.9 = bass/cello dark) lets
+//!    the simulation model different string/body characteristics.
+//!
+//! 2. **Allpass stretch** — a first-order allpass in the delay loop adds slight
+//!    inharmonicity (stiffness), giving the characteristic piano-like pitch
+//!    "bloom" where upper partials go slightly sharp.  Set to 0 for an ideal
+//!    string.
+//!
+//! 3. **Fractional delay** — integer rounding of delay length causes pitch
+//!    quantisation errors; linear interpolation gives exact intonation at all
+//!    frequencies.
 
 pub struct KarplusStrong {
     buf: Vec<f32>,
@@ -63,7 +63,7 @@ impl KarplusStrong {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64)
             .unwrap_or(self.write as u64 + 1);
-        let mut rng = self.write as u64 ^ ns ^ 0xDEADBEEFCAFEBABE;
+        let mut rng = self.write as u64 ^ ns ^ 0xDEAD_BEEF_CAFE_BABE;
         rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
         for i in 0..len {
             rng = rng.wrapping_mul(6_364_136_223_846_793_005)

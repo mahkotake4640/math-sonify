@@ -1,10 +1,10 @@
-/// Granular synthesis engine.
-///
-/// Each grain is a short windowed burst of a sine oscillator.  Using a
-/// raised-cosine (Hann) window instead of a raw ADSR envelope eliminates the
-/// spectral splatter and clicking that makes granular clouds sound noisy.
-/// Grains also support harmonic stacking (octave / fifth copies at reduced
-/// amplitude) so the cloud has natural musical richness.
+//! Granular synthesis engine.
+//!
+//! Each grain is a short windowed burst of a sine oscillator.  Using a
+//! raised-cosine (Hann) window instead of a raw ADSR envelope eliminates the
+//! spectral splatter and clicking that makes granular clouds sound noisy.
+//! Grains also support harmonic stacking (octave / fifth copies at reduced
+//! amplitude) so the cloud has natural musical richness.
 
 use std::f32::consts::{TAU, PI};
 
@@ -95,7 +95,7 @@ impl GrainEngine {
         self.rng_state ^= self.rng_state >> 7;
         self.rng_state ^= self.rng_state << 17;
         // Map to [0, 1) via top 23 mantissa bits
-        let bits = 0x3F800000u32 | ((self.rng_state >> 41) as u32 & 0x007FFFFF);
+        let bits = 0x3F80_0000u32 | ((self.rng_state >> 41) as u32 & 0x007F_FFFF);
         f32::from_bits(bits) - 1.0
     }
 

@@ -1,21 +1,21 @@
-use super::DynamicalSystem;
+//! Coupled Map Lattice — 1D lattice of N logistic maps with nearest-neighbor coupling.
+//!
+//! Spatially-extended chaos. Each site is a logistic map coupled to its neighbors:
+//!   x_i(t+1) = (1-ε) * f(x_i) + (ε/2) * (f(x_{i-1}) + f(x_{i+1}))
+//!   f(x) = r * x * (1 - x)
+//!
+//! Periodic boundary conditions. N=16 sites.
+//!
+//! Character: ghostly, flickering, akin to interference patterns in a physical medium.
+//! As coupling ε increases, spatial coherence emerges — "modes" appear in the lattice.
+//! In sonification, site index maps to stereo position, so you hear spatial patterns
+//! travel through the field left-to-right.
+//!
+//! Control parameters:
+//!   r:   logistic growth rate (3.7–4.0 for chaos; 3.0 for period-doubling edge)
+//!   eps: coupling strength (0 = independent maps; 1 = fully coupled = synchrony)
 
-/// Coupled Map Lattice — 1D lattice of N logistic maps with nearest-neighbor coupling.
-///
-/// Spatially-extended chaos. Each site is a logistic map coupled to its neighbors:
-///   x_i(t+1) = (1-ε) * f(x_i) + (ε/2) * (f(x_{i-1}) + f(x_{i+1}))
-///   f(x) = r * x * (1 - x)
-///
-/// Periodic boundary conditions. N=16 sites.
-///
-/// Character: ghostly, flickering, akin to interference patterns in a physical medium.
-/// As coupling ε increases, spatial coherence emerges — "modes" appear in the lattice.
-/// In sonification, site index maps to stereo position, so you hear spatial patterns
-/// travel through the field left-to-right.
-///
-/// Control parameters:
-///   r:   logistic growth rate (3.7–4.0 for chaos; 3.0 for period-doubling edge)
-///   eps: coupling strength (0 = independent maps; 1 = fully coupled = synchrony)
+use super::DynamicalSystem;
 
 const N: usize = 16;
 

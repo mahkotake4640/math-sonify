@@ -1,11 +1,11 @@
-/// Three-band parametric EQ using biquad shelf and peak filters.
-///
-/// Band layout:
-///   - Low shelf  : 200 Hz
-///   - Mid peak   : configurable (default 1000 Hz)
-///   - High shelf : 6000 Hz
-///
-/// All gains in dB (±12 dB range). At 0 dB each band is transparent.
+//! Three-band parametric EQ using biquad shelf and peak filters.
+//!
+//! Band layout:
+//!   - Low shelf  : 200 Hz
+//!   - Mid peak   : configurable (default 1000 Hz)
+//!   - High shelf : 6000 Hz
+//!
+//! All gains in dB (±12 dB range). At 0 dB each band is transparent.
 
 use std::f32::consts::TAU;
 

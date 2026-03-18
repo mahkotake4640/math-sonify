@@ -1,11 +1,11 @@
-/// Math Sonify — VST3 / CLAP plugin wrapper.
-///
-/// Exposes the core attractor-based synthesis engine as a DAW instrument.
-/// The plugin runs the Lorenz system by default and maps its state to
-/// polyphonic oscillator voices via the existing sonification pipeline.
-///
-/// Parameters are exposed as DAW-automatable knobs; MIDI note-on/off
-/// triggers the arpeggiator and controls pitch.
+//! Math Sonify — VST3 / CLAP plugin wrapper.
+//!
+//! Exposes the core attractor-based synthesis engine as a DAW instrument.
+//! The plugin runs the Lorenz system by default and maps its state to
+//! polyphonic oscillator voices via the existing sonification pipeline.
+//!
+//! Parameters are exposed as DAW-automatable knobs; MIDI note-on/off
+//! triggers the arpeggiator and controls pitch.
 
 use nih_plug::prelude::*;
 use std::sync::Arc;

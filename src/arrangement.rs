@@ -145,7 +145,8 @@ pub fn scene_at(scenes: &[Scene], elapsed: f32) -> Option<(usize, bool, f32)> {
 // arrangements are shaped so you spend most of the time in transition.
 
 fn lcg(seed: &mut u64) -> f64 {
-    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    #[allow(clippy::unreadable_literal)]
+    { *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407); }
     // >> 33 produces 31 bits of output; divide by 2^31 to get [0, 1).
     // Previously divided by u32::MAX (≈ 2^32), which capped output at ~0.5.
     (*seed >> 33) as f64 / (1u64 << 31) as f64
@@ -181,7 +182,8 @@ pub fn demo_arrangement() -> Vec<Scene> {
 /// Every call produces a unique combination of presets, modes, scales, and effects.
 /// Morphs are the feature — time is spent in transition, not in stasis.
 pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
-    let mut rng = seed ^ 0xdeadbeef_cafebabe;
+    #[allow(clippy::unreadable_literal)]
+    let mut rng = seed ^ 0xDEAD_BEEF_CAFE_BABE;
 
     // LCG helpers
     let rf = |rng: &mut u64| -> f32 { lcg(rng) as f32 };              // 0..1

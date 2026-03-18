@@ -1,11 +1,11 @@
-/// Freeverb — Jezar's classic algorithmic reverb.
-///
-/// 8 parallel comb filters feed 4 series allpass filters in a stereo
-/// configuration.  The allpass filters decorrelate the left and right
-/// channels by using delay-line lengths that differ by 23 samples.
-///
-/// This reverb is kept on the master bus as a low-CPU hall/room effect.
-/// For a denser, more diffuse tail see [`FdnReverb`](crate::synth::FdnReverb).
+//! Freeverb — Jezar's classic algorithmic reverb.
+//!
+//! 8 parallel comb filters feed 4 series allpass filters in a stereo
+//! configuration.  The allpass filters decorrelate the left and right
+//! channels by using delay-line lengths that differ by 23 samples.
+//!
+//! This reverb is kept on the master bus as a low-CPU hall/room effect.
+//! For a denser, more diffuse tail see [`FdnReverb`](crate::synth::FdnReverb).
 
 const NUM_COMBS: usize = 8;
 const NUM_ALLPASS: usize = 4;

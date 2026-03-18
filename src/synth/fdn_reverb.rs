@@ -1,19 +1,19 @@
-/// FDN Reverb — 8-channel Feedback Delay Network.
-///
-/// Improvements over the original:
-///
-/// 1. **Pre-delay** (10 ms default) — separates the dry signal from the early
-///    reflections so the reverb tail doesn't smear into the attack.
-///
-/// 2. **Delay-line modulation** — each channel's read pointer is offset by a
-///    slowly drifting LFO (different rate per channel, all below 2 Hz).
-///    Linear interpolation on the read gives smooth pitch variation without
-///    stepping.  This breaks up the metallic, pitched resonances that FDN
-///    reverbs are notorious for at long decay times.
-///
-/// 3. **True stereo input injection** — previously both L and R were mixed to
-///    mono before entering the FDN.  Now they inject into separate channels
-///    (even=L, odd=R) at full level, preserving the stereo image in the tail.
+//! FDN Reverb — 8-channel Feedback Delay Network.
+//!
+//! Improvements over the original:
+//!
+//! 1. **Pre-delay** (10 ms default) — separates the dry signal from the early
+//!    reflections so the reverb tail doesn't smear into the attack.
+//!
+//! 2. **Delay-line modulation** — each channel's read pointer is offset by a
+//!    slowly drifting LFO (different rate per channel, all below 2 Hz).
+//!    Linear interpolation on the read gives smooth pitch variation without
+//!    stepping.  This breaks up the metallic, pitched resonances that FDN
+//!    reverbs are notorious for at long decay times.
+//!
+//! 3. **True stereo input injection** — previously both L and R were mixed to
+//!    mono before entering the FDN.  Now they inject into separate channels
+//!    (even=L, odd=R) at full level, preserving the stereo image in the tail.
 
 // Base delay lengths at 44 100 Hz (coprime, span 35–85 ms)
 const FDN_DELAYS_44K: [usize; 8] = [1559, 1877, 2053, 2381, 2713, 3067, 3413, 3761];
