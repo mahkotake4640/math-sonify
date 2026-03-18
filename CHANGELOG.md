@@ -1,5 +1,42 @@
 # Math Sonify — Changelog
 
+## [Unreleased] — Production-ready pass (2026-03-18)
+
+### Fixed
+
+- Removed all compiler warnings from both the binary and lib targets:
+  - Unused imports (`AudioParams`, `chord_intervals_for`, `Bitcrusher`, `GrainEngine`,
+    `AudioConfig`, `Config`, `LorenzConfig`, `std::f32::consts::TAU`) in `src/plugin.rs`.
+  - `#[allow(dead_code)]` with explanatory comments added to `PluginDsp` fields reserved
+    for the upcoming chord-mode feature (`chord_oscs`, `chord_amp_smooth`, etc.).
+  - `reverb::Freeverb` re-export in `src/synth/mod.rs` annotated with `#[allow(unused_imports)]`
+    and a comment explaining the plugin-only usage.
+  - Unused variable `noise_val` in `src/main.rs` prefixed with `_`.
+  - Dead field `poincare_z_prev` in `src/ui.rs` annotated with `#[allow(dead_code)]`.
+  - Dead function `system_internal_name` in `src/ui.rs` annotated with `#[allow(dead_code)]`.
+
+### Added
+
+- Comprehensive unit tests (`src/synth/oscillator.rs`): sine at phase zero = 0,
+  quarter-period peak near 1, square wave ±1 midpoint, sawtooth range, higher-frequency
+  shorter period, amplitude scaling.
+- Comprehensive unit tests (`src/synth/envelope.rs`): idle = 0, attack rises,
+  decay falls to sustain, sustain is constant, release falls to 0, zero-duration
+  stages do not panic.
+- Comprehensive unit tests (`src/synth/filter.rs`): low-pass passes DC,
+  low-pass attenuates high frequencies, band-pass peaks at center, all outputs finite,
+  NaN input cleared safely.
+- Unit tests (`src/error.rs`): all variants display non-empty strings, `From<io::Error>`
+  produces `IoError`, display contains the original message.
+- Public helpers `map_to_frequency` and `map_to_amplitude` in `src/sonification/direct.rs`
+  with unit tests covering audible range, unit range, and monotonicity.
+- DSP integration tests appended to `tests/integration.rs`: 1-second audio buffer is
+  non-zero, stereo channels equal, two in-phase oscillators double amplitude,
+  `DirectMapping` on Lorenz trajectory yields non-zero frequencies.
+- CI workflow (`.github/workflows/ci.yml`) updated to run `cargo check`, `cargo test --lib`
+  (lib-only to avoid audio device dependency), `cargo clippy -- -D warnings`, and
+  `cargo fmt --check` with dependency caching.
+
 ## [1.2.0] - 2026-03-18
 
 ### Added
