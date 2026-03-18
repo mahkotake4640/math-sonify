@@ -7,12 +7,19 @@ use std::time::Instant;
 use crate::config::Config;
 use crate::sonification::chord_intervals_for;
 use crate::patches::{PRESETS, load_preset, save_patch, list_patches, load_patch_file};
-use crate::audio::{WavRecorder, LoopExportPending, VuMeter, SidechainLevel, ClipBuffer, SharedSnippetPlayback, SnippetPlayback, save_clip, save_portrait_png, capture_snippet};
+use crate::audio::{WavRecorder, LoopExportPending, VuMeter, SidechainLevel, ClipBuffer, SharedSnippetPlayback, SnippetPlayback, save_clip, save_clip_wav_32bit, save_portrait_png, save_portrait_svg, capture_snippet};
 use crate::systems::*;
 use crate::arrangement::{Scene, total_duration, scene_at, generate_song, demo_arrangement};
 use hound;
 
+// Extracted sub-modules for large, self-contained drawing functions.
+use crate::ui_tips::draw_tips_content;
+use crate::ui_timeline::draw_arrangement_timeline;
+use crate::ui_waveform::{draw_waveform, draw_note_map};
+
 /// A single looper layer (stereo interleaved samples).
+/// Fields are prepared for future looper playback implementation.
+#[allow(dead_code)]
 pub struct LooperLayer {
     pub samples: Vec<f32>,
     pub active: bool,
@@ -24,9 +31,9 @@ pub struct LooperLayer {
 #[derive(Clone)]
 pub struct Snippet {
     pub name: String,
-    pub path: String,
+    pub path: String,         // stored for future disk-reload and export features
     pub duration_secs: f32,
-    pub sample_rate: u32,
+    pub sample_rate: u32,     // stored for rate-conversion during export
     /// ~128-point peak envelope for waveform thumbnail display.
     pub thumb: Vec<f32>,
     /// Color index 0..8 for visual identity.
@@ -79,7 +86,39 @@ pub struct ReplayEvent {
     pub value: f32,
 }
 
-/// Shared mutable UI state — written by the UI thread, read by the sim thread.
+/// A single modulation route: maps an attractor state variable to a synthesis parameter.
+#[derive(Clone)]
+pub struct ModRoute {
+    /// Source signal: "x", "y", "z", or "speed"
+    pub source: String,
+    /// Target parameter: "reverb_wet", "delay_ms", "base_freq_mult", "speed",
+    ///                   "chorus_mix", "master_volume", "chaos"
+    pub target: String,
+    /// Modulation depth in [-1.0, 1.0]
+    pub depth: f32,
+    pub enabled: bool,
+}
+
+/// Central shared state, accessed by multiple threads under `parking_lot::Mutex`.
+///
+/// ## Thread ownership
+///
+/// `AppState` is wrapped in `Arc<Mutex<AppState>>` (alias: `SharedState`). Three threads access it:
+///
+/// | Thread | Access pattern |
+/// |--------|---------------|
+/// | **UI thread** | Calls `state.lock()` each frame to read/write UI fields and dispatch user actions. Owns all fields unless noted below. |
+/// | **Sim thread** | Calls `state.lock()` once per tick (120 Hz) to read `config`, write diagnostic fields (`chaos_level`, `lyapunov_spectrum`, `current_state`, `session_log`, etc.). Must never allocate or block audio. |
+/// | **Audio thread** | Never locks `AppState` directly. Receives `AudioParams` via `crossbeam_channel`. Writes `vu_meter` and `clip_buffer` via separate `Arc<Mutex<>>` that UI reads with `try_lock()`. |
+///
+/// ## Field ownership
+///
+/// - **UI thread writes:** `config`, `paused`, `system_changed`, `mode_changed`, `selected_preset`, all UI display state, `undo_stack`, `redo_stack`, `scenes`, `arr_*`, `poly_layers`, `midi_in_*`, `custom_ode_*`, `spectral_freeze_*`, `snippet_*`, `macro_*`.
+/// - **Sim thread writes:** `chaos_level`, `current_state`, `current_deriv`, `kuramoto_phases`, `order_param`, `lyapunov_spectrum`, `attractor_type`, `kolmogorov_entropy`, `energy_error`, `permutation_entropy`, `integrator_divergence`, `session_log`, `spectral_live_partials`, `aging_secs`, `volume_creep_factor`, `entropy_pool`, `wounded`, `startup_ramp_t`, `time_of_day_f`, `scars`.
+/// - **Audio thread writes (via separate `Arc<Mutex<>>`):** `vu_meter`, `clip_buffer`.
+///
+/// ## Undo/redo safety
+/// `push_undo()`, `undo()`, and `redo()` mutate `config` and must only be called from the UI thread.
 pub struct AppState {
     pub config: Config,
     pub paused: bool,
@@ -133,6 +172,7 @@ pub struct AppState {
     pub arr_elapsed: f32,
     pub arr_auto_record: bool,
     pub arr_loop: bool,
+    #[allow(dead_code)] // Reserved for scene editor — intended for future arranger panel focus
     pub arr_scene_edit: usize,
     pub arr_was_playing: bool,
     pub arr_mood: String,
@@ -204,6 +244,9 @@ pub struct AppState {
     pub spectral_freeze_active: bool,
     pub spectral_freeze_freqs: Vec<f32>,
     pub spectral_freeze_amps: Vec<f32>,
+    /// Live partials from the spectral sonification (updated by sim thread each tick).
+    /// Used by the UI to capture real attractor spectral content on FREEZE.
+    pub spectral_live_partials: [f32; 32],
     // Fractional Lorenz alpha
     pub lorenz_alpha: f64,
     // Arrangement probabilistic
@@ -226,6 +269,7 @@ pub struct AppState {
     pub replay_play_start: std::time::Instant,
     // Looper
     pub looper_recording: bool,
+    #[allow(dead_code)] // Reserved for looper playback logic — not yet triggered from the UI
     pub looper_playing: bool,
     pub looper_bars: u32,
     pub looper_bpm: f32,
@@ -294,8 +338,29 @@ pub struct AppState {
     pub song_loop: bool,
     /// Shared with audio thread for snippet playback.
     pub snippet_pb: SharedSnippetPlayback,
+    // Preset search filter
+    pub preset_search: String,
+    // Undo / Redo stacks (store up to 20 configs each). VecDeque for O(1) pop_front.
+    pub undo_stack: std::collections::VecDeque<Config>,
+    pub redo_stack: std::collections::VecDeque<Config>,
+    // Bifurcation cache key: (system_name, param1, param2, is_2d)
+    // When this matches the current bifurcation settings, recomputation is skipped.
+    pub bifurc_cache_key: Option<(String, String, String, bool)>,
+    // Arranger morph diff display
+    pub arr_morph_diff: Vec<(String, f32, f32)>,  // (param_name, from_val, to_val)
+    // MIDI CC Learn Mode
+    pub midi_cc_learn_active: bool,
+    pub midi_cc_learn_target: String,
+    pub midi_cc_map: Vec<(u8, String)>,  // (CC number, param_name) mappings
+    pub midi_cc_learn_last_cc: u8,       // previous midi_in_last_cc for change detection
+    // Modulation matrix: routes attractor state variables to synthesis parameters
+    pub mod_matrix: Vec<ModRoute>,
 }
 
+/// Periodic session log entry (written by sim thread every ~60s).
+/// Fields are collected for future analytics/visualization and are
+/// intentionally kept even though they're not yet displayed in the UI.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct SessionEntry {
     pub elapsed_secs: f32,
@@ -435,6 +500,7 @@ impl AppState {
             spectral_freeze_active: false,
             spectral_freeze_freqs: vec![0.0; 16],
             spectral_freeze_amps: vec![0.0; 16],
+            spectral_live_partials: [0.0; 32],
             lorenz_alpha: 1.0,
             arr_probabilistic: false,
             midi_in_enabled: false,
@@ -496,6 +562,40 @@ impl AppState {
             snippet_volume: 0.8,
             song_loop: false,
             snippet_pb: Arc::new(Mutex::new(SnippetPlayback::idle())),
+            preset_search: String::new(),
+            undo_stack: std::collections::VecDeque::new(),
+            redo_stack: std::collections::VecDeque::new(),
+            bifurc_cache_key: None,
+            arr_morph_diff: Vec::new(),
+            midi_cc_learn_active: false,
+            midi_cc_learn_target: String::new(),
+            midi_cc_map: Vec::new(),
+            midi_cc_learn_last_cc: 0,
+            mod_matrix: Vec::new(),
+        }
+    }
+
+    /// Push the current config onto the undo stack (max 20 entries, O(1) with VecDeque).
+    /// Must be called from the UI thread only.
+    pub fn push_undo(&mut self) {
+        if self.undo_stack.len() >= 20 { self.undo_stack.pop_front(); }
+        self.undo_stack.push_back(self.config.clone());
+        self.redo_stack.clear();
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop_back() {
+            self.redo_stack.push_back(self.config.clone());
+            self.config = prev;
+            self.system_changed = true;
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop_back() {
+            self.undo_stack.push_back(self.config.clone());
+            self.config = next;
+            self.system_changed = true;
         }
     }
 }
@@ -657,10 +757,11 @@ fn mode_tooltip(mode: &str) -> &'static str {
     }
 }
 
-const CYAN:      Color32 = Color32::from_rgb(100, 200, 255);
-const GRAY_HINT: Color32 = Color32::from_rgb(140, 145, 170);
-const AMBER:     Color32 = Color32::from_rgb(220, 175, 60);
+pub(crate) const CYAN:      Color32 = Color32::from_rgb(100, 200, 255);
+pub(crate) const GRAY_HINT: Color32 = Color32::from_rgb(140, 145, 170);
+pub(crate) const AMBER:     Color32 = Color32::from_rgb(220, 175, 60);
 const GREEN_ACC: Color32 = Color32::from_rgb(50, 210, 130);
+#[allow(dead_code)]
 const DIM_BG:    Color32 = Color32::from_rgb(18, 18, 34);
 
 fn collapsing_section(ui: &mut Ui, label: &str, default_open: bool, add_contents: impl FnOnce(&mut Ui)) {
@@ -743,8 +844,46 @@ pub fn draw_ui(
             if i.key_pressed(Key::Num6) { st.viz_tab = 5; } // Math View
             if i.key_pressed(Key::Num7) { st.viz_tab = 6; } // Bifurcation
             if i.key_pressed(Key::F) { st.perf_mode = !st.perf_mode; }
+            // New shortcuts
+            if i.key_pressed(Key::R) { /* recording toggle handled below */ }
+            if i.key_pressed(Key::P) { st.arr_playing = !st.arr_playing; }
+            if i.key_pressed(Key::E) { st.macro_walk_enabled = !st.macro_walk_enabled; }
+            if i.key_pressed(Key::Questionmark) { st.show_tips_window = !st.show_tips_window; }
+            // Undo / Redo
+            let ctrl = i.modifiers.ctrl;
+            let shift = i.modifiers.shift;
+            if ctrl && !shift && i.key_pressed(Key::Z) { st.undo(); }
+            if ctrl && shift && i.key_pressed(Key::Z) { st.redo(); }
         });
     } // lock released here
+
+    // R key: toggle recording (needs WavRecorder access — handled outside the state lock)
+    {
+        let r_pressed = ctx.input(|i| i.key_pressed(Key::R));
+        if r_pressed {
+            let sr = state.lock().sample_rate;
+            if recording.try_lock().map_or(false, |l| l.is_some()) {
+                if let Some(mut lock) = recording.try_lock() { *lock = None; }
+            } else {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let filename = format!("recording_{}.wav", secs);
+                let spec = hound::WavSpec {
+                    channels: 2,
+                    sample_rate: sr,
+                    bits_per_sample: 32,
+                    sample_format: hound::SampleFormat::Float,
+                };
+                if let Ok(writer) = hound::WavWriter::create(&filename, spec) {
+                    if let Some(mut lock) = recording.try_lock() {
+                        *lock = Some(writer);
+                    }
+                }
+            }
+        }
+    }
 
     // Performance mode: fullscreen phase portrait only
     let is_perf_mode = state.lock().perf_mode;
@@ -1125,8 +1264,22 @@ pub fn draw_ui(
                     st.bifurc_2d_mode = new_2d;
                 }
 
+                // Check if the cache is still valid for the current settings
+                let cache_hit = {
+                    let st = state.lock();
+                    let cache_key = (st.config.system.name.clone(), st.bifurc_param.clone(), st.bifurc_param2.clone(), st.bifurc_2d_mode);
+                    st.bifurc_cache_key.as_ref() == Some(&cache_key) && !bifurc_data.lock().is_empty()
+                };
+                if cache_hit {
+                    ui.label(RichText::new("✓ cached").color(Color32::from_rgb(80, 200, 80)).size(10.0));
+                }
+                // "Force Refresh" button clears the cache
+                if cache_hit && ui.small_button("↺ Refresh").on_hover_text("Force recompute").clicked() {
+                    state.lock().bifurc_cache_key = None;
+                }
+
                 let compute_color = if computing { Color32::from_rgb(100, 60, 0) } else { Color32::from_rgb(0, 80, 120) };
-                if !computing && ui.add(
+                if !computing && !cache_hit && ui.add(
                     Button::new(RichText::new("Compute").color(Color32::WHITE)).fill(compute_color)
                 ).clicked() {
                     let (param, param2, is_2d, sys_name, lorenz_cfg, rossler_cfg, kuramoto_cfg) = {
@@ -1189,7 +1342,10 @@ pub fn draw_ui(
                             }).collect();
                             *bifurc_data_clone.lock() = result;
                         }
-                        state_clone.lock().bifurc_computing = false;
+                        let mut st = state_clone.lock();
+                        st.bifurc_computing = false;
+                        // Store cache key so subsequent renders skip recompute
+                        st.bifurc_cache_key = Some((st.config.system.name.clone(), param.clone(), param2.clone(), is_2d));
                     });
                 }
                 if computing {
@@ -1202,7 +1358,7 @@ pub fn draw_ui(
 
         let (projection, rotation_angle, auto_rotate, system_name, mode_name,
              freqs, voice_levels, chord_intervals, current_state, current_deriv,
-             chaos_level, order_param, kuramoto_phases, trail_color, perf_mode,
+             chaos_level, order_param, kuramoto_phases, trail_color, _perf_mode,
              anaglyph_3d, anaglyph_separation, lyapunov_spectrum, attractor_type,
              kolmogorov_entropy, energy_error, sync_error, permutation_entropy,
              integrator_divergence) = {
@@ -1375,11 +1531,23 @@ fn draw_advanced_panel(
     // ---- PRESETS ----
     collapsing_section(ui, "PRESETS", true, |ui| {
         ui.colored_label(AMBER, "Click a preset to start");
-        ui.add_space(6.0);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("🔍").size(11.0).color(GRAY_HINT));
+            ui.add(egui::TextEdit::singleline(&mut st.preset_search)
+                .hint_text("Search presets…")
+                .desired_width(ui.available_width()));
+        });
+        ui.add_space(4.0);
 
+        let search_lower = st.preset_search.to_lowercase();
         let selected = st.selected_preset.clone();
         let mut last_cat = "";
-        for preset in PRESETS.iter() {
+        for preset in PRESETS.iter().filter(|p| {
+            search_lower.is_empty()
+                || p.name.to_lowercase().contains(&search_lower)
+                || p.category.to_lowercase().contains(&search_lower)
+        }) {
             if preset.category != last_cat {
                 last_cat = preset.category;
                 ui.add_space(4.0);
@@ -1427,6 +1595,7 @@ fn draw_advanced_panel(
                 });
             }).response;
             if response.interact(Sense::click()).clicked() {
+                st.push_undo();
                 st.selected_preset = preset.name.to_string();
                 st.config = load_preset(preset.name);
                 st.system_changed = true;
@@ -1531,7 +1700,7 @@ fn draw_advanced_panel(
 
         ui.add(Slider::new(&mut st.config.sonification.portamento_ms, 1.0..=1000.0)
             .text("Portamento ms").logarithmic(true))
-            .on_hover_text("Glide time between notes in milliseconds. 1-20ms = snappy note changes. 200-1000ms = smooth, continuous pitch sweeps — great for ambient and drone sounds.");
+            .on_hover_text("Frequency glide time between notes.");
 
         ui.add_space(4.0);
         ui.label(RichText::new("Voice Levels").color(Color32::WHITE));
@@ -1589,11 +1758,11 @@ fn draw_advanced_panel(
             match st.config.system.name.as_str() {
                 "lorenz" => {
                     ui.add(Slider::new(&mut st.config.lorenz.sigma, 1.0..=20.0).text("sigma"))
-                        .on_hover_text("Prandtl number — controls the rate of convection. Values above 10 produce the classic butterfly pattern. Higher = faster pitch variation.");
+                        .on_hover_text("σ (Prandtl number): controls convective instability. Higher values = faster oscillation.");
                     ui.add(Slider::new(&mut st.config.lorenz.rho, 10.0..=50.0).text("rho"))
-                        .on_hover_text("Rayleigh number — the chaos threshold is near 24.74. Below = stable fixed point, above = chaotic butterfly attractor.");
+                        .on_hover_text("ρ (Rayleigh number): main chaos parameter. Chaos begins above ~24.74.");
                     ui.add(Slider::new(&mut st.config.lorenz.beta, 0.5..=5.0).text("beta"))
-                        .on_hover_text("Geometric factor. The classic value is 8/3 ≈ 2.667. Lower values increase oscillation amplitude.");
+                        .on_hover_text("β (geometric factor): controls dissipation. Typical value 8/3 ≈ 2.667.");
                 }
                 "fractional_lorenz" => {
                     ui.add(Slider::new(&mut st.lorenz_alpha, 0.5..=1.0).text("α (order)"))
@@ -1604,10 +1773,10 @@ fn draw_advanced_panel(
                 }
                 "rossler" => {
                     ui.add(Slider::new(&mut st.config.rossler.a, 0.01..=0.5).text("a"))
-                        .on_hover_text("Spiral tightness");
+                        .on_hover_text("Controls spiral tightness.");
                     ui.add(Slider::new(&mut st.config.rossler.b, 0.01..=0.5).text("b"));
                     ui.add(Slider::new(&mut st.config.rossler.c, 1.0..=15.0).text("c"))
-                        .on_hover_text("Chaos onset — above ~5.7 = chaotic");
+                        .on_hover_text("Primary chaos parameter — drives period-doubling bifurcations above ~5.");
                 }
                 "double_pendulum" => {
                     ui.add(Slider::new(&mut st.config.double_pendulum.m1, 0.1..=5.0).text("m1"));
@@ -1714,9 +1883,9 @@ fn draw_advanced_panel(
     // ---- EFFECTS ----
     collapsing_section(ui, "EFFECTS", false, |ui| {
         ui.add(Slider::new(&mut st.config.audio.reverb_wet, 0.0..=1.0).text("Reverb"))
-            .on_hover_text("Wet/dry mix of the Freeverb reverb. Higher values create cavernous, atmospheric spaces. Zero = completely dry, close, and intimate.");
+            .on_hover_text("Wet/dry mix for the 8×8 feedback delay network reverb.");
         ui.add(Slider::new(&mut st.config.audio.delay_ms, 0.0..=1000.0).text("Delay Time ms"))
-            .on_hover_text("Echo delay time in milliseconds. 125ms = 1/8th note at 120 BPM. 250ms = 1/4 note. Use BPM Sync to auto-calculate musical values.");
+            .on_hover_text("Delay time. BPM-syncable.");
         ui.add(Slider::new(&mut st.config.audio.delay_feedback, 0.0..=0.95).text("Feedback (max 90%)"))
             .on_hover_text("How much of the delayed signal feeds back into the delay — controls how many repeats you hear. Above 0.9 can create infinite feedback drones.");
 
@@ -2101,31 +2270,57 @@ fn draw_advanced_panel(
             (st.custom_ode_x.clone(), st.custom_ode_y.clone(), st.custom_ode_z.clone(), st.custom_ode_error.clone())
         };
 
+        let mut any_expr_changed = false;
         ui.horizontal(|ui| {
             ui.label(RichText::new("dx/dt =").color(Color32::WHITE).size(12.0));
             if ui.text_edit_singleline(&mut ex).changed() {
                 state.lock().custom_ode_x = ex.clone();
+                any_expr_changed = true;
             }
         });
         ui.horizontal(|ui| {
             ui.label(RichText::new("dy/dt =").color(Color32::WHITE).size(12.0));
             if ui.text_edit_singleline(&mut ey).changed() {
                 state.lock().custom_ode_y = ey.clone();
+                any_expr_changed = true;
             }
         });
         ui.horizontal(|ui| {
             ui.label(RichText::new("dz/dt =").color(Color32::WHITE).size(12.0));
             if ui.text_edit_singleline(&mut ez).changed() {
                 state.lock().custom_ode_z = ez.clone();
+                any_expr_changed = true;
             }
         });
+        // Live validation on every keystroke
+        if any_expr_changed {
+            use crate::systems::validate_exprs;
+            let validation = validate_exprs(&ex, &ey, &ez);
+            let mut st = state.lock();
+            match validation {
+                Ok(()) => { st.custom_ode_error.clear(); }
+                Err(e) => { st.custom_ode_error = e; }
+            }
+        }
         ui.add_space(4.0);
-        if ui.button(RichText::new("Apply Custom ODE").color(Color32::WHITE).strong()).clicked() {
+        // Show validation error/warning inline, before the Apply button
+        if !err.is_empty() {
+            let is_warning = err.starts_with("Warning");
+            let color = if is_warning { Color32::from_rgb(255, 200, 60) } else { Color32::from_rgb(255, 80, 80) };
+            ui.colored_label(color, &err);
+        }
+        let can_apply = !err.starts_with("dx/dt error") && !err.starts_with("dy/dt error") && !err.starts_with("dz/dt error");
+        let apply_btn = ui.add_enabled(
+            can_apply,
+            egui::Button::new(RichText::new("Apply Custom ODE").color(Color32::WHITE).strong()),
+        );
+        if apply_btn.clicked() {
             use crate::systems::validate_exprs;
             let mut st = state.lock();
             match validate_exprs(&st.custom_ode_x, &st.custom_ode_y, &st.custom_ode_z) {
                 Ok(()) => {
                     st.custom_ode_error.clear();
+                    st.push_undo();
                     st.config.system.name = "custom".into();
                     st.system_changed = true;
                 }
@@ -2134,12 +2329,96 @@ fn draw_advanced_panel(
                 }
             }
         }
-        if !err.is_empty() {
-            ui.colored_label(Color32::from_rgb(255, 80, 80), &err);
-        }
         ui.add_space(4.0);
+        ui.label(RichText::new("Available: x y z t pi e  |  Functions: sin cos exp abs sqrt ln log tan")
+            .italics().size(10.0).color(GRAY_HINT));
         ui.label(RichText::new("Example (Lorenz): 10*(y-x) | x*(28-z)-y | x*y-2.667*z")
             .italics().size(10.0).color(GRAY_HINT));
+    });
+
+    // ---- MOD MATRIX ----
+    collapsing_section(ui, "MOD MATRIX", false, |ui| {
+        let mut st = state.lock();
+        // Table header
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Source").color(AMBER).size(11.0).strong().monospace());
+            ui.add_space(8.0);
+            ui.label(RichText::new("Target").color(AMBER).size(11.0).strong().monospace());
+            ui.add_space(8.0);
+            ui.label(RichText::new("Depth").color(AMBER).size(11.0).strong().monospace());
+            ui.add_space(4.0);
+            ui.label(RichText::new("En").color(AMBER).size(11.0).strong().monospace());
+        });
+        ui.separator();
+
+        let source_options = ["x", "y", "z", "speed"];
+        let target_options = ["reverb_wet", "delay_ms", "base_freq_mult", "speed",
+                              "chorus_mix", "master_volume", "chaos"];
+
+        let mut to_remove: Option<usize> = None;
+        let n = st.mod_matrix.len();
+        for i in 0..n {
+            ui.horizontal(|ui| {
+                // Source dropdown
+                let cur_src = st.mod_matrix[i].source.clone();
+                ComboBox::from_id_source(format!("mod_src_{}", i))
+                    .selected_text(&cur_src)
+                    .width(52.0)
+                    .show_ui(ui, |ui| {
+                        for opt in &source_options {
+                            if ui.selectable_label(cur_src == *opt, *opt).clicked() {
+                                st.mod_matrix[i].source = opt.to_string();
+                            }
+                        }
+                    });
+                // Target dropdown
+                let cur_tgt = st.mod_matrix[i].target.clone();
+                ComboBox::from_id_source(format!("mod_tgt_{}", i))
+                    .selected_text(&cur_tgt)
+                    .width(100.0)
+                    .show_ui(ui, |ui| {
+                        for opt in &target_options {
+                            if ui.selectable_label(cur_tgt == *opt, *opt).clicked() {
+                                st.mod_matrix[i].target = opt.to_string();
+                            }
+                        }
+                    });
+                // Depth slider
+                ui.add(
+                    Slider::new(&mut st.mod_matrix[i].depth, -1.0..=1.0)
+                        .text("")
+                        .fixed_decimals(2)
+                ).on_hover_text("Modulation depth: negative inverts the modulation direction.");
+                // Enabled checkbox
+                ui.checkbox(&mut st.mod_matrix[i].enabled, "");
+                // Remove button
+                if ui.small_button(RichText::new("✕").color(Color32::from_rgb(200, 60, 60))).clicked() {
+                    to_remove = Some(i);
+                }
+            });
+        }
+        if let Some(idx) = to_remove {
+            st.mod_matrix.remove(idx);
+        }
+
+        ui.add_space(4.0);
+        // Add Route button (capped at 8)
+        if st.mod_matrix.len() < 8 {
+            if ui.button(RichText::new("+ Add Route").color(Color32::from_rgb(0, 200, 100)).size(12.0)).clicked() {
+                st.mod_matrix.push(crate::ui::ModRoute {
+                    source: "x".to_string(),
+                    target: "reverb_wet".to_string(),
+                    depth: 0.5,
+                    enabled: true,
+                });
+            }
+        } else {
+            ui.label(RichText::new("Max 8 routes").color(GRAY_HINT).size(11.0).italics());
+        }
+        if st.mod_matrix.is_empty() {
+            ui.label(RichText::new("No routes. Add one to modulate synth params from attractor state.")
+                .color(GRAY_HINT).size(11.0).italics());
+        }
     });
 
     // ---- MIDI INPUT ----
@@ -2172,21 +2451,82 @@ fn draw_advanced_panel(
             if ui.add(DragValue::new(&mut cc_num).clamp_range(0u32..=127).prefix("CC#")).changed() {
                 st.midi_in_cc_num = cc_num as u8;
             }
-            let cur_cc = st.midi_in_cc_target.clone();
-            ComboBox::from_label("CC Target")
-                .selected_text(&cur_cc)
-                .show_ui(ui, |ui| {
-                    for t in &targets {
-                        if ui.selectable_label(cur_cc == *t, *t).clicked() {
-                            st.midi_in_cc_target = t.to_string();
+            // CC Target row with Learn button
+            ui.horizontal(|ui| {
+                let cur_cc = st.midi_in_cc_target.clone();
+                ComboBox::from_label("CC Target")
+                    .selected_text(&cur_cc)
+                    .show_ui(ui, |ui| {
+                        for t in &targets {
+                            if ui.selectable_label(cur_cc == *t, *t).clicked() {
+                                st.midi_in_cc_target = t.to_string();
+                            }
                         }
-                    }
-                });
+                    });
+                let learn_col = if st.midi_cc_learn_active {
+                    Color32::from_rgb(200, 140, 0)
+                } else {
+                    Color32::from_rgb(60, 60, 100)
+                };
+                if ui.add(Button::new(RichText::new("Learn").color(Color32::WHITE).size(11.0))
+                    .fill(learn_col).min_size(Vec2::new(48.0, 22.0))).clicked() {
+                    st.midi_cc_learn_active = true;
+                    st.midi_cc_learn_target = st.midi_in_cc_target.clone();
+                    st.midi_cc_learn_last_cc = st.midi_in_last_cc;
+                }
+            });
+
+            // Learn mode detection: check if midi_in_last_cc changed while learning
+            if st.midi_cc_learn_active {
+                let current_cc = st.midi_in_last_cc;
+                if current_cc != st.midi_cc_learn_last_cc {
+                    let target = st.midi_cc_learn_target.clone();
+                    st.midi_cc_map.retain(|(cc, t)| *cc != current_cc && t != &target);
+                    st.midi_cc_map.push((current_cc, target));
+                    st.midi_cc_learn_active = false;
+                }
+                ui.add_space(2.0);
+                ui.label(RichText::new("Waiting for CC...").color(Color32::from_rgb(220, 170, 0)).size(11.0).strong());
+            }
+
             ui.add_space(4.0);
             ui.label(RichText::new(format!(
                 "Note: {}  Vel: {}  CC: {}",
                 st.midi_in_last_note, st.midi_in_last_vel, st.midi_in_last_cc
             )).color(CYAN).size(11.0));
+            // Visual summary of active MIDI mappings
+            ui.add_space(2.0);
+            let badge_color = Color32::from_rgb(0, 200, 100);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("Note\u{2192}{}", st.midi_in_note_target))
+                    .color(badge_color).size(11.0).strong());
+                ui.label(RichText::new("  |  ").color(GRAY_HINT).size(11.0));
+                ui.label(RichText::new(format!("Vel\u{2192}{}", st.midi_in_vel_target))
+                    .color(badge_color).size(11.0).strong());
+                ui.label(RichText::new("  |  ").color(GRAY_HINT).size(11.0));
+                ui.label(RichText::new(format!("CC#{}\u{2192}{}", st.midi_in_cc_num, st.midi_in_cc_target))
+                    .color(badge_color).size(11.0).strong());
+            });
+
+            // CC Map list with remove buttons
+            if !st.midi_cc_map.is_empty() {
+                ui.add_space(4.0);
+                ui.label(RichText::new("CC Map:").color(CYAN).size(11.0).strong());
+                let map_snapshot: Vec<(u8, String)> = st.midi_cc_map.clone();
+                let mut remove_idx: Option<usize> = None;
+                for (i, (cc_num, param)) in map_snapshot.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("CC{} \u{2192} {}", cc_num, param))
+                            .color(Color32::from_rgb(180, 220, 180)).size(11.0).monospace());
+                        if ui.small_button(RichText::new("\u{00d7}").color(Color32::from_rgb(200, 80, 80))).clicked() {
+                            remove_idx = Some(i);
+                        }
+                    });
+                }
+                if let Some(idx) = remove_idx {
+                    st.midi_cc_map.remove(idx);
+                }
+            }
         }
     });
 
@@ -2198,17 +2538,23 @@ fn draw_advanced_panel(
     // ---- KEYBOARD SHORTCUTS ----
     collapsing_section(ui, "KEYBOARD SHORTCUTS", false, |ui| {
         let shortcuts = [
-            ("Space",   "Pause / Resume simulation"),
-            ("F",       "Toggle performance mode (fullscreen portrait)"),
-            ("↑ / ↓",  "Volume up / down (+/- 5%)"),
-            ("← / →",  "Speed slower / faster (÷1.2 / ×1.2)"),
-            ("1",       "Tab: Phase Portrait"),
-            ("2",       "Tab: MIXER"),
-            ("3",       "Tab: ARRANGE"),
-            ("4",       "Tab: Waveform"),
-            ("5",       "Tab: Note Map"),
-            ("6",       "Tab: Math View"),
-            ("7",       "Tab: Bifurcation Diagram"),
+            ("Space",      "Pause / Resume simulation"),
+            ("F",          "Toggle performance mode (fullscreen portrait)"),
+            ("R",          "Toggle recording on/off"),
+            ("P",          "Toggle arranger playback"),
+            ("E",          "Toggle Evolve (macro random walk)"),
+            ("?",          "Show / hide this tips window"),
+            ("Ctrl+Z",     "Undo last config change"),
+            ("Ctrl+Shift+Z", "Redo"),
+            ("↑ / ↓",     "Volume up / down (+/- 5%)"),
+            ("← / →",     "Speed slower / faster (÷1.2 / ×1.2)"),
+            ("1",          "Tab: Phase Portrait"),
+            ("2",          "Tab: MIXER"),
+            ("3",          "Tab: ARRANGE"),
+            ("4",          "Tab: Waveform"),
+            ("5",          "Tab: Note Map"),
+            ("6",          "Tab: Math View"),
+            ("7",          "Tab: Bifurcation Diagram"),
         ];
         for (key, desc) in &shortcuts {
             ui.horizontal(|ui| {
@@ -2222,52 +2568,8 @@ fn draw_advanced_panel(
 }
 
 // ---------------------------------------------------------------------------
-// Shared tips content
-// ---------------------------------------------------------------------------
-
-fn draw_tips_content(ui: &mut Ui) {
-    let tips: &[(&str, &str)] = &[
-        (
-            "Hear synchronization emerge",
-            "Load 'The Synchronization'. Set coupling K to 0.5 (all noise). Slowly drag K to 3.0. You're watching a mathematical phase transition in real time. That's the Kuramoto model.",
-        ),
-        (
-            "Build a 3-layer ambient piece",
-            "In the MIXER tab: Layer 0 = 'Midnight Approach' (pad, reverb 0.8). Layer 1 = 'Glass Harp' (melody, reverb 0.5). Layer 2 = 'Monk's Bell' (rhythm, dry). Three different attractors, one mix.",
-        ),
-        (
-            "Find sounds that exist for 15 seconds",
-            "In Simple mode, hit AUTO (Ambient mood). Wait for the morph to begin. The 30-second transition between 'Breathing Galaxy' and 'Collapsing Cathedral' exists exactly once. Hit FREEZE in MIXER to capture it.",
-        ),
-        (
-            "The chaos boundary",
-            "Load 'The Butterfly's Aria'. Slowly drag ρ (rho) from 24 to 25. The system crosses the Hopf bifurcation at ρ=24.74. Below: stable spiral. Above: chaos. You can hear the moment the universe becomes unpredictable.",
-        ),
-        (
-            "Type your own mathematics",
-            "In the PHYSICS ENGINE section, select 'Custom ODE'. Type: dx/dt = y, dy/dt = -x + y*(1-x*x), dz/dt = 0.5*z. That's the Van der Pol oscillator from scratch. Press Apply and hear it.",
-        ),
-        (
-            "Two attractors in conversation",
-            "In COUPLED SYSTEMS (Advanced): Source = Rössler, Target = rho, Strength = 0.6. The Rössler's x-output is now modulating the Lorenz's chaos threshold in real time. This coupling behavior has barely been studied.",
-        ),
-        (
-            "Create evolving textures without touching anything",
-            "In Simple mode, enable Evolve. Set Walk speed to 0.08. Leave the app running. In 10 minutes you'll have sounds you couldn't have designed manually — the random walk explores regions of parameter space you'd never find.",
-        ),
-    ];
-    for (title, body) in tips.iter() {
-        CollapsingHeader::new(RichText::new(*title).color(AMBER).size(11.0).strong())
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.label(RichText::new(*body).color(GRAY_HINT).size(11.0).italics());
-            });
-        ui.add_space(2.0);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Simple panel — beginner-friendly macro controls
+// (draw_tips_content lives in src/ui_tips.rs)
 // ---------------------------------------------------------------------------
 
 fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState, recording: &WavRecorder) {
@@ -2598,10 +2900,25 @@ fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState, recording:
         };
         ui.colored_label(AMBER, "Click a preset to start");
         ui.add_space(4.0);
+        {
+            let mut st = state.lock();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("🔍").size(11.0).color(GRAY_HINT));
+                ui.add(egui::TextEdit::singleline(&mut st.preset_search)
+                    .hint_text("Search presets…")
+                    .desired_width(ui.available_width()));
+            });
+        }
+        ui.add_space(4.0);
 
+        let search_lower = state.lock().preset_search.to_lowercase();
         let show_count = if show_all { PRESETS.len() } else { 12 };
         let mut last_cat = "";
-        for preset in PRESETS.iter().take(show_count) {
+        for preset in PRESETS.iter().take(show_count).filter(|p| {
+            search_lower.is_empty()
+                || p.name.to_lowercase().contains(&search_lower)
+                || p.category.to_lowercase().contains(&search_lower)
+        }) {
             if preset.category != last_cat {
                 last_cat = preset.category;
                 ui.add_space(4.0);
@@ -2655,6 +2972,7 @@ fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState, recording:
             }).response;
             if response.interact(Sense::click()).clicked() {
                 let mut st = state.lock();
+                st.push_undo();
                 st.selected_preset = preset.name.to_string();
                 st.config = load_preset(preset.name);
                 st.system_changed = true;
@@ -2695,6 +3013,61 @@ fn draw_simple_panel(ui: &mut Ui, ctx: &Context, state: &SharedState, recording:
             ui.label(RichText::new(&status).color(GRAY_HINT).size(11.0));
         }
     }
+
+    // ---- SYSTEM STATES (Invisible Behaviors) ----
+    {
+        let (wounded, time_of_day_f, macro_walk_enabled, startup_ramp_t, shutdown_fading) = {
+            let st = state.lock();
+            (st.wounded, st.time_of_day_f, st.macro_walk_enabled, st.startup_ramp_t, st.shutdown_fading)
+        };
+        let circadian_sleep = time_of_day_f < 0.15 || time_of_day_f > 0.98;
+        let behaviors: &[(&str, bool)] = &[
+            ("Wound healing",    wounded),
+            ("Circadian sleep",  circadian_sleep),
+            ("Evolve active",    macro_walk_enabled),
+            ("Startup warmup",   startup_ramp_t < 1.0),
+            ("Shutdown fading",  shutdown_fading),
+        ];
+        let any_active = behaviors.iter().any(|(_, v)| *v);
+        ui.add_space(8.0);
+        egui::Frame::none()
+            .fill(Color32::from_rgba_premultiplied(12, 14, 28, 200))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgba_premultiplied(40, 44, 80, 180)))
+            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+            .rounding(egui::Rounding::same(6.0))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.label(RichText::new("System States")
+                    .size(10.0)
+                    .color(if any_active {
+                        Color32::from_rgba_premultiplied(160, 170, 200, 200)
+                    } else {
+                        Color32::from_rgba_premultiplied(80, 85, 110, 150)
+                    })
+                    .strong());
+                ui.add_space(3.0);
+                ui.horizontal_wrapped(|ui| {
+                    for (label, active) in behaviors {
+                        let dot_col = if *active {
+                            Color32::from_rgba_premultiplied(60, 220, 120, 220)
+                        } else {
+                            Color32::from_rgba_premultiplied(50, 55, 80, 140)
+                        };
+                        let text_col = if *active {
+                            Color32::from_rgba_premultiplied(180, 200, 180, 210)
+                        } else {
+                            Color32::from_rgba_premultiplied(70, 75, 100, 140)
+                        };
+                        ui.horizontal(|ui| {
+                            let (dot_rect, _) = ui.allocate_exact_size(Vec2::new(7.0, 7.0), Sense::hover());
+                            ui.painter().circle_filled(dot_rect.center(), 3.5, dot_col);
+                            ui.label(RichText::new(*label).size(9.5).color(text_col));
+                        });
+                        ui.add_space(4.0);
+                    }
+                });
+            });
+    }
 }
 
 fn param_range(param: &str) -> (f64, f64) {
@@ -2725,7 +3098,7 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
 
     // Auto-record detection: detect arr_playing transitions
     {
-        let mut st = state.lock();
+        let st = state.lock();
         let now_playing = st.arr_playing;
         if st.arr_auto_record {
             if now_playing && !st.arr_was_playing {
@@ -2893,6 +3266,58 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
                 (total / 60.0) as u32, (total % 60.0) as u32)));
     }
 
+    // Morph diff panel: compute and display which parameters are changing during morph
+    if arr_playing {
+        let (morph_diff, is_morphing) = {
+            let st = state.lock();
+            let active: Vec<usize> = (0..st.scenes.len()).filter(|&i| st.scenes[i].active).collect();
+            let mut diff: Vec<(String, f32, f32)> = Vec::new();
+            let mut in_morph = false;
+            if let Some((idx, morphing, _t)) = scene_at(&st.scenes, st.arr_elapsed) {
+                if morphing {
+                    in_morph = true;
+                    if let Some(ord) = active.iter().position(|&i| i == idx) {
+                        if ord > 0 {
+                            let prev_idx = active[ord - 1];
+                            let a = &st.scenes[prev_idx].config;
+                            let b = &st.scenes[idx].config;
+                            let mut check = |name: &str, from: f32, to: f32| {
+                                if (from - to).abs() > 0.01 {
+                                    diff.push((name.to_string(), from, to));
+                                }
+                            };
+                            check("\u{03c3} (sigma)",  a.lorenz.sigma as f32,               b.lorenz.sigma as f32);
+                            check("\u{03c1} (rho)",    a.lorenz.rho as f32,                 b.lorenz.rho as f32);
+                            check("\u{03b2} (beta)",   a.lorenz.beta as f32,                b.lorenz.beta as f32);
+                            check("speed",             a.system.speed as f32,               b.system.speed as f32);
+                            check("reverb_wet",        a.audio.reverb_wet,                  b.audio.reverb_wet);
+                            check("delay_ms",          a.audio.delay_ms,                    b.audio.delay_ms);
+                            check("base_freq",         a.sonification.base_frequency as f32, b.sonification.base_frequency as f32);
+                            check("master_vol",        a.audio.master_volume,               b.audio.master_volume);
+                        }
+                    }
+                }
+            }
+            (diff, in_morph)
+        };
+        if is_morphing && !morph_diff.is_empty() {
+            state.lock().arr_morph_diff = morph_diff.clone();
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(
+                RichText::new("Morphing parameters:").color(Color32::from_rgb(220, 180, 40)).size(11.0).strong()
+            )
+            .default_open(true)
+            .show(ui, |ui| {
+                for (name, from, to) in &morph_diff {
+                    ui.label(RichText::new(format!("  {}: {:.2} \u{2192} {:.2}", name, from, to))
+                        .color(Color32::from_rgb(200, 200, 100)).size(11.0).monospace());
+                }
+            });
+        } else if !is_morphing {
+            state.lock().arr_morph_diff.clear();
+        }
+    }
+
     ui.add_space(4.0);
     ui.separator();
 
@@ -2955,10 +3380,33 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
                 state.lock().scenes[i].hold_secs = hold_v;
             }
 
-            // Morph duration
+            // Morph duration + preview button
             let mut morph_v = morph;
             if ui.add(DragValue::new(&mut morph_v).clamp_range(0.0..=60.0f32).suffix("s").speed(0.1)).changed() {
                 state.lock().scenes[i].morph_secs = morph_v;
+            }
+            // ▶ preview: jump arrangement to just before this scene's morph
+            if i > 0 {
+                let preview_btn = ui.add(Button::new(RichText::new("▶").size(10.0))
+                    .min_size(Vec2::new(18.0, 18.0)))
+                    .on_hover_text("Preview morph into this scene");
+                if preview_btn.clicked() {
+                    let mut st = state.lock();
+                    // Compute elapsed time to the start of this scene's morph
+                    let active: Vec<usize> = (0..st.scenes.len()).filter(|&j| st.scenes[j].active).collect();
+                    let mut t = 0.0f32;
+                    for (ord, &idx) in active.iter().enumerate() {
+                        if idx == i {
+                            // We're at the start of this scene's morph
+                            st.arr_elapsed = t;
+                            st.arr_playing = true;
+                            break;
+                        }
+                        let s = &st.scenes[idx];
+                        if ord > 0 { t += s.morph_secs; }
+                        t += s.hold_secs;
+                    }
+                }
             }
 
             // Probability weight (shown when probabilistic mode is on)
@@ -3010,64 +3458,7 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
     draw_arrangement_timeline(ui, &scenes_for_tl, arr_elapsed);
 }
 
-fn draw_arrangement_timeline(ui: &mut Ui, scenes: &[Scene], elapsed: f32) {
-    let total = total_duration(scenes);
-    if total < 0.001 { return; }
-
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::hover());
-    let painter = ui.painter();
-
-    painter.rect_filled(rect, 4.0, Color32::from_rgb(15, 15, 25));
-
-    let colors = [
-        Color32::from_rgb(0, 100, 180),
-        Color32::from_rgb(0, 140, 80),
-        Color32::from_rgb(140, 80, 0),
-        Color32::from_rgb(120, 0, 140),
-        Color32::from_rgb(0, 120, 120),
-        Color32::from_rgb(140, 30, 30),
-        Color32::from_rgb(80, 80, 0),
-        Color32::from_rgb(40, 80, 140),
-    ];
-
-    let mut x = rect.left();
-    let active: Vec<usize> = (0..scenes.len()).filter(|&i| scenes[i].active).collect();
-    for (ord, &idx) in active.iter().enumerate() {
-        let scene = &scenes[idx];
-        let col = colors[idx % colors.len()];
-
-        // Morph segment (darker), skip for first scene
-        if ord > 0 {
-            let w = rect.width() * scene.morph_secs / total;
-            let r = egui::Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(w, rect.height()));
-            painter.rect_filled(r, 0.0, Color32::from_rgba_premultiplied(col.r()/3, col.g()/3, col.b()/3, 200));
-            x += w;
-        }
-
-        // Hold segment
-        let w = rect.width() * scene.hold_secs / total;
-        let r = egui::Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(w, rect.height()));
-        painter.rect_filled(r, 0.0, Color32::from_rgba_premultiplied(col.r(), col.g(), col.b(), 200));
-
-        // Scene name label
-        painter.text(Pos2::new(x + 4.0, rect.center().y), Align2::LEFT_CENTER,
-            &scene.name, FontId::proportional(10.0), Color32::WHITE);
-
-        x += w;
-    }
-
-    // Playhead
-    if elapsed > 0.0 {
-        let px = rect.left() + rect.width() * (elapsed / total).min(1.0);
-        painter.line_segment(
-            [Pos2::new(px, rect.top()), Pos2::new(px, rect.bottom())],
-            Stroke::new(2.0, Color32::from_rgb(255, 220, 0)),
-        );
-    }
-
-    // Border
-    painter.rect_stroke(rect, 4.0, Stroke::new(1.0, Color32::from_rgb(50, 50, 80)));
-}
+// draw_arrangement_timeline lives in src/ui_timeline.rs
 
 fn build_bifurc_system(
     sys_name: &str,
@@ -3508,9 +3899,14 @@ fn draw_bifurc_diagram(ui: &mut Ui, bifurc_data: &Arc<Mutex<Vec<(f32, f32)>>>, s
     painter.text(rect.left_top() + Vec2::new(8.0, 8.0), Align2::LEFT_TOP,
         format!("Bifurcation Diagram  ({} points)", data.len()),
         FontId::proportional(12.0), Color32::from_rgb(120, 140, 180));
+    // x-axis: show actual parameter name and range
     painter.text(rect.center_bottom() + Vec2::new(0.0, -12.0), Align2::CENTER_BOTTOM,
-        format!("Parameter: {:.2} .. {:.2}", min_x, max_x),
+        format!("{} = {:.3} → {:.3}", param1, min_x, max_x),
         FontId::proportional(10.0), Color32::from_rgb(100, 120, 160));
+    // y-axis: label the x-state being plotted (rotated label on left edge)
+    painter.text(rect.left_center() + Vec2::new(12.0, 0.0), Align2::LEFT_CENTER,
+        "x-state",
+        FontId::proportional(9.0), Color32::from_rgb(80, 100, 140));
 }
 
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -3522,6 +3918,7 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
+#[allow(dead_code)]
 fn speed_color(speed_norm: f32) -> Color32 {
     if speed_norm < 0.5 {
         lerp_color(
@@ -3926,6 +4323,48 @@ fn draw_mixer_tab(ui: &mut egui::Ui, state: &crate::ui::SharedState, viz_points:
             }
         });
         ui.label(egui::RichText::new("Clips saved to clips/ folder — share-ready WAV + phase portrait PNG").color(mc_gray).size(10.0));
+        ui.add_space(4.0);
+
+        // ── Export SVG + Lossless WAV buttons ────────────────────────
+        ui.horizontal(|ui| {
+            if ui.add(egui::Button::new(
+                egui::RichText::new("🖼 Export SVG").color(egui::Color32::BLACK))
+                .fill(egui::Color32::from_rgb(0, 180, 220))
+                .min_size(egui::Vec2::new(140.0, 28.0))
+            ).clicked() {
+                let trail = viz_points.to_vec();
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs();
+                let dir = std::path::PathBuf::from("clips");
+                let _ = std::fs::create_dir_all(&dir);
+                let svg_path = dir.join(format!("portrait_{}.svg", ts));
+                let svg_path_str = svg_path.to_string_lossy().into_owned();
+                std::thread::spawn(move || {
+                    match save_portrait_svg(&trail, 0, &svg_path_str) {
+                        Ok(()) => log::info!("SVG portrait saved: {}", svg_path_str),
+                        Err(e) => log::error!("SVG export failed: {e}"),
+                    }
+                });
+                state.lock().clip_status = "Exporting SVG...".into();
+            }
+
+            if ui.add(egui::Button::new(
+                egui::RichText::new("💾 Lossless WAV").color(egui::Color32::BLACK))
+                .fill(egui::Color32::from_rgb(100, 220, 140))
+                .min_size(egui::Vec2::new(140.0, 28.0))
+            ).clicked() {
+                let sr = state.lock().sample_rate;
+                let cb = state.lock().clip_buffer.clone();
+                std::thread::spawn(move || {
+                    match save_clip_wav_32bit(&cb, sr) {
+                        Ok(path) => log::info!("Lossless WAV saved: {}", path),
+                        Err(e) => log::error!("Lossless WAV export failed: {e}"),
+                    }
+                });
+                state.lock().clip_status = "Saving lossless WAV...".into();
+            }
+        });
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
@@ -4099,15 +4538,17 @@ fn draw_mixer_tab(ui: &mut egui::Ui, state: &crate::ui::SharedState, viz_points:
             let freeze_active = st.spectral_freeze_active;
             let freeze_color = if freeze_active { egui::Color32::from_rgb(40, 140, 220) } else { egui::Color32::from_rgb(40, 40, 70) };
             if ui.add(egui::Button::new(egui::RichText::new("FREEZE").color(egui::Color32::WHITE))
-                .fill(freeze_color).min_size(egui::Vec2::new(80.0, 28.0))).clicked() {
-                // Capture current attractor frequencies and harmonics
+                .fill(freeze_color).min_size(egui::Vec2::new(80.0, 28.0)))
+                .on_hover_text("Capture live spectral content from the attractor").clicked() {
+                // Capture real live partials from the attractor (populated by sim thread)
+                let live = st.spectral_live_partials;
                 let base = st.config.sonification.base_frequency as f32;
                 let mut freqs = vec![0.0f32; 16];
                 let mut amps = vec![0.0f32; 16];
-                // First 4: base freq harmonics, next 12: additional harmonics
                 for i in 0..16 {
                     freqs[i] = base * (i + 1) as f32;
-                    amps[i] = 1.0 / (i + 1) as f32 * 0.5;
+                    // Use live partial amplitude if available, else fall back to harmonic series
+                    amps[i] = if live[i] > 0.0 { live[i] } else { 1.0 / (i + 1) as f32 * 0.5 };
                 }
                 st.spectral_freeze_freqs = freqs;
                 st.spectral_freeze_amps = amps;
@@ -4120,6 +4561,30 @@ fn draw_mixer_tab(ui: &mut egui::Ui, state: &crate::ui::SharedState, viz_points:
             let status = if freeze_active { "FROZEN" } else { "Off" };
             ui.label(egui::RichText::new(status).color(if freeze_active { mc_cyan } else { mc_gray }).size(12.0));
         });
+        // Show frozen partial amplitudes as a mini bar graph when frozen
+        {
+            let st = state.lock();
+            if st.spectral_freeze_active && !st.spectral_freeze_amps.is_empty() {
+                let bar_w = 10.0f32;
+                let bar_h_max = 28.0f32;
+                let spacing = 2.0f32;
+                let n = st.spectral_freeze_amps.len().min(16);
+                let total_w = n as f32 * (bar_w + spacing);
+                let (resp, painter) = ui.allocate_painter(egui::Vec2::new(total_w, bar_h_max + 4.0), egui::Sense::hover());
+                let r = resp.rect;
+                let max_amp = st.spectral_freeze_amps.iter().copied().fold(0.0f32, f32::max).max(1e-6);
+                for (j, &amp_v) in st.spectral_freeze_amps.iter().take(n).enumerate() {
+                    let norm = (amp_v / max_amp).clamp(0.0, 1.0);
+                    let bh = norm * bar_h_max;
+                    let x = r.left() + j as f32 * (bar_w + spacing);
+                    let bar_rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(x, r.bottom() - bh - 2.0),
+                        egui::Vec2::new(bar_w, bh.max(1.0)),
+                    );
+                    painter.rect_filled(bar_rect, 2.0, egui::Color32::from_rgb(40, 160, 220));
+                }
+            }
+        }
 
         ui.add_space(8.0);
         ui.separator();
@@ -4266,222 +4731,13 @@ fn load_replay_file(path: &str) -> anyhow::Result<Vec<crate::ui::ReplayEvent>> {
     Ok(events)
 }
 
-fn draw_waveform(ui: &mut Ui, waveform: &Arc<Mutex<Vec<f32>>>) {
-    let avail = ui.available_size();
-    let (response, painter) = ui.allocate_painter(avail, Sense::hover());
-    let rect = response.rect;
-
-    painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 8, 18));
-
-    let samples = if let Some(wf) = waveform.try_lock() {
-        wf.clone()
-    } else {
-        return;
-    };
-
-    if samples.len() < 2 {
-        painter.text(rect.center(), Align2::CENTER_CENTER, "Audio starting...",
-            FontId::proportional(16.0), Color32::from_rgb(80, 80, 120));
-        return;
-    }
-
-    let cy = rect.center().y;
-
-    // Subtle grid lines
-    for i in 1..4 {
-        let frac = i as f32 / 4.0;
-        let gy = rect.top() + frac * rect.height();
-        painter.line_segment(
-            [Pos2::new(rect.left(), gy), Pos2::new(rect.right(), gy)],
-            Stroke::new(0.5, Color32::from_rgba_premultiplied(30, 45, 70, 60)),
-        );
-    }
-    // Zero line
-    painter.line_segment(
-        [Pos2::new(rect.left(), cy), Pos2::new(rect.right(), cy)],
-        Stroke::new(1.0, Color32::from_rgba_premultiplied(50, 80, 130, 120)),
-    );
-
-    let n = samples.len();
-    let w = rect.width();
-
-    let pts: Vec<Pos2> = samples.iter().enumerate().map(|(i, &s)| {
-        let x = rect.left() + (i as f32 / n as f32) * w;
-        let y = cy - s.clamp(-1.0, 1.0) * (rect.height() * 0.42);
-        Pos2::new(x, y)
-    }).collect();
-
-    // Glow pass (wide, dim)
-    for seg in pts.windows(2) {
-        painter.line_segment([seg[0], seg[1]], Stroke::new(4.0,
-            Color32::from_rgba_premultiplied(0, 200, 100, 30)));
-    }
-    // Core pass
-    let neon_green = Color32::from_rgb(0, 245, 115);
-    for seg in pts.windows(2) {
-        painter.line_segment([seg[0], seg[1]], Stroke::new(1.5, neon_green));
-    }
-
-    let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / n as f32).sqrt();
-    let bar_h = (rms * rect.height()).clamp(0.0, rect.height());
-    let bar_rect = Rect::from_min_size(
-        Pos2::new(rect.right() - 12.0, rect.bottom() - bar_h),
-        Vec2::new(10.0, bar_h),
-    );
-    painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(0, 200, 80));
-    painter.text(
-        Pos2::new(rect.right() - 6.0, rect.bottom() - bar_h - 4.0),
-        Align2::CENTER_BOTTOM,
-        format!("{:.2}", rms),
-        FontId::proportional(10.0),
-        Color32::from_rgb(0, 220, 100),
-    );
-
-    if samples.len() >= 64 {
-        let n_bins = 32usize;
-        let n_dft = samples.len().min(2048);
-        let bin_h_max = 60.0f32;
-        let spec_y = rect.bottom() - bin_h_max - 10.0;
-
-        painter.text(
-            Pos2::new(rect.left() + 4.0, spec_y - 4.0),
-            Align2::LEFT_BOTTOM,
-            "Spectrum",
-            FontId::proportional(10.0),
-            Color32::from_rgb(100, 120, 160),
-        );
-
-        for bin in 0..n_bins {
-            let freq_bin = bin + 1;
-            let mut re = 0.0f32;
-            let mut im = 0.0f32;
-            for (k, &s) in samples.iter().take(n_dft).enumerate() {
-                let angle = -2.0 * std::f32::consts::PI * freq_bin as f32 * k as f32 / n_dft as f32;
-                re += s * angle.cos();
-                im += s * angle.sin();
-            }
-            let mag = ((re * re + im * im) / n_dft as f32).sqrt();
-            let bar_h2 = (mag * 200.0).clamp(0.0, bin_h_max);
-            let bar_w = (rect.width() / n_bins as f32) - 1.0;
-            let bx = rect.left() + bin as f32 * (rect.width() / n_bins as f32);
-            let bar_rect2 = Rect::from_min_size(
-                Pos2::new(bx, spec_y + bin_h_max - bar_h2),
-                Vec2::new(bar_w.max(1.0), bar_h2),
-            );
-            painter.rect_filled(bar_rect2, 0.0, hue_to_color(bin as f32 / n_bins as f32, 0.8));
-        }
-    }
-}
-
-fn hz_to_note_name(hz: f32) -> String {
-    if hz < 16.0 { return "---".into(); }
-    let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-    let semitones_from_a4 = 12.0 * (hz / 440.0).log2();
-    let midi = (69.0 + semitones_from_a4).round() as i32;
-    let octave = (midi / 12) - 1;
-    let note = ((midi % 12 + 12) % 12) as usize;
-    format!("{}{}", note_names[note], octave)
-}
-
-fn draw_note_map(ui: &mut Ui, freqs: &[f32; 4], voice_levels: &[f32; 4], chord_intervals: &[f32; 3]) {
-    let avail = ui.available_size();
-    let (response, painter) = ui.allocate_painter(avail, Sense::hover());
-    let rect = response.rect;
-
-    painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 8, 18));
-
-    let voice_colors = [
-        Color32::from_rgb(0, 180, 255),
-        Color32::from_rgb(0, 255, 140),
-        Color32::from_rgb(255, 200, 0),
-        Color32::from_rgb(255, 80, 80),
-    ];
-    let chord_color = Color32::from_rgb(200, 100, 255);
-
-    let freq_min = 50.0f32.ln();
-    let freq_max = 4000.0f32.ln();
-    let freq_to_x = |f: f32| {
-        let ln_f = f.max(20.0).ln();
-        rect.left() + ((ln_f - freq_min) / (freq_max - freq_min)) * rect.width()
-    };
-
-    for &lf in &[55.0f32, 110.0, 220.0, 440.0, 880.0, 1760.0, 3520.0] {
-        let x = freq_to_x(lf);
-        if x >= rect.left() && x <= rect.right() {
-            painter.line_segment(
-                [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-                Stroke::new(1.0, Color32::from_rgba_premultiplied(50, 50, 80, 80)),
-            );
-            painter.text(
-                Pos2::new(x, rect.bottom() - 4.0),
-                Align2::CENTER_BOTTOM,
-                format!("{:.0}Hz", lf),
-                FontId::proportional(9.0),
-                Color32::from_rgb(80, 80, 120),
-            );
-        }
-    }
-
-    let bar_h = 28.0f32;
-    let spacing = 36.0f32;
-    let y_start = rect.top() + 20.0;
-
-    for (i, (&freq, &level)) in freqs.iter().zip(voice_levels.iter()).enumerate() {
-        if freq < 16.0 { continue; }
-        let x = freq_to_x(freq);
-        let y = y_start + i as f32 * spacing;
-        let bar_w = (level * 80.0).max(4.0);
-
-        let bar_rect = Rect::from_min_size(
-            Pos2::new(x - bar_w * 0.5, y),
-            Vec2::new(bar_w, bar_h * 0.6),
-        );
-        painter.rect_filled(bar_rect, 3.0, voice_colors[i]);
-
-        painter.text(
-            Pos2::new(x, y - 2.0),
-            Align2::CENTER_BOTTOM,
-            hz_to_note_name(freq),
-            FontId::proportional(11.0),
-            voice_colors[i],
-        );
-
-        if i == 0 {
-            for (k, &interval) in chord_intervals.iter().enumerate() {
-                if interval.abs() < 0.001 { continue; }
-                let chord_freq = freq * 2.0f32.powf(interval / 12.0);
-                let cx = freq_to_x(chord_freq);
-                let cy = y - (k as f32 + 1.0) * (bar_h * 0.5 + 4.0);
-                let chord_bar = Rect::from_min_size(
-                    Pos2::new(cx - 20.0, cy),
-                    Vec2::new(40.0, bar_h * 0.4),
-                );
-                painter.rect_filled(chord_bar, 2.0, chord_color);
-                painter.text(
-                    Pos2::new(cx, cy - 2.0),
-                    Align2::CENTER_BOTTOM,
-                    hz_to_note_name(chord_freq),
-                    FontId::proportional(10.0),
-                    chord_color,
-                );
-            }
-        }
-    }
-
-    painter.text(
-        rect.left_top() + Vec2::new(8.0, 4.0),
-        Align2::LEFT_TOP,
-        "Note Map (log frequency axis)",
-        FontId::proportional(11.0),
-        Color32::from_rgb(100, 110, 150),
-    );
-}
+// draw_waveform, hz_to_note_name, and draw_note_map live in src/ui_waveform.rs
 
 // ---------------------------------------------------------------------------
 // Helper functions for math overlay
 // ---------------------------------------------------------------------------
 
-fn hue_to_color(hue: f32, saturation: f32) -> Color32 {
+pub(crate) fn hue_to_color(hue: f32, saturation: f32) -> Color32 {
     let h = hue * 6.0;
     let s = saturation;
     let v = 1.0f32;

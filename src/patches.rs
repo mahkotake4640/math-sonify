@@ -1,3 +1,6 @@
+// Functions here are used by the binary but may appear unused in the plugin lib context.
+#![allow(dead_code)]
+
 use crate::config::*;
 use egui::Color32;
 

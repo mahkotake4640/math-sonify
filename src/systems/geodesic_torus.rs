@@ -34,7 +34,7 @@ impl GeodesicTorus {
     }
 
     fn deriv(s: &[f64], big_r: f64, small_r: f64) -> Vec<f64> {
-        let (phi, theta, dphi, dtheta) = (s[0], s[1], s[2], s[3]);
+        let (_phi, theta, dphi, dtheta) = (s[0], s[1], s[2], s[3]);
         let factor = big_r + small_r * theta.cos();
         let ddphi = -2.0 * (small_r * theta.sin() / factor.max(1e-10)) * dphi * dtheta;
         let ddtheta = factor * theta.sin() / small_r.max(1e-10) * dphi * dphi;

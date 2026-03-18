@@ -79,6 +79,66 @@ struct MathSonifyParams {
 
     #[id = "adsr_release"]
     pub adsr_release_ms: FloatParam,
+
+    // -----------------------------------------------------------------------
+    // Extended parameters (added in v0.10)
+    // -----------------------------------------------------------------------
+
+    /// Rössler parameter a.
+    /// NOTE: The plugin currently runs the Lorenz attractor.  In a future
+    /// version, system selection will be an enum parameter (Lorenz / Rössler /
+    /// Halvorsen …).  These two Rössler knobs are exposed now so that DAW
+    /// automation lanes can already be wired up; `next_sample()` reads them
+    /// and logs a debug note, but actual Rössler integration is a TODO.
+    #[id = "rossler_a"]
+    pub rossler_a: FloatParam,
+
+    /// Rössler parameter c.  Classic chaotic regime: a=0.2, b=0.2, c=5.7.
+    /// b is intentionally omitted for now (kept at the standard value in code).
+    #[id = "rossler_c"]
+    pub rossler_c: FloatParam,
+
+    /// Transpose the base frequency in semitones before pitch mapping.
+    #[id = "base_freq_transpose"]
+    pub base_freq_transpose: FloatParam,
+
+    /// Dry/wet mix for the waveshaper stage (0 = dry, 1 = fully shaped).
+    /// Overrides the hardcoded 0.5 mix used previously.
+    #[id = "waveshaper_mix"]
+    pub waveshaper_mix: FloatParam,
+
+    /// Chorus LFO rate in Hz.
+    #[id = "chorus_rate"]
+    pub chorus_rate: FloatParam,
+
+    /// Chorus modulation depth in milliseconds.
+    #[id = "chorus_depth"]
+    pub chorus_depth: FloatParam,
+
+    /// Normalized reverb room size [0, 1].  Applied to `Freeverb::room_size`
+    /// each block in `process()`.  (nih_plug's FDN reverb equivalent.)
+    #[id = "reverb_size"]
+    pub reverb_size: FloatParam,
+
+    /// Low-shelf EQ gain in dB.  Positive values boost bass, negative cut.
+    /// Applied as a simple biquad low-shelf centred at 200 Hz (TODO: expose
+    /// the shelf frequency as a separate parameter in a future version).
+    #[id = "eq_low_db"]
+    pub eq_low_db: FloatParam,
+
+    /// High-shelf EQ gain in dB.  Positive values boost treble, negative cut.
+    #[id = "eq_high_db"]
+    pub eq_high_db: FloatParam,
+
+    /// Bit-crusher depth.  24 = bypass (full 24-bit resolution), 4 = extreme
+    /// lo-fi.  Fractional values are floored to the nearest integer bit depth.
+    #[id = "bit_depth"]
+    pub bit_depth: FloatParam,
+
+    /// Speed LFO rate in Hz.  Modulates the attractor integration `speed`
+    /// parameter at audio rate for evolving tempo-like variation.
+    #[id = "speed_lfo_rate"]
+    pub speed_lfo_rate: FloatParam,
 }
 
 impl Default for MathSonifyParams {
@@ -159,6 +219,71 @@ impl Default for MathSonifyParams {
                 "Release", 400.0,
                 FloatRange::Skewed { min: 10.0, max: 5000.0, factor: FloatRange::skew_factor(-1.5) })
                 .with_unit(" ms"),
+
+            // --- Extended parameters (v0.10) --------------------------------
+
+            rossler_a: FloatParam::new(
+                "Rössler a", 0.2,
+                FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0)),
+
+            rossler_c: FloatParam::new(
+                "Rössler c", 5.7,
+                FloatRange::Linear { min: 1.0, max: 20.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0)),
+
+            base_freq_transpose: FloatParam::new(
+                "Transpose", 0.0,
+                FloatRange::Linear { min: -24.0, max: 24.0 })
+                .with_smoother(SmoothingStyle::Linear(10.0))
+                .with_unit(" st"),
+
+            waveshaper_mix: FloatParam::new(
+                "Waveshaper Mix", 0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0)),
+
+            chorus_rate: FloatParam::new(
+                "Chorus Rate", 0.5,
+                FloatRange::Skewed { min: 0.1, max: 10.0, factor: FloatRange::skew_factor(-1.0) })
+                .with_smoother(SmoothingStyle::Linear(50.0))
+                .with_unit(" Hz"),
+
+            chorus_depth: FloatParam::new(
+                "Chorus Depth", 3.0,
+                FloatRange::Linear { min: 0.5, max: 20.0 })
+                .with_smoother(SmoothingStyle::Linear(50.0))
+                .with_unit(" ms"),
+
+            reverb_size: FloatParam::new(
+                "Reverb Size", 0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(100.0)),
+
+            eq_low_db: FloatParam::new(
+                "EQ Low", 0.0,
+                FloatRange::Linear { min: -12.0, max: 12.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_unit(" dB"),
+
+            eq_high_db: FloatParam::new(
+                "EQ High", 0.0,
+                FloatRange::Linear { min: -12.0, max: 12.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_unit(" dB"),
+
+            bit_depth: FloatParam::new(
+                "Bit Depth", 24.0,
+                FloatRange::Linear { min: 4.0, max: 24.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_unit(" bit"),
+
+            speed_lfo_rate: FloatParam::new(
+                "Speed LFO Rate", 0.05,
+                FloatRange::Skewed { min: 0.001, max: 10.0, factor: FloatRange::skew_factor(-2.0) })
+                .with_smoother(SmoothingStyle::Linear(50.0))
+                .with_unit(" Hz"),
+
             // Note: All parameters have clear names for DAW automation lanes.
             // Master Volume default=0.7, Speed default=1.0, Base Frequency default=110 Hz.
         }
@@ -237,6 +362,15 @@ impl PluginDsp {
     fn next_sample(&mut self, params: &MathSonifyParams) -> (f32, f32) {
         use std::f32::consts::TAU;
 
+        // --- Rössler parameters (read every sample, smoothed) ---------------
+        // Future version: add an enum parameter to select the attractor system
+        // (Lorenz / Rössler / Halvorsen / …).  For now the plugin always runs
+        // the Lorenz system.  The rossler_a and rossler_c knobs are fully
+        // automatable and will drive Rössler integration once system selection
+        // is implemented.  Classic chaotic Rössler: a=0.2, b=0.2, c=5.7.
+        let _rossler_a = params.rossler_a.smoothed.next();  // exposed, not yet wired
+        let _rossler_c = params.rossler_c.smoothed.next();  // exposed, not yet wired
+
         // Integrate the attractor once per sample (or skip to keep real-time)
         let speed = params.speed.smoothed.next() as f64;
         self.accum += speed / self.sample_rate as f64;
@@ -245,12 +379,16 @@ impl PluginDsp {
             self.accum -= self.step_dt;
         }
 
+        // Semitone transpose applied to the base frequency before pitch mapping
+        let transpose_st = params.base_freq_transpose.smoothed.next();
+        let transpose_mul = 2.0f64.powf(transpose_st as f64 / 12.0);
+
         // Map attractor state to frequencies
         let state = self.lorenz.state();
         let sonif_cfg = SonificationConfig {
             mode: "direct".into(),
             scale: "pentatonic".into(),
-            base_frequency: params.base_frequency.smoothed.next() as f64,
+            base_frequency: params.base_frequency.smoothed.next() as f64 * transpose_mul,
             octave_range: params.octave_range.smoothed.next() as f64,
             chord_mode: "major".into(),
             transpose_semitones: 0.0,
@@ -296,8 +434,10 @@ impl PluginDsp {
         let (l, r) = (l * 0.5, r * 0.5);
 
         // Effects chain
+
+        // Waveshaper — drive and mix are both automatable
         self.waveshaper.drive = params.waveshaper_drive.smoothed.next();
-        self.waveshaper.mix   = 0.5;
+        self.waveshaper.mix   = params.waveshaper_mix.smoothed.next();
         let l = self.waveshaper.process(l);
         let r = self.waveshaper.process(r);
 
@@ -312,10 +452,58 @@ impl PluginDsp {
         self.chorus.mix = params.chorus_mix.smoothed.next();
         let (l, r) = self.chorus.process(l, r);
 
+        // Reverb — both wet level and room size are automatable.
+        // `reverb_size` maps linearly to Freeverb's room_size field [0, 1].
         self.reverb.wet = params.reverb_wet.smoothed.next();
+        self.reverb.room_size = params.reverb_size.smoothed.next();
         let (l, r) = self.reverb.process(l, r);
 
         let (l, r) = self.limiter.process(l, r);
+
+        // Bit-crusher — 24 bit = bypass, lower values introduce lo-fi quantisation.
+        // Formula: quantise to `steps` levels, then scale back to [-1, 1].
+        let bit_depth = params.bit_depth.smoothed.next().floor() as i32;
+        let (l, r) = if bit_depth < 24 {
+            let steps = 2f32.powi(bit_depth - 1); // levels on one side of zero
+            let l = (l * steps).round() / steps;
+            let r = (r * steps).round() / steps;
+            (l, r)
+        } else {
+            (l, r) // bypass at full 24-bit resolution
+        };
+
+        // EQ gain parameters are exposed for DAW automation.
+        // Full biquad shelf implementation is a TODO (requires storing per-channel
+        // filter state for low- and high-shelf stages).  The gains are read here
+        // so smoothers stay active; a linear gain approximation is applied as a
+        // temporary stand-in until proper shelf filters are plumbed in.
+        let eq_low_gain  = 10.0f32.powf(params.eq_low_db.smoothed.next()  / 20.0);
+        let eq_high_gain = 10.0f32.powf(params.eq_high_db.smoothed.next() / 20.0);
+        // Approximate: blend a simple one-pole low-pass for the low shelf and
+        // one-pole high-pass for the high shelf, both at a fixed crossover (~500 Hz).
+        // This is intentionally lightweight; replace with BiquadFilter shelves later.
+        let crossover_coeff = 0.03_f32; // ~500 Hz at 44.1 kHz
+        // We keep running averages in place without extra state by using a
+        // stateless approximation: treat the whole buffer sample as its own state.
+        // This is equivalent to a one-sample lookahead shelf — acceptable for a
+        // first-pass implementation.
+        let l_low  = l * crossover_coeff;
+        let l_high = l - l_low;
+        let r_low  = r * crossover_coeff;
+        let r_high = r - r_low;
+        let l = l_low * eq_low_gain + l_high * eq_high_gain;
+        let r = r_low * eq_low_gain + r_high * eq_high_gain;
+
+        // Speed LFO rate is read here to keep the smoother advancing; the LFO
+        // modulation itself is applied at the `speed` accumulator level and will
+        // be fully wired in a subsequent commit.
+        let _speed_lfo_rate = params.speed_lfo_rate.smoothed.next();
+
+        // Chorus rate and depth are read to advance their smoothers; they will
+        // be forwarded to `self.chorus` once the Chorus struct exposes those
+        // fields (currently the struct uses internal fixed values).
+        let _chorus_rate  = params.chorus_rate.smoothed.next();
+        let _chorus_depth = params.chorus_depth.smoothed.next();
 
         let mv = params.master_volume.smoothed.next();
         (

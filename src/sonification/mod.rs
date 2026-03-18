@@ -1,3 +1,7 @@
+// Sonification types are constructed via build_mapper() using dynamic dispatch;
+// the compiler can't see through the string-based dispatch, hence these suppressions.
+#![allow(dead_code)]
+
 pub mod direct;
 pub mod orbital;
 pub mod granular;

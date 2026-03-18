@@ -1,3 +1,7 @@
+// Research and analysis functions below are intentionally kept for future use
+// even if not currently called from the main binary.
+#![allow(dead_code)]
+
 use rayon::prelude::*;
 
 pub mod lorenz;

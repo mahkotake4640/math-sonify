@@ -27,13 +27,30 @@ impl SpectralMapping {
     }
 
     /// Compute DFT magnitude for bin `k` over `signal` (length N, zero-mean).
+    ///
+    /// Uses incremental angle accumulation (cos/sin recurrence) to avoid
+    /// calling transcendental functions inside the inner loop — O(N) adds and
+    /// multiplies rather than O(N) cos+sin calls.
+    #[inline]
     fn dft_mag(signal: &[f64], k: usize) -> f32 {
         let n = signal.len() as f64;
-        let twopi_k_over_n = std::f64::consts::TAU * k as f64 / n;
-        let re: f64 = signal.iter().enumerate()
-            .map(|(t, &v)| v * (twopi_k_over_n * t as f64).cos()).sum();
-        let im: f64 = signal.iter().enumerate()
-            .map(|(t, &v)| -v * (twopi_k_over_n * t as f64).sin()).sum();
+        let angle_step = std::f64::consts::TAU * k as f64 / n;
+        // Recurrence: cos(a*(t+1)) = cos(a*t)*cos(a) - sin(a*t)*sin(a)
+        //             sin(a*(t+1)) = sin(a*t)*cos(a) + cos(a*t)*sin(a)
+        let (ca, sa) = (angle_step.cos(), angle_step.sin());
+        let mut cos_t = 1.0f64; // cos(0)
+        let mut sin_t = 0.0f64; // sin(0)
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for &v in signal {
+            re += v * cos_t;
+            im -= v * sin_t;
+            // Advance angle by one step
+            let new_cos = cos_t * ca - sin_t * sa;
+            let new_sin = sin_t * ca + cos_t * sa;
+            cos_t = new_cos;
+            sin_t = new_sin;
+        }
         ((re * re + im * im) / n).sqrt() as f32
     }
 }

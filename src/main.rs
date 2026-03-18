@@ -4,12 +4,20 @@ mod synth;
 mod audio;
 mod config;
 mod ui;
+mod ui_tips;
+mod ui_timeline;
+mod ui_waveform;
 mod patches;
 mod arrangement;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::path::Path;
+
+use notify::{Watcher, RecursiveMode, recommended_watcher};
 
 use crossbeam_channel::bounded;
 use parking_lot::Mutex;
@@ -29,6 +37,28 @@ use crate::ui::{AppState, SharedState, draw_ui};
 
 // Channel capacity (sim -> audio). Only the latest value matters.
 const CHANNEL_CAP: usize = 16;
+
+// ── Simulation constants ───────────────────────────────────────────────────
+/// Simulation control rate in Hz (how often AudioParams are computed and sent).
+const CONTROL_RATE_HZ: f64 = 120.0;
+/// How often (in ticks) attractor state is saved to disk (~2 minutes).
+const STATE_SAVE_INTERVAL_TICKS: u64 = 120 * 120;
+/// How often (in ticks) the Lyapunov spectrum is recomputed (~5 seconds).
+const LYAP_INTERVAL_TICKS: u64 = 600;
+/// How often (in ticks) a session log entry is recorded (~60 seconds).
+const SESSION_LOG_INTERVAL_TICKS: u64 = 120 * 60;
+/// Idle ticks before the attractor enters dream mode (~30 minutes).
+const DREAM_IDLE_THRESHOLD_TICKS: u64 = 30 * 60 * 120;
+
+// ── Behavioral layer constants ─────────────────────────────────────────────
+/// Volume creep rate per tick (very slow upward drift over long sessions).
+const VOLUME_CREEP_RATE: f32 = 3.24e-7;
+/// Minimum volume floor for the creep mechanism.
+const VOLUME_CREEP_MIN: f32 = 0.87;
+/// Breathing oscillation period in seconds.
+const BREATHING_PERIOD_SECS: f64 = 4.5;
+/// Breathing amplitude in linear gain (±0.3 dB equivalent).
+const BREATHING_DEPTH: f32 = 0.033;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -98,11 +128,18 @@ fn main() -> anyhow::Result<()> {
         st.snippet_pb = snippet_pb;
     }
 
+    // Config hot-reload: watch "config.toml" for changes using notify v6
+    let (tx_notify, rx_notify) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
+    let mut _watcher = recommended_watcher(tx_notify).ok();
+    if let Some(ref mut w) = _watcher {
+        let _ = w.watch(Path::new("config.toml"), RecursiveMode::NonRecursive);
+    }
+
     // Simulation thread
     let shared_sim = shared.clone();
     let viz_sim = viz_history.clone();
     thread::spawn(move || {
-        sim_thread(shared_sim, viz_sim, tx);
+        sim_thread(shared_sim, viz_sim, tx, rx_notify);
     });
 
     // MIDI output thread
@@ -187,10 +224,38 @@ struct ExtraLayer {
     config: Config,
 }
 
+/// The simulation thread runs at `CONTROL_RATE_HZ` (120 Hz) and drives all audio synthesis.
+///
+/// In addition to integrating the mathematical dynamical system and computing `AudioParams`,
+/// it applies a set of **invisible behavioral layers** — subtle automatic modifications to
+/// the sound that happen without user interaction. These are listed below:
+///
+/// | Layer | Trigger | Effect |
+/// |-------|---------|--------|
+/// | **TIME_OF_DAY** | Hour of day at launch | Biases macros: night → slower/darker, day → brighter |
+/// | **SEASONAL_DRIFT** | Day of year | Shifts base frequency ±1.5% over the calendar year |
+/// | **WOUND_HEALING** | `running.flag` exists at start | Slow fade-in over first ~20s after a crash |
+/// | **STARTUP_RAMP** | First 2s of runtime | Volume ramps from 0 to full over 2 seconds |
+/// | **CIRCADIAN_SLEEP** | Hour 3–5am | Gentle volume reduction by ~8% during late-night hours |
+/// | **BREATHING_OSCILLATOR** | Always active | 4.5s sine gain oscillation ±0.034 (≈±0.3 dB) |
+/// | **METABOLISM** | Paused state | Continues stepping at 1.5% speed so attractor stays alive |
+/// | **VOLUME_CREEP** | Long sessions | Master volume drifts from 1.0 → 0.87 over ~1 hour |
+/// | **WARMUP** | Speed changes | Smoothly ramps to new speed over ~3s to avoid clicks |
+/// | **FLINCHING** | Sudden speed changes | Brief 80ms amplitude dip when speed jumps sharply |
+/// | **ATTRACTOR_DREAMS** | 30min idle | Slow-drifts to a distant config and back; resets on interaction |
+/// | **GRAVITATIONAL_MEMORY** | Session history | Nudges macro walk toward historically-visited regions |
+/// | **TYPING_RESONANCE** | Keyboard activity (Windows) | Tiny frequency wobble while the user types |
+/// | **INSTANCE_EMPATHY** | Multiple instances via UDP | Instances subtly synchronize volume over the local network |
+/// | **AGING** | Hours of runtime | High-frequency rolloff increases; attractor feels more "worn" |
+/// | **SCARRING** | Near-divergence events | Marks trajectories that nearly blew up; affects future bias |
+/// | **PAIR_BONDING** | Persistent preset affinity | Preferred preset gets slightly enhanced after repeated use |
+/// | **NESTING** | Session length | Session-persistent config tweaks accumulate over many sessions |
+/// | **COOLDOWN** | Shutdown signal | Audio fades to silence gracefully before process exits |
 fn sim_thread(
     shared: SharedState,
     viz: Arc<Mutex<Vec<(f32, f32, f32, f32, bool)>>>,
     tx: crossbeam_channel::Sender<[Option<AudioParams>; 3]>,
+    rx_notify: std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
 ) {
     let initial_config = shared.lock().config.clone();
     let mut system = build_system(&initial_config);
@@ -201,8 +266,7 @@ fn sim_thread(
     let mut last_arr_sys: String = initial_config.system.name.clone();
     let mut last_arr_mode: String = initial_config.sonification.mode.clone();
 
-    let control_rate_hz = 120.0f64;
-    let control_period = Duration::from_secs_f64(1.0 / control_rate_hz);
+    let control_period = Duration::from_secs_f64(1.0 / CONTROL_RATE_HZ);
     let mut next_tick = Instant::now();
 
     // ── Time-of-day awareness (invisible — no UI) ──────────────────────────────
@@ -296,7 +360,7 @@ fn sim_thread(
     let mut excursion_active = false;
     let mut excursion_ticks: u64 = 0;
     let mut excursion_return_chaos: f32 = 0.5;
-    let mut excursion_return_speed: f64 = 2.0;
+    let mut excursion_return_speed: f64 = 2.0; // saved to restore speed after excursion
     // Next excursion fires between 10–20 minutes (at 120 Hz)
     let mut walk_seed_ex: u64 = 0xDEADBEEF ^ std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as u64;
@@ -312,15 +376,13 @@ fn sim_thread(
     // ── Breathing oscillator ──────────────────────────────────────────────────
     // ~4.5s cycle, ±0.3 dB (linear ≈ ±0.034) — subliminal organic warmth
     let mut breathing_phase: f64 = 0.0;
-    const BREATHING_RATE: f64 = 1.0 / 4.5;
+    const BREATHING_RATE: f64 = 1.0 / BREATHING_PERIOD_SECS;
 
     // ── State + gravity save timer ────────────────────────────────────────────
     let mut state_save_timer: u64 = 0;
-    const STATE_SAVE_INTERVAL: u64 = 120 * 120; // every 2 min at 120 Hz
 
     // ── Lyapunov spectrum timer ───────────────────────────────────────────────
     let mut lyap_timer: u64 = 0;
-    const LYAP_INTERVAL: u64 = 600; // every ~5s at 120 Hz
     let mut lyap_cycles: u64 = 0;
 
     // ── Trajectory buffer for analysis (permutation entropy, RQA, etc.) ───────
@@ -328,7 +390,6 @@ fn sim_thread(
 
     // ── Session transcript timer ──────────────────────────────────────────────
     let mut session_log_timer: u64 = 0;
-    const SESSION_LOG_INTERVAL: u64 = 120 * 60; // every 60s at 120Hz
 
     // Macro random walk seed
     let mut walk_seed: u64 = 12345;
@@ -376,10 +437,8 @@ fn sim_thread(
     // 1.0 → 0.87 over 3600 seconds (≈ -1.2 dB). Reset when user touches volume.
     let mut volume_creep: f32 = 1.0;
     let mut volume_creep_last_vol: f32 = { shared.lock().config.audio.master_volume };
-    // Decay rate: reach 0.87 in 3600s * 120Hz = 432000 ticks
-    // 0.87^(1/432000) ≈ 1 - 3.24e-7 per tick
-    const VOLUME_CREEP_RATE: f32 = 3.24e-7;
-    const VOLUME_CREEP_MIN: f32 = 0.87; // floor
+    // Decay rate: reach VOLUME_CREEP_MIN in 3600s * 120Hz = 432000 ticks
+    // 0.87^(1/432000) ≈ 1 - 3.24e-7 per tick (see module-level constants)
 
     // ── Fingerprint: unique initial conditions on very first ever launch ───────
     // If no state file exists, seed a unique starting region from machine identity
@@ -415,7 +474,7 @@ fn sim_thread(
     let mut dream_total_ticks: u64 = 0;
     let mut dream_return_config: Option<crate::config::Config> = None;
     let mut dream_target_config: Option<crate::config::Config> = None;
-    let dream_idle_threshold: u64 = 30 * 60 * 120; // 30 min at 120Hz
+    let dream_idle_threshold: u64 = DREAM_IDLE_THRESHOLD_TICKS;
     let mut dream_idle_ticks: u64 = 0; // separate from excursion idle counter
 
     // ── Typing resonance: keyboard cadence subtly influences Evolve wander ────
@@ -565,6 +624,21 @@ fn sim_thread(
         }
         next_tick += control_period;
 
+        // ── Config hot-reload ─────────────────────────────────────────────────
+        // Drain all pending file-change events; on any event reload config.toml.
+        let mut got_config_event = false;
+        while let Ok(_event) = rx_notify.try_recv() {
+            got_config_event = true;
+        }
+        if got_config_event {
+            let new_cfg = crate::config::load_config(std::path::Path::new("config.toml"));
+            let mut st = shared.lock();
+            st.config = new_cfg;
+            st.system_changed = true;
+            st.clip_status = "Config reloaded".to_string();
+            log::info!("config.toml reloaded");
+        }
+
         let (paused, mut config, sys_changed, mode_changed, bpm_sync, bpm, auto_recording, auto_playing,
              poly_defs, sidechain_enabled, sidechain_level_shared, sidechain_target, sidechain_amount,
              coupled_enabled, coupled_src_name, coupled_strength, coupled_target_param, coupled_bidirectional) = {
@@ -595,7 +669,7 @@ fn sim_thread(
         // METABOLISM: resting drift when paused — keeps attractor alive like breathing
         if paused {
             // Step at 1.5% of normal speed, no audio sent
-            let metabolic_steps = ((config.system.speed * 0.015 / control_rate_hz) / config.system.dt)
+            let metabolic_steps = ((config.system.speed * 0.015 / CONTROL_RATE_HZ) / config.system.dt)
                 .round() as usize;
             for _ in 0..metabolic_steps.clamp(1, 100) {
                 system.step(config.system.dt);
@@ -733,7 +807,7 @@ fn sim_thread(
         };
 
         if lfo_enabled {
-            let new_phase = lfo_phase + effective_lfo_rate as f64 * (1.0 / control_rate_hz);
+            let new_phase = lfo_phase + effective_lfo_rate as f64 * (1.0 / CONTROL_RATE_HZ);
             shared.lock().lfo_phase = new_phase;
             let lfo_val = new_phase.sin() * lfo_depth as f64;
             match lfo_target.as_str() {
@@ -812,7 +886,7 @@ fn sim_thread(
         let arr_tick = {
             let mut st = shared.lock();
             if st.arr_playing {
-                let dt_secs = 1.0 / control_rate_hz as f32;
+                let dt_secs = 1.0 / CONTROL_RATE_HZ as f32;
                 st.arr_elapsed += dt_secs;
                 let elapsed = st.arr_elapsed;
                 let total = total_duration(&st.scenes);
@@ -915,7 +989,7 @@ fn sim_thread(
 
             // Macro random walk (Brownian motion)
             if macro_walk_enabled {
-                let dt = 1.0 / control_rate_hz as f32;
+                let dt = 1.0 / CONTROL_RATE_HZ as f32;
                 let r = |seed: &mut u64| -> f32 {
                     *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
                     (*seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
@@ -1014,7 +1088,8 @@ fn sim_thread(
                     let bloom_dur = 10 * 120u64;   // 10 seconds of bloom
                     let return_dur = 15 * 120u64;  // 15 seconds drifting back
                     if excursion_ticks >= bloom_dur + return_dur {
-                        // Bloom finished; let normal walk take over
+                        // Bloom finished; restore original speed and let normal walk take over
+                        config.system.speed = excursion_return_speed;
                         excursion_active = false;
                     } else if excursion_ticks > bloom_dur {
                         // Drift back toward original position
@@ -1068,7 +1143,7 @@ fn sim_thread(
         // Already computed above as silence_expanded.
 
         // ── Attractor aging: filter warmth increases over first hour ──────────────
-        aging_secs += 1.0 / control_rate_hz as f32;
+        aging_secs += 1.0 / CONTROL_RATE_HZ as f32;
         {
             let mut st = shared.lock();
             st.aging_secs = aging_secs;
@@ -1186,7 +1261,7 @@ fn sim_thread(
 
         // Step coupled system and compute normalized output
         let coupled_norm = if let Some(ref mut cs) = coupled_system {
-            let coupled_steps = ((config.system.speed / control_rate_hz) / config.system.dt)
+            let coupled_steps = ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt)
                 .round() as usize;
             for _ in 0..coupled_steps.clamp(1, 10_000) {
                 cs.step(config.system.dt);
@@ -1222,7 +1297,7 @@ fn sim_thread(
                 let reciprocal_delta = (main_norm - 0.5) * coupled_strength as f64 * 1.0;
                 // Apply to coupled system speed via a transient nudge (not persisted)
                 // We do this by stepping the coupled system with a modified dt
-                let nudge_steps = ((config.system.speed * (1.0 + reciprocal_delta) / control_rate_hz) / config.system.dt)
+                let nudge_steps = ((config.system.speed * (1.0 + reciprocal_delta) / CONTROL_RATE_HZ) / config.system.dt)
                     .round() as usize;
                 // We already stepped it above; just update the coupled_strength feedback display
                 let _ = nudge_steps;
@@ -1251,7 +1326,7 @@ fn sim_thread(
         }
 
         // Integrate enough steps to cover one control period at the configured speed
-        let steps = ((config.system.speed / control_rate_hz) / config.system.dt)
+        let steps = ((config.system.speed / CONTROL_RATE_HZ) / config.system.dt)
             .round() as usize;
         for _ in 0..steps.clamp(1, 10_000) {
             system.step(config.system.dt);
@@ -1365,9 +1440,9 @@ fn sim_thread(
             params.mode = SonifMode::Waveguide;
         }
 
-        // Spectral freeze: copy frozen state into params
+        // Spectral freeze: copy frozen state into params and feed live partials back to UI
         {
-            let st = shared.lock();
+            let mut st = shared.lock();
             params.spectral_freeze_active = st.spectral_freeze_active;
             if st.spectral_freeze_active {
                 for i in 0..16 {
@@ -1375,6 +1450,8 @@ fn sim_thread(
                     params.spectral_freeze_amps[i]  = st.spectral_freeze_amps.get(i).copied().unwrap_or(0.0);
                 }
             }
+            // Update live partials in AppState so the UI can capture real spectral content
+            st.spectral_live_partials = params.partials[..32].try_into().unwrap_or([0.0; 32]);
         }
 
         // MIDI input: apply mappings to config params
@@ -1385,7 +1462,7 @@ fn sim_thread(
                 let vel_norm  = st.midi_in_last_vel  as f32 / 127.0;
                 let cc_norm   = st.midi_in_last_cc   as f32 / 127.0;
                 drop(st);
-                let apply = |target: &str, val: f64| {
+                let _apply = |target: &str, val: f64| {
                     // We clone config here so we need to apply after drop
                     (target.to_string(), val)
                 };
@@ -1484,7 +1561,7 @@ fn sim_thread(
                 let (old_phase, new_phase, arp_pos) = {
                     let mut st = shared.lock();
                     let old = st.arp_phase;
-                    st.arp_phase += step_rate_hz / control_rate_hz;
+                    st.arp_phase += step_rate_hz / CONTROL_RATE_HZ;
                     if st.arp_phase >= 1.0 {
                         st.arp_phase -= 1.0;
                         let new_pos = (st.arp_position + 1) % arp_steps;
@@ -1562,6 +1639,65 @@ fn sim_thread(
             }
         }
 
+        // Apply modulation matrix: route attractor state variables to synthesis parameters.
+        // Modulation is applied to the LOCAL params only — shared config/preset state is untouched.
+        {
+            let mod_routes = { shared.lock().mod_matrix.clone() };
+            let state_now = system.state();
+            // Normalize Lorenz-typical range [-30, 30] to [-1, 1]
+            let x_norm = state_now.first().copied().unwrap_or(0.0) as f32 / 30.0;
+            let y_norm = if state_now.len() >= 2 { state_now[1] as f32 / 30.0 } else { 0.0 };
+            let z_norm = if state_now.len() >= 3 { (state_now[2] as f32 - 25.0) / 25.0 } else { 0.0 };
+            // speed normalized: map [0, 10] to [-1, 1] centred at 5
+            let speed_norm = ((system.speed() as f32 / 10.0) - 0.5) * 2.0;
+            let mut base_freq_mult: f32 = 1.0;
+            for route in &mod_routes {
+                if !route.enabled { continue; }
+                let source_norm = match route.source.as_str() {
+                    "x"     => x_norm,
+                    "y"     => y_norm,
+                    "z"     => z_norm,
+                    "speed" => speed_norm,
+                    _       => 0.0,
+                };
+                let modulation = (source_norm * route.depth).clamp(-1.0, 1.0);
+                match route.target.as_str() {
+                    "reverb_wet" => {
+                        params.reverb_wet = (params.reverb_wet + modulation * 0.5).clamp(0.0, 1.0);
+                    }
+                    "delay_ms" => {
+                        params.delay_ms = (params.delay_ms + modulation * 200.0).clamp(1.0, 2000.0);
+                    }
+                    "speed" => {
+                        // Modulate delay time as rhythmic proxy for speed (no config mutation)
+                        let effective_speed = (config.system.speed as f32 + modulation * 2.0).clamp(0.01, 10.0);
+                        params.delay_ms = (60000.0 / effective_speed.max(0.01)).clamp(1.0, 2000.0);
+                    }
+                    "chorus_mix" => {
+                        params.chorus_mix = (params.chorus_mix + modulation * 0.3).clamp(0.0, 1.0);
+                    }
+                    "master_volume" => {
+                        params.master_volume = (params.master_volume + modulation * 0.2).clamp(0.0, 1.0);
+                    }
+                    "base_freq_mult" => {
+                        base_freq_mult *= 1.0 + modulation * 0.5;
+                    }
+                    "chaos" => {
+                        // Interpretive: chaos modulation sweeps filter cutoff
+                        params.filter_cutoff = (params.filter_cutoff * (1.0 + modulation * 0.4))
+                            .clamp(20.0, 20000.0);
+                    }
+                    _ => {}
+                }
+            }
+            // Apply accumulated base_freq multiplier to all voice frequencies
+            if (base_freq_mult - 1.0).abs() > 1e-4 {
+                for f in &mut params.freqs { *f *= base_freq_mult; }
+                params.grain_base_freq *= base_freq_mult;
+                params.partials_base_freq *= base_freq_mult;
+            }
+        }
+
         // Reinit extra layers if their preset changed
         for i in 0..2 {
             if i < poly_defs.len() {
@@ -1589,7 +1725,7 @@ fn sim_thread(
         let mut layer2_params: Option<AudioParams> = None;
         for (li, el_opt) in extra_layers.iter_mut().enumerate() {
             if let Some(el) = el_opt {
-                let steps = ((el.config.system.speed / control_rate_hz) / el.config.system.dt)
+                let steps = ((el.config.system.speed / CONTROL_RATE_HZ) / el.config.system.dt)
                     .round() as usize;
                 for _ in 0..steps.clamp(1, 10_000) { el.system.step(el.config.system.dt); }
                 let mut lp = el.mapper.map(el.system.state(), el.system.speed(), &el.config.sonification);
@@ -1656,7 +1792,7 @@ fn sim_thread(
             params.filter_cutoff    = 1200.0 + (1.0 - macro_warmth) * 6800.0;
             params.waveshaper_drive = 1.0 + macro_warmth * 4.0;
             // Volume slider always wins — arrangement scene volumes are ignored in simple mode
-            params.master_volume    = { shared.lock().config.audio.master_volume };
+            params.master_volume    = shared.lock().config.audio.master_volume;
         }
 
         // ── Attractor aging: filter opens fractionally over first hour ────────────
@@ -1729,8 +1865,8 @@ fn sim_thread(
         // ── Breathing: ~0.3 dB master volume oscillation at human respiratory rate ──
         // 4.5-second cycle, ±0.034 linear gain — subliminal organic warmth.
         // Every acoustic instrument has this. Synthesizers don't. This closes the gap.
-        breathing_phase = (breathing_phase + BREATHING_RATE / control_rate_hz) % 1.0;
-        let breathing_gain = (breathing_phase * std::f64::consts::TAU).sin() as f32 * 0.034 + 1.0;
+        breathing_phase = (breathing_phase + BREATHING_RATE / CONTROL_RATE_HZ) % 1.0;
+        let breathing_gain = (breathing_phase * std::f64::consts::TAU).sin() as f32 * BREATHING_DEPTH + 1.0;
         params.master_volume = (params.master_volume * breathing_gain).clamp(0.0, 1.2);
 
         // ── Seasonal drift: barely perceptible frequency shift over the calendar year ──
@@ -1762,7 +1898,7 @@ fn sim_thread(
 
         // SHUTDOWN FADING: ramp master_volume and speed toward 0 over 3 seconds
         {
-            let (shutdown_fading, sd_ramp_t) = {
+            let (shutdown_fading, _sd_ramp_t) = {
                 let st = shared.lock();
                 (st.shutdown_fading, st.startup_ramp_t) // reuse startup_ramp_t for shutdown progress
             };
@@ -1780,7 +1916,7 @@ fn sim_thread(
 
         // ── Lyapunov spectrum computation (every ~5s) ─────────────────────────────
         lyap_timer += 1;
-        if lyap_timer >= LYAP_INTERVAL {
+        if lyap_timer >= LYAP_INTERVAL_TICKS {
             lyap_timer = 0;
             lyap_cycles += 1;
             let dim = system.dimension().min(3);
@@ -1824,7 +1960,7 @@ fn sim_thread(
 
         // ── Session transcript (every 60s) ────────────────────────────────────────
         session_log_timer += 1;
-        if session_log_timer >= SESSION_LOG_INTERVAL {
+        if session_log_timer >= SESSION_LOG_INTERVAL_TICKS {
             session_log_timer = 0;
             let entry = {
                 let st = shared.lock();
@@ -1846,7 +1982,7 @@ fn sim_thread(
 
         // ── State + gravity map persistence (every ~2 minutes) ────────────────────
         state_save_timer += 1;
-        if state_save_timer >= STATE_SAVE_INTERVAL {
+        if state_save_timer >= STATE_SAVE_INTERVAL_TICKS {
             state_save_timer = 0;
             // Save attractor state
             let state_vec = system.state().to_vec();

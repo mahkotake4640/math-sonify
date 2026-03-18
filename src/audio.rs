@@ -1,3 +1,7 @@
+// Some struct fields are used via dynamic synthesis paths that the compiler
+// can't fully trace through; suppress false-positive dead-code warnings here.
+#![allow(dead_code)]
+
 /// Audio thread: multi-layer polyphonic synthesis engine.
 /// Up to 3 independent attractor layers mix into one shared effects chain.
 
@@ -794,7 +798,7 @@ pub struct AudioEngine {
 impl AudioEngine {
     pub fn start(
         params_rx: Receiver<[Option<AudioParams>; 3]>,
-        sample_rate: u32,
+        _sample_rate: u32,
         reverb_wet: f32,
         delay_ms: f32,
         delay_feedback: f32,
@@ -1018,6 +1022,107 @@ pub fn save_portrait_png(trail: &[(f32, f32, f32, f32, bool)]) -> anyhow::Result
         .unwrap_or_default().as_secs();
     let filename = dir.join(format!("portrait_{}.png", ts));
     write_png(&filename, &pixels, size, size)?;
+    Ok(filename.to_string_lossy().into_owned())
+}
+
+/// Render the phase portrait trail to an SVG file. Returns filename.
+pub fn save_portrait_svg(points: &[(f32, f32, f32, f32, bool)], projection: usize, path: &str) -> anyhow::Result<()> {
+    if points.len() < 2 {
+        anyhow::bail!("Trail too short");
+    }
+
+    const VIEW: f32 = 800.0;
+    const MARGIN: f32 = 40.0;
+    const INNER: f32 = VIEW - 2.0 * MARGIN;
+
+    // Select axes based on projection: 0=XY, 1=XZ, 2=YZ
+    let (ax0, ax1): (fn(&(f32,f32,f32,f32,bool)) -> f32, fn(&(f32,f32,f32,f32,bool)) -> f32) = match projection {
+        1 => (|p: &(f32,f32,f32,f32,bool)| p.0, |p: &(f32,f32,f32,f32,bool)| p.2),
+        2 => (|p: &(f32,f32,f32,f32,bool)| p.1, |p: &(f32,f32,f32,f32,bool)| p.2),
+        _ => (|p: &(f32,f32,f32,f32,bool)| p.0, |p: &(f32,f32,f32,f32,bool)| p.1),
+    };
+
+    let vs: Vec<(f32, f32)> = points.iter().map(|p| (ax0(p), ax1(p))).collect();
+    let xmin = vs.iter().map(|v| v.0).fold(f32::INFINITY, f32::min);
+    let xmax = vs.iter().map(|v| v.0).fold(f32::NEG_INFINITY, f32::max);
+    let ymin = vs.iter().map(|v| v.1).fold(f32::INFINITY, f32::min);
+    let ymax = vs.iter().map(|v| v.1).fold(f32::NEG_INFINITY, f32::max);
+    let xr = (xmax - xmin).max(0.001);
+    let yr = (ymax - ymin).max(0.001);
+
+    let to_svg = |x: f32, y: f32| -> (f32, f32) {
+        let sx = MARGIN + (x - xmin) / xr * INNER;
+        let sy = MARGIN + (1.0 - (y - ymin) / yr) * INNER;
+        (sx, sy)
+    };
+
+    let n = points.len();
+    let view = VIEW as u32;
+    let mut svg = String::with_capacity(n * 24 + 512);
+    svg.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {v} {v}\" width=\"{v}\" height=\"{v}\">\n\
+         <rect width=\"{v}\" height=\"{v}\" fill=\"#0a0a0f\"/>\n",
+        v = view
+    ));
+
+    // Split into segments and emit one <polyline> per segment, coloring from cyan to dark blue
+    let mut seg_start = 0usize;
+    let mut i = 0usize;
+    while i <= n {
+        let end_of_seg = i == n || (i > seg_start && points[i].4);
+        if end_of_seg && i > seg_start {
+            let seg = &points[seg_start..i];
+            // Color based on midpoint position in overall trail: t=0 → dark blue, t=1 → cyan
+            let t_mid = (seg_start + seg.len() / 2) as f32 / n as f32;
+            let r = (t_mid * 0.0) as u8;
+            let g = (t_mid * 204.0) as u8;
+            let b = ((1.0 - t_mid * 0.4) * 255.0) as u8;
+            let color = format!("#{:02x}{:02x}{:02x}", r, g, b);
+
+            let pts_str: String = seg.iter().map(|p| {
+                let (sx, sy) = to_svg(ax0(p), ax1(p));
+                format!("{:.2},{:.2} ", sx, sy)
+            }).collect();
+
+            svg.push_str(&format!(
+                r#"<polyline points="{}" stroke="{}" stroke-width="0.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+"#,
+                pts_str.trim_end(), color
+            ));
+            seg_start = i;
+        }
+        i += 1;
+    }
+
+    svg.push_str("</svg>\n");
+    std::fs::write(path, svg.as_bytes())?;
+    Ok(())
+}
+
+/// Save the clip buffer to a timestamped 32-bit float WAV file (lossless). Returns the filename written.
+pub fn save_clip_wav_32bit(clip_buffer: &ClipBuffer, sample_rate: u32) -> anyhow::Result<String> {
+    let samples: Vec<f32> = {
+        let cb = clip_buffer.lock();
+        cb.iter().copied().collect()
+    };
+    if samples.is_empty() {
+        anyhow::bail!("Clip buffer is empty");
+    }
+    let dir = std::path::PathBuf::from("clips");
+    if !dir.exists() { std::fs::create_dir_all(&dir)?; }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_secs();
+    let filename = dir.join(format!("clip_{}_lossless.wav", ts));
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(&filename, spec)?;
+    for s in &samples { writer.write_sample(*s)?; }
+    writer.finalize()?;
     Ok(filename.to_string_lossy().into_owned())
 }
 

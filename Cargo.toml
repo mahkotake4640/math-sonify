@@ -44,7 +44,7 @@ nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug", package = "ni
 
 [profile.release]
 opt-level = 3
-lto = false
+lto = "thin"
 
 [profile.dev]
 opt-level = 1

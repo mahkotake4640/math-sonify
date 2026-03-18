@@ -274,14 +274,57 @@ impl DynamicalSystem for CustomOde {
     }
 }
 
-/// Try to validate expressions by evaluating at a test point.
-/// Returns Ok(()) if all three produce finite results, Err with message otherwise.
+/// Scan an expression string for identifier tokens that are not known variables or functions.
+/// Returns a warning string if suspicious identifiers are found (likely typos).
+fn warn_unknown_idents(src: &str) -> Option<String> {
+    const KNOWN: &[&str] = &[
+        "x", "y", "z", "t", "pi", "PI", "e", "E",
+        "sin", "cos", "exp", "abs", "sqrt", "ln", "log", "tan",
+    ];
+    let tokens = tokenize(src);
+    let mut unknowns: Vec<String> = Vec::new();
+    for (i, tok) in tokens.iter().enumerate() {
+        if let Token::Ident(name) = tok {
+            if !KNOWN.contains(&name.as_str()) {
+                // Only flag if NOT followed by '(' (which would be an unknown function)
+                let next = tokens.get(i + 1);
+                let is_fn_call = matches!(next, Some(Token::LParen));
+                if is_fn_call || !unknowns.contains(name) {
+                    unknowns.push(name.clone());
+                }
+            }
+        }
+    }
+    if unknowns.is_empty() { None } else { Some(format!("unknown identifier(s): {}", unknowns.join(", "))) }
+}
+
+/// Try to validate expressions by evaluating at multiple test points.
+/// Returns Ok(()) if all three produce finite results at all test points.
+/// Returns Err with a descriptive message if an issue is detected, including
+/// warnings about unknown identifiers (likely typos).
 pub fn validate_exprs(ex: &str, ey: &str, ez: &str) -> Result<(), String> {
-    let dx = eval_expr(ex, 1.0, 1.0, 1.0, 0.0);
-    let dy = eval_expr(ey, 1.0, 1.0, 1.0, 0.0);
-    let dz = eval_expr(ez, 1.0, 1.0, 1.0, 0.0);
-    if !dx.is_finite() { return Err(format!("dx/dt expression error at test point")); }
-    if !dy.is_finite() { return Err(format!("dy/dt expression error at test point")); }
-    if !dz.is_finite() { return Err(format!("dz/dt expression error at test point")); }
+    // Test at several points to catch more divide-by-zero and domain errors
+    let test_points: &[(f64, f64, f64, f64)] = &[
+        (1.0,  1.0,  1.0,  0.0),
+        (0.0,  0.0,  0.0,  0.0),
+        (-1.0, -1.0, -1.0, 0.0),
+        (5.0,  -3.0,  2.0, 1.0),
+    ];
+    for &(x, y, z, t) in test_points {
+        let dx = eval_expr(ex, x, y, z, t);
+        let dy = eval_expr(ey, x, y, z, t);
+        let dz = eval_expr(ez, x, y, z, t);
+        if !dx.is_finite() { return Err(format!("dx/dt error at ({x},{y},{z}): result is {dx}")); }
+        if !dy.is_finite() { return Err(format!("dy/dt error at ({x},{y},{z}): result is {dy}")); }
+        if !dz.is_finite() { return Err(format!("dz/dt error at ({x},{y},{z}): result is {dz}")); }
+    }
+    // Warn about unknown identifiers (typo detection)
+    let mut warnings = Vec::new();
+    if let Some(w) = warn_unknown_idents(ex) { warnings.push(format!("dx/dt: {w}")); }
+    if let Some(w) = warn_unknown_idents(ey) { warnings.push(format!("dy/dt: {w}")); }
+    if let Some(w) = warn_unknown_idents(ez) { warnings.push(format!("dz/dt: {w}")); }
+    if !warnings.is_empty() {
+        return Err(format!("Warning — {}", warnings.join("; ")));
+    }
     Ok(())
 }

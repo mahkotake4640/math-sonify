@@ -1,3 +1,7 @@
+// Synth primitives are used via dynamic dispatch from the audio engine;
+// the compiler can't always see through the call graph, hence these suppressions.
+#![allow(dead_code)]
+
 pub mod oscillator;
 pub mod filter;
 pub mod reverb;

@@ -1,3 +1,6 @@
+// Config types are used in the binary but appear unused in the lib (plugin) build context.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use crate::sonification::{SonifMode, Scale};
 
@@ -320,6 +323,111 @@ impl Default for Lorenz96Config {
     fn default() -> Self { Self { f: 8.0 } }
 }
 
+impl Config {
+    /// Clamp all parameters to physically sensible bounds.
+    /// Call this after deserializing from user-supplied config files.
+    pub fn validate(&mut self) {
+        // System
+        self.system.dt = self.system.dt.clamp(0.0001, 0.1);
+        self.system.speed = self.system.speed.clamp(0.0, 100.0);
+
+        // Lorenz
+        self.lorenz.sigma = self.lorenz.sigma.clamp(0.1, 100.0);
+        self.lorenz.rho   = self.lorenz.rho.clamp(0.1, 200.0);
+        self.lorenz.beta  = self.lorenz.beta.clamp(0.01, 20.0);
+
+        // Rossler
+        self.rossler.a = self.rossler.a.clamp(0.0, 20.0);
+        self.rossler.b = self.rossler.b.clamp(0.0, 20.0);
+        self.rossler.c = self.rossler.c.clamp(0.0, 20.0);
+
+        // Audio
+        self.audio.reverb_wet     = self.audio.reverb_wet.clamp(0.0, 1.0);
+        self.audio.delay_ms       = self.audio.delay_ms.clamp(1.0, 5000.0);
+        self.audio.delay_feedback = self.audio.delay_feedback.clamp(0.0, 0.99);
+        self.audio.master_volume  = self.audio.master_volume.clamp(0.0, 1.0);
+        if self.audio.sample_rate != 44100 && self.audio.sample_rate != 48000 {
+            self.audio.sample_rate = 44100;
+        }
+        self.audio.chorus_mix         = self.audio.chorus_mix.clamp(0.0, 1.0);
+        self.audio.chorus_rate        = self.audio.chorus_rate.clamp(0.01, 20.0);
+        self.audio.chorus_depth       = self.audio.chorus_depth.clamp(0.0, 50.0);
+        self.audio.waveshaper_drive   = self.audio.waveshaper_drive.clamp(0.0, 100.0);
+        self.audio.waveshaper_mix     = self.audio.waveshaper_mix.clamp(0.0, 1.0);
+        self.audio.rate_crush         = self.audio.rate_crush.clamp(0.0, 1.0);
+        self.audio.bit_depth          = self.audio.bit_depth.clamp(1.0, 32.0);
+
+        // Sonification
+        self.sonification.base_frequency  = self.sonification.base_frequency.clamp(20.0, 2000.0);
+        self.sonification.octave_range    = self.sonification.octave_range.clamp(0.1, 8.0);
+        self.sonification.portamento_ms   = self.sonification.portamento_ms.clamp(1.0, 5000.0);
+        for v in &mut self.sonification.voice_levels {
+            *v = v.clamp(0.0, 1.0);
+        }
+
+        // Double pendulum – lengths and masses must be positive
+        self.double_pendulum.m1 = self.double_pendulum.m1.clamp(0.01, 100.0);
+        self.double_pendulum.m2 = self.double_pendulum.m2.clamp(0.01, 100.0);
+        self.double_pendulum.l1 = self.double_pendulum.l1.clamp(0.01, 100.0);
+        self.double_pendulum.l2 = self.double_pendulum.l2.clamp(0.01, 100.0);
+
+        // Geodesic torus – radii must be positive
+        self.geodesic_torus.big_r = self.geodesic_torus.big_r.clamp(0.1, 100.0);
+        self.geodesic_torus.r     = self.geodesic_torus.r.clamp(0.01, 50.0);
+
+        // Kuramoto
+        self.kuramoto.n_oscillators = self.kuramoto.n_oscillators.max(2).min(256);
+        self.kuramoto.coupling      = self.kuramoto.coupling.clamp(0.0, 50.0);
+
+        // Duffing
+        self.duffing.delta = self.duffing.delta.clamp(0.0, 10.0);
+        self.duffing.gamma = self.duffing.gamma.clamp(0.0, 10.0);
+        self.duffing.omega = self.duffing.omega.clamp(0.001, 100.0);
+
+        // Van der Pol
+        self.van_der_pol.mu = self.van_der_pol.mu.clamp(0.0, 100.0);
+
+        // Halvorsen
+        self.halvorsen.a = self.halvorsen.a.clamp(0.0, 10.0);
+
+        // Aizawa
+        self.aizawa.a = self.aizawa.a.clamp(0.0, 5.0);
+        self.aizawa.b = self.aizawa.b.clamp(0.0, 5.0);
+        self.aizawa.c = self.aizawa.c.clamp(0.0, 5.0);
+        self.aizawa.d = self.aizawa.d.clamp(0.0, 10.0);
+        self.aizawa.e = self.aizawa.e.clamp(0.0, 5.0);
+        self.aizawa.f = self.aizawa.f.clamp(0.0, 5.0);
+
+        // Chua
+        self.chua.alpha = self.chua.alpha.clamp(0.0, 100.0);
+        self.chua.beta  = self.chua.beta.clamp(0.0, 100.0);
+
+        // Hindmarsh-Rose
+        self.hindmarsh_rose.current_i = self.hindmarsh_rose.current_i.clamp(-5.0, 10.0);
+        self.hindmarsh_rose.r         = self.hindmarsh_rose.r.clamp(1e-6, 1.0);
+
+        // CML
+        self.coupled_map_lattice.r   = self.coupled_map_lattice.r.clamp(0.0, 4.0);
+        self.coupled_map_lattice.eps = self.coupled_map_lattice.eps.clamp(0.0, 1.0);
+
+        // Mackey-Glass
+        self.mackey_glass.beta  = self.mackey_glass.beta.clamp(0.0, 10.0);
+        self.mackey_glass.gamma = self.mackey_glass.gamma.clamp(0.0, 10.0);
+        self.mackey_glass.tau   = self.mackey_glass.tau.clamp(1.0, 300.0);
+        self.mackey_glass.n     = self.mackey_glass.n.clamp(1.0, 20.0);
+
+        // Nose-Hoover
+        self.nose_hoover.a = self.nose_hoover.a.clamp(0.1, 20.0);
+
+        // Henon map
+        self.henon_map.a = self.henon_map.a.clamp(0.0, 2.0);
+        self.henon_map.b = self.henon_map.b.clamp(-1.0, 1.0);
+
+        // Lorenz96
+        self.lorenz96.f = self.lorenz96.f.clamp(0.0, 50.0);
+    }
+}
+
 // --- Conversions from string config to enums ---
 
 impl From<&str> for SonifMode {
@@ -347,7 +455,7 @@ impl From<String> for Scale {
 }
 
 pub fn load_config(path: &std::path::Path) -> Config {
-    match std::fs::read_to_string(path) {
+    let mut config = match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
             log::warn!("Config parse error: {e}. Using defaults.");
             Config::default()
@@ -356,5 +464,7 @@ pub fn load_config(path: &std::path::Path) -> Config {
             log::info!("No config.toml found, using defaults.");
             Config::default()
         }
-    }
+    };
+    config.validate();
+    config
 }
