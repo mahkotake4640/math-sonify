@@ -1,5 +1,10 @@
 use super::{DynamicalSystem, rk4};
 
+/// Chua's circuit — canonical example of a chaotic electronic circuit.
+///
+/// Produces a characteristic double-scroll attractor via a piecewise-linear
+/// nonlinear resistor (h(x)).  Parameters: α = 15.6, β = 28, m₀ = -1.143,
+/// m₁ = -0.714 (default).
 pub struct Chua {
     state: Vec<f64>,
     pub alpha: f64,
@@ -9,6 +14,7 @@ pub struct Chua {
 }
 
 impl Chua {
+    /// Create a Chua circuit with default parameters (α=15.6, β=28.0).
     pub fn new() -> Self {
         Self {
             state: vec![0.7, 0.0, 0.0],

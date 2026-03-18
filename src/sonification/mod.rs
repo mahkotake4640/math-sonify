@@ -1,3 +1,19 @@
+//! Sonification layer: maps dynamical-system state vectors to [`AudioParams`].
+//!
+//! Each mode implements the [`Sonification`] trait.  The simulation thread calls
+//! [`Sonification::map`] at 120 Hz and sends the resulting [`AudioParams`] to the
+//! audio thread via a bounded crossbeam channel.  The audio thread switches on
+//! [`AudioParams::mode`] to select the appropriate synthesis path.
+//!
+//! | Mode | Description |
+//! |------|-------------|
+//! | [`DirectMapping`] | State variables quantized to a musical scale |
+//! | [`OrbitalResonance`] | Angular velocity and Lyapunov exponent drive pitch and inharmonicity |
+//! | [`GranularMapping`] | Trajectory speed modulates grain density and pitch |
+//! | [`SpectralMapping`] | State vector controls a 32-partial additive envelope |
+//! | [`FmMapping`] | Attractor drives FM carrier/modulator ratio and index |
+//! | [`VocalMapping`] | State interpolates between vowel formant positions |
+
 // Sonification types are constructed via build_mapper() using dynamic dispatch;
 // the compiler can't see through the string-based dispatch, hence these suppressions.
 #![allow(dead_code)]
@@ -164,6 +180,10 @@ impl Default for AudioParams {
     }
 }
 
+/// Return the semitone intervals above voice[0] for a given chord type.
+///
+/// Returns `[upper1_semitones, upper2_semitones, 0.0]` (trailing zero means
+/// the third chord voice is omitted for two-note chord types).
 pub fn chord_intervals_for(mode: &str) -> [f32; 3] {
     match mode {
         "major"  => [4.0, 7.0, 0.0],
@@ -176,6 +196,22 @@ pub fn chord_intervals_for(mode: &str) -> [f32; 3] {
     }
 }
 
+/// Selects which sonification algorithm maps the dynamical system state to audio.
+///
+/// - `Direct`: each of the first four state variables is mapped linearly to an
+///   oscillator frequency and amplitude.
+/// - `Orbital`: state variables are interpreted as orbital elements; voices track
+///   angular velocity and radial distance.
+/// - `Granular`: trajectory speed and position control grain spawn rate and pitch;
+///   the grain cloud thickens as chaos increases.
+/// - `Spectral`: up to 32 partial amplitudes are filled from the Fourier content
+///   of the trajectory, producing continuously evolving additive spectra.
+/// - `FM`: two-operator frequency modulation where the modulation index and
+///   carrier-to-modulator ratio are driven by the attractor state.
+/// - `Vocal`: state space coordinates are mapped to vowel formant positions
+///   (F1/F2 pairs), producing evolving vocal-texture synthesis.
+/// - `Waveguide`: a Karplus-Strong waveguide string whose tension and damping
+///   are modulated by the attractor trajectory in real time.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum SonifMode { #[default] Direct, Orbital, Granular, Spectral, FM, Vocal, Waveguide }
 
@@ -249,7 +285,21 @@ pub fn quantize_to_scale(t: f32, base_hz: f32, octave_range: f32, scale: Scale) 
     base_hz * 2.0f32.powf(semitones / 12.0)
 }
 
+/// Trait implemented by every sonification algorithm.
+///
+/// Each call to `map` converts the current dynamical-system state vector into
+/// an `AudioParams` value.  The audio thread calls the sonification mapper at
+/// the control rate (120 Hz by default) and forwards the result to the DSP
+/// synthesis engine.
+///
+/// Implementors must be `Send` because the mapper runs on a dedicated
+/// simulation thread separate from both the UI thread and the audio thread.
 pub trait Sonification: Send {
-    /// Map the system state to audio parameters.
+    /// Convert the system state to audio parameters.
+    ///
+    /// # Arguments
+    /// * `state`  - Current dynamical system state vector (length = `dimension()`).
+    /// * `speed`  - Euclidean magnitude of dx/dt, used to modulate grain density.
+    /// * `config` - Active sonification configuration (scale, base frequency, etc.).
     fn map(&mut self, state: &[f64], speed: f64, config: &SonificationConfig) -> AudioParams;
 }

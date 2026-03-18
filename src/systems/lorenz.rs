@@ -1,6 +1,16 @@
 use super::{DynamicalSystem, rk4};
 
-/// Lorenz attractor: dx/dt = σ(y-x), dy/dt = x(ρ-z)-y, dz/dt = xy-βz
+/// Lorenz attractor (Lorenz 1963) -- the classic strange attractor.
+///
+/// Equations of motion:
+///
+///   dx/dt = sigma * (y - x)
+///   dy/dt = x * (rho - z) - y
+///   dz/dt = x * y - beta * z
+///
+/// With the canonical parameters sigma=10, rho=28, beta=8/3 the trajectory
+/// is confined to a bounded strange attractor (|x|, |y| < 30, 0 < z < 60).
+/// Integration uses fourth-order Runge-Kutta (RK4) at the configured dt.
 pub struct Lorenz {
     state: Vec<f64>,
     pub sigma: f64,
@@ -10,6 +20,15 @@ pub struct Lorenz {
 }
 
 impl Lorenz {
+    /// Creates a new Lorenz attractor with the given parameters and initial state `(1, 0, 0)`.
+    ///
+    /// # Parameters
+    /// - `sigma`: Prandtl number; controls the rate of rotation around the z-axis.
+    /// - `rho`: Rayleigh number; primary bifurcation parameter — chaos onset near 24.74.
+    /// - `beta`: Geometric factor; typically set to `8/3 ≈ 2.6667`.
+    ///
+    /// # Returns
+    /// A `Lorenz` instance ready for integration.
     pub fn new(sigma: f64, rho: f64, beta: f64) -> Self {
         Self {
             state: vec![1.0, 0.0, 0.0],
@@ -42,6 +61,10 @@ impl DynamicalSystem for Lorenz {
         }
     }
 
+    /// Advances the attractor state by one RK4 integration step.
+    ///
+    /// # Parameters
+    /// - `dt`: Time step size in simulation units.
     fn step(&mut self, dt: f64) {
         let (sigma, rho, beta) = (self.sigma, self.rho, self.beta);
         let prev = self.state.clone();
@@ -50,5 +73,63 @@ impl DynamicalSystem for Lorenz {
         let ds: f64 = self.state.iter().zip(prev.iter())
             .map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt();
         self.speed = ds / dt;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::systems::DynamicalSystem;
+
+    #[test]
+    fn test_lorenz_step_changes_state() {
+        let mut sys = Lorenz::new(10.0, 28.0, 2.6667);
+        let before: Vec<f64> = sys.state().to_vec();
+        sys.step(0.001);
+        let after = sys.state();
+        // At least one component must change after a non-zero step
+        assert!(
+            before.iter().zip(after.iter()).any(|(a, b)| (a - b).abs() > 1e-15),
+            "State did not change after step: {:?} -> {:?}", before, after
+        );
+    }
+
+    #[test]
+    fn test_lorenz_deterministic() {
+        let mut sys1 = Lorenz::new(10.0, 28.0, 2.6667);
+        let mut sys2 = Lorenz::new(10.0, 28.0, 2.6667);
+        for _ in 0..500 {
+            sys1.step(0.001);
+            sys2.step(0.001);
+        }
+        let s1 = sys1.state();
+        let s2 = sys2.state();
+        assert_eq!(s1.len(), s2.len());
+        for (a, b) in s1.iter().zip(s2.iter()) {
+            assert!((a - b).abs() < 1e-15, "Non-deterministic output: {} vs {}", a, b);
+        }
+    }
+
+    #[test]
+    fn test_lorenz_dt_zero_no_change() {
+        let mut sys = Lorenz::new(10.0, 28.0, 2.6667);
+        let before: Vec<f64> = sys.state().to_vec();
+        sys.step(0.0);
+        let after = sys.state();
+        for (a, b) in before.iter().zip(after.iter()) {
+            assert!((a - b).abs() < 1e-15, "State changed with dt=0: {} -> {}", a, b);
+        }
+    }
+
+    #[test]
+    fn test_lorenz_initial_state() {
+        let sys = Lorenz::new(10.0, 28.0, 2.6667);
+        let s = sys.state();
+        assert_eq!(s.len(), 3);
+        assert!((s[0] - 1.0).abs() < 1e-15, "Expected x=1.0, got {}", s[0]);
+        assert!((s[1] - 0.0).abs() < 1e-15, "Expected y=0.0, got {}", s[1]);
+        assert!((s[2] - 0.0).abs() < 1e-15, "Expected z=0.0, got {}", s[2]);
+        assert_eq!(sys.dimension(), 3);
+        assert_eq!(sys.name(), "Lorenz");
     }
 }

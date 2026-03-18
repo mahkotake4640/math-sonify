@@ -1,3 +1,20 @@
+//! DSP building blocks used by the audio engine.
+//!
+//! Each module is a self-contained unit processor that accepts `f32` audio
+//! samples and exposes a `process` (or `next_sample`) method.  All processors
+//! are real-time safe: no heap allocation after construction, no blocking I/O,
+//! no `unwrap` / `panic!` on the hot path.
+//!
+//! # Signal chain (per layer)
+//!
+//! ```text
+//! Oscillator(s) --> ADSR --> Waveshaper --> Bitcrusher
+//!                                                    \
+//!                                                     --> Master bus:
+//!                                                     BiquadFilter (LP) --> DelayLine
+//!                                                     --> Chorus --> Freeverb --> Limiter
+//! ```
+
 // Synth primitives are used via dynamic dispatch from the audio engine;
 // the compiler can't always see through the call graph, hence these suppressions.
 #![allow(dead_code)]

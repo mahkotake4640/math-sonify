@@ -1,5 +1,8 @@
 use super::{DynamicalSystem, rk4};
 
+/// Aizawa toroidal attractor — exhibits a slow polar wobble around a torus-like surface.
+///
+/// Parameters: a, b, c, d, e, f (defaults: 0.95, 0.7, 0.6, 3.5, 0.25, 0.1).
 pub struct Aizawa {
     state: Vec<f64>,
     pub a: f64,
@@ -11,6 +14,7 @@ pub struct Aizawa {
 }
 
 impl Aizawa {
+    /// Create an Aizawa attractor with default parameters.
     pub fn new() -> Self {
         Self {
             state: vec![0.1, 0.0, 0.0],

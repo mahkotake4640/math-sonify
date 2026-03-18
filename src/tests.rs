@@ -760,4 +760,434 @@ mod tests {
         assert_eq!(a.audio.sample_rate, b.audio.sample_rate);
         let _ = std::fs::remove_file(&path);
     }
+
+    // -------------------------------------------------------------------------
+    // DSP boundary, NaN, and zero-input tests
+    // -------------------------------------------------------------------------
+
+    /// All oscillator shapes must produce finite output at an extremely low frequency.
+    #[test]
+    fn oscillator_finite_output_low_frequency() {
+        use crate::synth::oscillator::OscShape;
+        let sr = 44100.0_f32;
+        for shape in [OscShape::Sine, OscShape::Saw, OscShape::Square, OscShape::Triangle, OscShape::Noise] {
+            let mut osc = Oscillator::new(0.001, shape, sr);
+            for _ in 0..128 {
+                let s = osc.next_sample();
+                assert!(s.is_finite(),
+                    "Oscillator {:?} at 0.001 Hz produced non-finite: {}", shape, s);
+            }
+        }
+    }
+
+    /// Oscillator at zero frequency must not produce NaN.
+    #[test]
+    fn oscillator_zero_frequency_no_nan() {
+        let mut osc = Oscillator::new(0.0, OscShape::Sine, 44100.0);
+        for _ in 0..64 {
+            let s = osc.next_sample();
+            assert!(s.is_finite(),
+                "Zero-frequency sine produced non-finite: {}", s);
+        }
+    }
+
+    /// Oscillator at near-Nyquist frequency must not produce NaN.
+    #[test]
+    fn oscillator_near_nyquist_no_nan() {
+        let sr = 44100.0_f32;
+        for shape in [OscShape::Saw, OscShape::Square, OscShape::Triangle] {
+            let mut osc = Oscillator::new(sr * 0.499, shape, sr);
+            for _ in 0..256 {
+                let s = osc.next_sample();
+                assert!(s.is_finite(),
+                    "Near-Nyquist {:?} produced non-finite: {}", shape, s);
+            }
+        }
+    }
+
+    /// BiquadFilter must produce finite output after an NaN input.
+    #[test]
+    fn biquad_filter_recovers_from_nan_input() {
+        use crate::synth::filter::BiquadFilter;
+        let mut f = BiquadFilter::low_pass(1000.0, 0.707, 44100.0);
+        let _ = f.process(f32::NAN);
+        let out = f.process(0.5);
+        assert!(out.is_finite(),
+            "BiquadFilter did not recover after NaN input: {}", out);
+    }
+
+    /// BiquadFilter at extreme cutoff values must not produce NaN.
+    #[test]
+    fn biquad_filter_extreme_cutoff_no_nan() {
+        use crate::synth::filter::BiquadFilter;
+        let sr = 44100.0_f32;
+        let mut f_low = BiquadFilter::low_pass(20.0, 0.707, sr);
+        for _ in 0..64 {
+            let out = f_low.process(0.5);
+            assert!(out.is_finite(), "Low-cutoff filter produced non-finite: {}", out);
+        }
+        // High Q (near instability)
+        let mut f_hq = BiquadFilter::low_pass(440.0, 20.0, sr);
+        for _ in 0..64 {
+            let out = f_hq.process(0.1);
+            assert!(out.is_finite(), "High-Q filter produced non-finite: {}", out);
+        }
+    }
+
+    /// ADSR level must remain in [0, 1] throughout a complete A/D/S/R cycle.
+    #[test]
+    fn adsr_level_stays_in_unit_range() {
+        use crate::synth::envelope::Adsr;
+        let sr = 44100.0_f32;
+        let mut env = Adsr::new(10.0, 100.0, 0.7, 200.0, sr);
+        env.trigger();
+        for _ in 0..(sr as usize / 2) {
+            let l = env.next_sample();
+            assert!(l >= 0.0 && l <= 1.0 + 1e-4,
+                "ADSR level out of [0,1] during hold: {}", l);
+        }
+        env.release();
+        for _ in 0..(sr as usize / 4) {
+            let l = env.next_sample();
+            assert!(l >= 0.0 && l <= 1.0 + 1e-4,
+                "ADSR level out of [0,1] during release: {}", l);
+        }
+    }
+
+    /// Bitcrusher at 16-bit depth and zero rate_crush must be transparent.
+    #[test]
+    fn bitcrusher_bypass_transparent() {
+        use crate::synth::bitcrusher::Bitcrusher;
+        let mut bc = Bitcrusher::new();
+        bc.bit_depth = 16.0;
+        bc.rate_crush = 0.0;
+        bc.dither = false;
+        for &val in &[-1.0_f32, -0.5, 0.0, 0.5, 1.0] {
+            let out = bc.process(val);
+            assert!((out - val).abs() < 1e-4,
+                "Bitcrusher bypass changed {} to {}", val, out);
+        }
+    }
+
+    /// Bitcrusher at 1-bit depth with no dither must produce at most 2 distinct output levels.
+    #[test]
+    fn bitcrusher_1bit_only_two_levels() {
+        use crate::synth::bitcrusher::Bitcrusher;
+        let mut bc = Bitcrusher::new();
+        bc.bit_depth = 1.0;
+        bc.rate_crush = 0.0;
+        bc.dither = false;
+        let levels: std::collections::HashSet<i32> = (-10..=10)
+            .map(|i| {
+                let out = bc.process(i as f32 * 0.1);
+                (out * 100.0).round() as i32
+            })
+            .collect();
+        assert!(levels.len() <= 2,
+            "1-bit bitcrusher should produce at most 2 levels, got: {:?}", levels);
+    }
+
+    /// DelayLine with all-zero input must produce finite output.
+    #[test]
+    fn delay_line_zero_input_stays_finite() {
+        use crate::synth::delay::DelayLine;
+        let mut d = DelayLine::new(500.0, 44100.0);
+        for _ in 0..4096 {
+            let (l, r) = d.process(0.0, 0.0);
+            assert!(l.is_finite() && r.is_finite(),
+                "DelayLine zero-input produced non-finite: ({}, {})", l, r);
+        }
+    }
+
+    /// Freeverb must produce finite output after NaN injection.
+    #[test]
+    fn freeverb_recovers_from_nan_input() {
+        use crate::synth::reverb::Freeverb;
+        let mut rv = Freeverb::new(44100.0);
+        rv.wet = 0.5;
+        for _ in 0..256 { rv.process(0.1, -0.1); }
+        let _ = rv.process(f32::NAN, f32::NAN);
+        for _ in 0..32 {
+            let (l, r) = rv.process(0.0, 0.0);
+            assert!(l.is_finite() && r.is_finite(),
+                "Freeverb did not recover from NaN: ({}, {})", l, r);
+        }
+    }
+
+    /// KarplusStrong at high frequency must produce finite samples.
+    #[test]
+    fn karplus_strong_high_frequency_finite() {
+        use crate::synth::karplus::KarplusStrong;
+        let sr = 44100.0_f32;
+        let mut ks = KarplusStrong::new(20.0, sr);
+        ks.trigger(4000.0, sr);
+        for _ in 0..256 {
+            let s = ks.next_sample();
+            assert!(s.is_finite(),
+                "KarplusStrong 4000 Hz produced non-finite: {}", s);
+        }
+    }
+
+    /// KarplusStrong at minimum supported frequency (20 Hz) must not panic.
+    #[test]
+    fn karplus_strong_minimum_frequency_no_panic() {
+        use crate::synth::karplus::KarplusStrong;
+        let sr = 44100.0_f32;
+        let mut ks = KarplusStrong::new(20.0, sr);
+        ks.trigger(20.0, sr);
+        for _ in 0..512 {
+            let s = ks.next_sample();
+            assert!(s.is_finite(),
+                "KarplusStrong 20 Hz produced non-finite: {}", s);
+        }
+    }
+
+    /// quantize_to_scale at t=1.0 must return a positive finite frequency within the octave range.
+    #[test]
+    fn quantize_to_scale_t_one_bounded() {
+        let base = 220.0_f32;
+        let oct = 3.0_f32;
+        for scale in [Scale::Pentatonic, Scale::Chromatic, Scale::WholeTone, Scale::Phrygian, Scale::Lydian] {
+            let f = quantize_to_scale(1.0, base, oct, scale);
+            assert!(f.is_finite() && f > 0.0,
+                "quantize_to_scale(1.0, {:?}) is not positive-finite: {}", scale, f);
+            let max = base * 2.0_f32.powf(oct);
+            assert!(f <= max * 1.01,
+                "quantize_to_scale(1.0, {:?}) exceeds max {}: got {}", scale, max, f);
+        }
+    }
+
+    /// chord_intervals_for must return non-negative finite semitone offsets for all modes.
+    #[test]
+    fn chord_intervals_all_modes_valid() {
+        for mode in ["major", "minor", "power", "sus2", "octave", "dom7", "none", "unknown"] {
+            let ivs = chord_intervals_for(mode);
+            for iv in ivs {
+                assert!(iv.is_finite() && iv >= 0.0,
+                    "chord_intervals_for({}) contains invalid value: {}", mode, iv);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Remaining dynamical systems: step() stays finite after 1000 steps
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn double_pendulum_stays_finite_after_1000_steps() {
+        use crate::systems::DoublePendulum;
+        let mut sys = DoublePendulum::new(1.0, 1.0, 1.0, 1.0);
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "DoublePendulum non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn van_der_pol_stays_finite_after_1000_steps() {
+        use crate::systems::VanDerPol;
+        let mut sys = VanDerPol::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "VanDerPol non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn halvorsen_stays_finite_after_1000_steps() {
+        use crate::systems::Halvorsen;
+        let mut sys = Halvorsen::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "Halvorsen non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn aizawa_stays_finite_after_1000_steps() {
+        use crate::systems::Aizawa;
+        let mut sys = Aizawa::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "Aizawa non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn chua_stays_finite_after_1000_steps() {
+        use crate::systems::Chua;
+        let mut sys = Chua::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "Chua non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn henon_map_stays_finite_after_1000_steps() {
+        use crate::systems::HenonMap;
+        let mut sys = HenonMap::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "HenonMap non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn geodesic_torus_stays_finite_after_1000_steps() {
+        use crate::systems::GeodesicTorus;
+        let mut sys = GeodesicTorus::new(3.0, 1.0);
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "GeodesicTorus non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn nose_hoover_stays_finite_after_1000_steps() {
+        use crate::systems::NoseHoover;
+        let mut sys = NoseHoover::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "NoseHoover non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn mackey_glass_stays_finite_after_1000_steps() {
+        use crate::systems::MackeyGlass;
+        let mut sys = MackeyGlass::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "MackeyGlass non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn lorenz96_stays_finite_after_1000_steps() {
+        use crate::systems::Lorenz96;
+        let mut sys = Lorenz96::new();
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "Lorenz96 non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn coupled_map_lattice_stays_finite_after_1000_steps() {
+        use crate::systems::CoupledMapLattice;
+        let mut sys = CoupledMapLattice::new(3.9, 0.35);
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "CoupledMapLattice non-finite: {:?}", sys.state());
+    }
+
+    #[test]
+    fn hindmarsh_rose_stays_finite_after_1000_steps() {
+        use crate::systems::HindmarshRose;
+        let mut sys = HindmarshRose::new(3.0, 0.006);
+        for _ in 0..1000 { sys.step(0.001); }
+        assert!(all_finite(sys.state()), "HindmarshRose non-finite: {:?}", sys.state());
+    }
+
+    // -----------------------------------------------------------------------
+    // DirectMapping: output stays in expected ranges
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn direct_mapping_freqs_are_finite_and_positive() {
+        use crate::sonification::{DirectMapping, Sonification};
+        use crate::config::SonificationConfig;
+        let mut mapper = DirectMapping::new();
+        let state = vec![1.0, -2.0, 0.5, 3.0];
+        let cfg = SonificationConfig::default();
+        let mut params = mapper.map(&state, 10.0, &cfg);
+        for _ in 0..20 { params = mapper.map(&state, 10.0, &cfg); }
+        for (i, &f) in params.freqs.iter().enumerate() {
+            assert!(f.is_finite() && f > 0.0,
+                "DirectMapping voice {} freq not positive-finite: {}", i, f);
+        }
+    }
+
+    #[test]
+    fn direct_mapping_amps_in_unit_interval() {
+        use crate::sonification::{DirectMapping, Sonification};
+        use crate::config::SonificationConfig;
+        let mut mapper = DirectMapping::new();
+        let state = vec![1.0, -2.0, 0.5];
+        let cfg = SonificationConfig::default();
+        for _ in 0..30 {
+            let params = mapper.map(&state, 5.0, &cfg);
+            for (i, &a) in params.amps.iter().enumerate() {
+                assert!(a.is_finite() && a >= 0.0 && a <= 1.01,
+                    "DirectMapping amp[{}] out of [0,1]: {}", i, a);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Audio config boundary conditions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn audio_config_validate_all_fields_within_bounds() {
+        let mut cfg = Config::default();
+        cfg.audio.reverb_wet = 999.0;
+        cfg.audio.delay_ms = 0.0;
+        cfg.audio.delay_feedback = -1.0;
+        cfg.audio.master_volume = -10.0;
+        cfg.audio.chorus_mix = 50.0;
+        cfg.audio.chorus_rate = -1.0;
+        cfg.audio.chorus_depth = 999.0;
+        cfg.audio.waveshaper_drive = -5.0;
+        cfg.audio.waveshaper_mix = 2.0;
+        cfg.audio.rate_crush = -0.5;
+        cfg.audio.bit_depth = 0.0;
+        cfg.validate();
+        assert!(cfg.audio.reverb_wet >= 0.0 && cfg.audio.reverb_wet <= 1.0);
+        assert!(cfg.audio.delay_ms >= 1.0 && cfg.audio.delay_ms <= 5000.0);
+        assert!(cfg.audio.delay_feedback >= 0.0 && cfg.audio.delay_feedback <= 0.99);
+        assert!(cfg.audio.master_volume >= 0.0 && cfg.audio.master_volume <= 1.0);
+        assert!(cfg.audio.chorus_mix >= 0.0 && cfg.audio.chorus_mix <= 1.0);
+        assert!(cfg.audio.chorus_rate >= 0.01 && cfg.audio.chorus_rate <= 20.0);
+        assert!(cfg.audio.chorus_depth >= 0.0 && cfg.audio.chorus_depth <= 50.0);
+        assert!(cfg.audio.waveshaper_drive >= 0.0 && cfg.audio.waveshaper_drive <= 100.0);
+        assert!(cfg.audio.waveshaper_mix >= 0.0 && cfg.audio.waveshaper_mix <= 1.0);
+        assert!(cfg.audio.rate_crush >= 0.0 && cfg.audio.rate_crush <= 1.0);
+        assert!(cfg.audio.bit_depth >= 1.0 && cfg.audio.bit_depth <= 32.0);
+    }
+
+    #[test]
+    fn oscillator_zero_frequency_does_not_panic() {
+        use crate::synth::oscillator::{Oscillator, OscShape};
+        for &shape in &[OscShape::Sine, OscShape::Saw, OscShape::Square, OscShape::Triangle] {
+            let mut osc = Oscillator::new(0.0, shape, 44100.0);
+            for _ in 0..100 {
+                let s = osc.next_sample();
+                assert!(s.is_finite(), "Shape {:?} at freq=0 produced non-finite: {}", shape, s);
+            }
+        }
+    }
+
+    #[test]
+    fn oscillator_nyquist_frequency_does_not_panic() {
+        use crate::synth::oscillator::{Oscillator, OscShape};
+        for &shape in &[OscShape::Sine, OscShape::Saw, OscShape::Square] {
+            let mut osc = Oscillator::new(22050.0, shape, 44100.0);
+            for _ in 0..100 {
+                let s = osc.next_sample();
+                assert!(s.is_finite(), "Shape {:?} at Nyquist produced non-finite: {}", shape, s);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // All system-specific configs survive TOML serialization round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn config_all_system_configs_roundtrip_toml() {
+        let mut orig = Config::default();
+        orig.lorenz.sigma = 12.5; orig.lorenz.rho = 32.0;
+        orig.rossler.c = 7.5;
+        orig.double_pendulum.m1 = 2.0;
+        orig.duffing.omega = 1.3;
+        orig.van_der_pol.mu = 3.5;
+        orig.halvorsen.a = 1.75;
+        orig.aizawa.d = 4.0;
+        orig.chua.alpha = 18.0;
+        orig.hindmarsh_rose.current_i = 2.5;
+        orig.coupled_map_lattice.r = 3.7;
+        orig.mackey_glass.tau = 25.0;
+        orig.nose_hoover.a = 2.5;
+        orig.henon_map.b = 0.25;
+        orig.lorenz96.f = 10.0;
+        let toml_str = toml::to_string(&orig).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+        assert!((loaded.lorenz.sigma - orig.lorenz.sigma).abs() < 1e-9);
+        assert!((loaded.rossler.c - orig.rossler.c).abs() < 1e-9);
+        assert!((loaded.duffing.omega - orig.duffing.omega).abs() < 1e-9);
+        assert!((loaded.halvorsen.a - orig.halvorsen.a).abs() < 1e-9);
+        assert!((loaded.mackey_glass.tau - orig.mackey_glass.tau).abs() < 1e-9);
+        assert!((loaded.lorenz96.f - orig.lorenz96.f).abs() < 1e-9);
+    }
 }

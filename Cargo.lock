@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "math-sonify"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "cpal",
@@ -2653,6 +2653,7 @@ dependencies = [
  "png",
  "rayon",
  "serde",
+ "thiserror 1.0.69",
  "toml",
 ]
 

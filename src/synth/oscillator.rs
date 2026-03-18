@@ -1,8 +1,24 @@
 use std::f32::consts::TAU;
 
+/// Waveform shape for a band-limited oscillator.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
-pub enum OscShape { #[default] Sine, Triangle, Saw, Square, Noise }
+pub enum OscShape {
+    /// Pure sinusoidal wave (no harmonics).
+    #[default] Sine,
+    /// Band-limited triangle wave (−12 dB/oct harmonic rolloff).
+    Triangle,
+    /// Band-limited sawtooth wave via PolyBLEP anti-aliasing.
+    Saw,
+    /// Band-limited square wave via PolyBLEP anti-aliasing.
+    Square,
+    /// White noise via xorshift64.
+    Noise,
+}
 
+/// Band-limited oscillator with configurable waveform and per-sample output.
+///
+/// Uses PolyBLEP anti-aliasing for Saw, Square, and Triangle waveforms to reduce
+/// aliasing artifacts at high frequencies.
 pub struct Oscillator {
     phase: f32,
     pub freq: f32,
@@ -38,10 +54,23 @@ fn poly_blep(t: f32, dt: f32) -> f32 {
 }
 
 impl Oscillator {
+    /// Creates a new oscillator at the specified frequency and waveform shape.
+    ///
+    /// # Parameters
+    /// - `freq`: Oscillator frequency in Hz.
+    /// - `shape`: Waveform shape (`Sine`, `Saw`, `Square`, `Triangle`, or `Noise`).
+    /// - `sample_rate`: Audio sample rate in Hz (e.g. 44100.0).
+    ///
+    /// # Returns
+    /// An `Oscillator` instance with phase initialized to zero.
     pub fn new(freq: f32, shape: OscShape, sample_rate: f32) -> Self {
         Self { phase: 0.0, freq, shape, sample_rate, tri_state: 0.0, sq_dc: 0.0, noise_seed: 0x9E3779B97F4A7C15 }
     }
 
+    /// Advances the oscillator by one sample and returns the output value in `[-1, 1]`.
+    ///
+    /// # Returns
+    /// The next audio sample as an `f32` in the range `[-1, 1]`.
     pub fn next_sample(&mut self) -> f32 {
         let t  = self.phase / TAU;
         let dt = (self.freq / self.sample_rate).clamp(0.0, 0.5);
@@ -106,17 +135,71 @@ pub struct SmoothParam {
 }
 
 impl SmoothParam {
+    /// Creates a new smoothed parameter with the given initial value and glide time.
+    ///
+    /// # Parameters
+    /// - `initial`: Starting value of the parameter.
+    /// - `smoothing_ms`: One-pole filter time constant in milliseconds.
+    /// - `sample_rate`: Audio sample rate in Hz used to convert the time constant.
+    ///
+    /// # Returns
+    /// A `SmoothParam` with `current` and `target` both set to `initial`.
     pub fn new(initial: f32, smoothing_ms: f32, sample_rate: f32) -> Self {
         let samples = smoothing_ms * 0.001 * sample_rate;
         Self { current: initial, target: initial, rate: 1.0 / samples.max(1.0) }
     }
 
+    /// Sets the target value that the parameter will glide toward.
+    ///
+    /// # Parameters
+    /// - `t`: The new target value.
     pub fn set_target(&mut self, t: f32) { self.target = t; }
 
+    /// Advances the smoothed parameter by one sample and returns the current interpolated value.
+    ///
+    /// # Returns
+    /// The current value after one step of exponential smoothing toward the target.
     pub fn next(&mut self) -> f32 {
         self.current += self.rate * (self.target - self.current);
         self.current
     }
 
     pub fn current(&self) -> f32 { self.current }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_oscillator_frequency_above_zero() {
+        // A sine oscillator at 440 Hz must produce non-zero output eventually
+        // (initial phase is 0 so sample 0 is 0.0; check after a few samples).
+        let mut osc = Oscillator::new(440.0, OscShape::Sine, 44100.0);
+        // Skip the first sample (sin(0) == 0) and check that subsequent ones are non-zero
+        osc.next_sample(); // sample at phase 0
+        let s = osc.next_sample();
+        assert!(s.abs() > 1e-6, "Sine oscillator at 440 Hz should produce non-zero output, got {}", s);
+    }
+
+    #[test]
+    fn test_oscillator_amplitude_clamp() {
+        // The oscillator output for Sine should always be in [-1, 1]
+        let mut osc = Oscillator::new(440.0, OscShape::Sine, 44100.0);
+        for _ in 0..4410 {
+            let s = osc.next_sample();
+            assert!((-1.0..=1.0).contains(&s), "Sine sample out of [-1, 1]: {}", s);
+        }
+    }
+
+    #[test]
+    fn test_oscillator_silence_when_amplitude_zero() {
+        // A zero-frequency oscillator has dt=0 so phase never advances;
+        // sin(0) = 0 for every sample — effectively silence.
+        let mut osc = Oscillator::new(0.0, OscShape::Sine, 44100.0);
+        for _ in 0..100 {
+            let s = osc.next_sample();
+            assert!(s.abs() < 1e-10, "Expected silence from zero-freq oscillator, got {}", s);
+        }
+    }
 }

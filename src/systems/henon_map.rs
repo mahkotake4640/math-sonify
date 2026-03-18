@@ -1,6 +1,13 @@
 use super::DynamicalSystem;
 
-/// Hénon map (discrete): x_{n+1} = 1 - a*x² + y, y_{n+1} = b*x
+/// Hénon map — a discrete-time two-dimensional chaotic map.
+///
+/// Iteration rule (a=1.4, b=0.3 default):
+/// ```text
+/// x_{n+1} = 1 - a·x² + y
+/// y_{n+1} = b·x
+/// ```
+/// The strange attractor of the Hénon map has fractal dimension ≈ 1.26.
 pub struct HenonMap {
     state: Vec<f64>,
     pub a: f64,
@@ -9,6 +16,7 @@ pub struct HenonMap {
 }
 
 impl HenonMap {
+    /// Create a Hénon map with default parameters (a=1.4, b=0.3).
     pub fn new() -> Self {
         Self {
             state: vec![0.0, 0.0, 0.0],

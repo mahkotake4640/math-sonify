@@ -8,6 +8,7 @@ mod sonification;
 mod synth;
 mod audio;
 mod config;
+pub mod error;
 mod ui;
 mod ui_tips;
 mod ui_timeline;

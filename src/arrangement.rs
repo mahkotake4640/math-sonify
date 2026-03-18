@@ -4,14 +4,29 @@
 use crate::config::*;
 use crate::patches::load_preset;
 
+/// A single named snapshot of synthesis configuration used by the scene arranger.
+///
+/// Scenes are arranged in a linear timeline.  The arranger holds at each scene
+/// for `hold_secs` seconds and then morphs to the next active scene over
+/// `morph_secs` seconds.  During a morph all numeric fields of `config` are
+/// linearly interpolated; string fields switch at the midpoint.
 #[derive(Clone)]
 pub struct Scene {
+    /// Human-readable label shown in the Timeline tab.
     pub name: String,
+    /// Synthesis parameters for this scene.
     pub config: Config,
-    pub hold_secs: f32,    // how long to stay at this scene's params
-    pub morph_secs: f32,   // how long to morph FROM previous scene TO this one
+    /// Duration in seconds to hold at this scene's parameters before morphing.
+    pub hold_secs: f32,
+    /// Duration in seconds to morph from the previous scene into this one.
+    /// For the first active scene this value is ignored.
+    pub morph_secs: f32,
+    /// Whether this scene participates in the timeline.  Inactive scenes are
+    /// skipped during playback and do not contribute to `total_duration`.
     pub active: bool,
-    pub transition_prob: f32,  // relative probability weight for transitioning TO this scene
+    /// Relative probability weight used when `transition_mode = "random"`.
+    /// Higher values increase the chance of the arranger jumping to this scene.
+    pub transition_prob: f32,
 }
 
 impl Scene {

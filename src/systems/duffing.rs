@@ -1,5 +1,15 @@
 use super::{DynamicalSystem, rk4};
 
+/// Duffing oscillator: a driven, damped nonlinear oscillator.
+///
+/// Equations of motion (extended state includes the driving phase phi):
+///
+///   dx/dt = v
+///   dv/dt = -delta*v - alpha*x - beta*x^3 + gamma*cos(phi)
+///   dphi/dt = omega
+///
+/// With delta=0.3, alpha=-1, beta=1, gamma=0.5, omega=1.2 the system exhibits
+/// a strange attractor in (x, v, phi mod 2pi) space.
 pub struct Duffing {
     state: Vec<f64>,
     pub delta: f64,

@@ -4,6 +4,10 @@
 use serde::{Deserialize, Serialize};
 use crate::sonification::{SonifMode, Scale};
 
+/// Top-level application configuration, loaded from `config.toml`.
+///
+/// All fields have defaults via [`Default`]; call [`Config::validate`] after
+/// loading from disk to clamp every value to a physically sensible range.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -56,6 +60,7 @@ impl Default for Config {
     }
 }
 
+/// Phase-portrait visualization settings.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct VizConfig {
@@ -71,6 +76,7 @@ impl Default for VizConfig {
     }
 }
 
+/// Dynamical system selection and integration parameters.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SystemConfig {
@@ -85,6 +91,7 @@ impl Default for SystemConfig {
     }
 }
 
+/// Sonification mapping parameters: mode, scale, pitch, and per-voice settings.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SonificationConfig {
@@ -115,6 +122,7 @@ impl Default for SonificationConfig {
     }
 }
 
+/// Audio engine and effects chain parameters.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AudioConfig {
@@ -464,6 +472,13 @@ impl From<String> for Scale {
     fn from(s: String) -> Self { Self::from(s.as_str()) }
 }
 
+/// Loads a `Config` from a TOML file, falling back to defaults on any error.
+///
+/// # Parameters
+/// - `path`: Path to the TOML configuration file.
+///
+/// # Returns
+/// A validated `Config`; defaults are used for any missing or invalid fields.
 pub fn load_config(path: &std::path::Path) -> Config {
     let mut config = match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
@@ -477,4 +492,36 @@ pub fn load_config(path: &std::path::Path) -> Config {
     };
     config.validate();
     config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default_valid() {
+        // Default config should survive a validate() call with all values unchanged
+        // (i.e. all defaults are already within their valid ranges).
+        let mut config = Config::default();
+        let before = format!("{:?}", config);
+        config.validate();
+        let after = format!("{:?}", config);
+        assert_eq!(before, after, "validate() mutated a default Config value");
+    }
+
+    #[test]
+    fn test_config_round_trip() {
+        let original = Config::default();
+        let serialized = toml::to_string(&original).expect("serialization failed");
+        let mut deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        deserialized.validate();
+        // Compare key scalar fields to verify round-trip fidelity
+        assert!((original.lorenz.sigma - deserialized.lorenz.sigma).abs() < 1e-9);
+        assert!((original.lorenz.rho   - deserialized.lorenz.rho).abs()   < 1e-9);
+        assert!((original.lorenz.beta  - deserialized.lorenz.beta).abs()  < 1e-9);
+        assert!((original.rossler.a    - deserialized.rossler.a).abs()    < 1e-9);
+        assert!((original.rossler.c    - deserialized.rossler.c).abs()    < 1e-9);
+        assert!((original.audio.master_volume as f64 - deserialized.audio.master_volume as f64).abs() < 1e-6);
+        assert_eq!(original.system.name, deserialized.system.name);
+    }
 }

@@ -1,5 +1,44 @@
 # Math Sonify — Changelog
 
+## [1.0.0] - 2026-03-17
+
+### Added
+
+- `src/error.rs`: `SonifyError` enum using `thiserror`, covering `AudioDeviceError`,
+  `OdeIntegrationError`, `ConfigError`, `PluginError`, `RenderError`, and `IoError`.
+  `SonifyResult<T>` convenience alias. The audio callback and plugin `process()`
+  never panic; errors are logged and produce silence.
+- Expanded test suite in `src/tests.rs`:
+  - ODE accuracy: Lorenz attractor bounded after 50 000 steps, Rossler near-period
+    closure, Duffing bounded trajectory, Kuramoto synchronization above/below
+    critical coupling, Three-Body Hamiltonian conservation (leapfrog, error < 1%).
+  - Parameter morphing: intermediate values, quarter-point interpolation, master
+    volume floor enforced at all t values.
+  - Audio synthesis: oscillator amplitude bounds for all five waveform shapes,
+    SmoothParam zero stability, SmoothParam convergence rate, sample-rate
+    independence via zero-crossing count.
+  - Config: all sections parse from a full TOML string; out-of-range values are
+    clamped to defaults.
+  - Scene arranger: zero duration with no active scenes, None past end, monotonic
+    morph fraction, single-scene never in morph state.
+- CI workflow (`.github/workflows/ci.yml`): four jobs (`fmt`, `clippy`, `test`,
+  `build-release`), each on `ubuntu-latest` and `windows-latest`. GUI tests
+  excluded via `--skip`.
+- `///` doc comments on all public items lacking them: `Scene`, `lerp_config`,
+  `chord_intervals_for`, `SonifMode`, `Scale`, `Sonification`, `Lorenz`,
+  `Rossler`, `Duffing`, `Kuramoto`, `ThreeBody`.
+- Module-level doc comment on `sonification/mod.rs` with mode reference table.
+
+### Changed
+
+- `Cargo.toml`: version 0.1.0 to 1.0.0; added `thiserror = "1"` dependency.
+- README rewritten: architecture ASCII diagram, supported systems with equations,
+  quickstart (standalone, headless, plugin build), full configuration reference,
+  GUI layout description. No em dashes, no emojis.
+- CI workflow updated from Ubuntu-only to matrix on Ubuntu and Windows.
+
+---
+
 ## v0.9.1 — The Polish
 *The boring work that separates a project from a product.*
 

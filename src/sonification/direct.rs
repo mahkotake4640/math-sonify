@@ -11,6 +11,10 @@ pub struct DirectMapping {
 }
 
 impl DirectMapping {
+    /// Creates a new `DirectMapping` with an empty min/max window.
+    ///
+    /// # Returns
+    /// A `DirectMapping` ready to accept state vectors of any dimension.
     pub fn new() -> Self {
         Self { min: Vec::new(), max: Vec::new(), alpha: 0.001 }
     }

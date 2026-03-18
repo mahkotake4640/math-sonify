@@ -1,11 +1,21 @@
 use super::{DynamicalSystem, rk4};
 
+/// Van der Pol self-sustaining limit-cycle oscillator.
+///
+/// Equations (μ = 2.0 by default):
+/// ```text
+/// dx/dt = y
+/// dy/dt = μ·(1 - x²)·y - x
+/// ```
+/// For μ > 0 the system has a stable limit cycle; larger μ gives increasingly
+/// relaxation-oscillator-like behavior (sharp transitions).
 pub struct VanDerPol {
     state: Vec<f64>,
     pub mu: f64,
 }
 
 impl VanDerPol {
+    /// Create a Van der Pol oscillator with default nonlinearity μ = 2.0.
     pub fn new() -> Self {
         Self { state: vec![2.0, 0.0], mu: 2.0 }
     }

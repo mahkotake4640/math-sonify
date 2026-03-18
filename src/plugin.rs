@@ -14,6 +14,7 @@ mod systems;
 mod sonification;
 mod synth;
 mod config;
+pub mod error;
 mod patches;
 mod arrangement;
 

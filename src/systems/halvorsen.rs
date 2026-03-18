@@ -1,11 +1,21 @@
 use super::{DynamicalSystem, rk4};
 
+/// Halvorsen cyclic-symmetry attractor: a three-dimensional system with
+/// rotational symmetry under (x,y,z) -> (y,z,x).
+///
+/// Equations (a = 1.89 by default):
+/// ```text
+/// dx/dt = -a·x - 4·y - 4·z - y²
+/// dy/dt = -a·y - 4·z - 4·x - z²
+/// dz/dt = -a·z - 4·x - 4·y - x²
+/// ```
 pub struct Halvorsen {
     state: Vec<f64>,
     pub a: f64,
 }
 
 impl Halvorsen {
+    /// Create a Halvorsen attractor with default parameter a = 1.89.
     pub fn new() -> Self {
         Self { state: vec![-5.0, 0.0, 0.0], a: 1.89 }
     }

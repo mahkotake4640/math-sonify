@@ -1,8 +1,20 @@
 use super::DynamicalSystem;
 
-/// Gravitational three-body problem (2D planar).
-/// State: [x1,y1, x2,y2, x3,y3, vx1,vy1, vx2,vy2, vx3,vy3]
-/// Uses symplectic leapfrog integration (energy-preserving).
+/// Gravitational three-body problem in the 2D plane.
+///
+/// State vector (12 elements): [x1, y1, x2, y2, x3, y3, vx1, vy1, vx2, vy2, vx3, vy3].
+///
+/// The Newtonian equations of motion are:
+///
+///   d^2 r_i / dt^2 = G * sum_{j != i} m_j * (r_j - r_i) / |r_j - r_i|^3
+///
+/// A gravitational softening floor of 1e-3 prevents the force from diverging
+/// during close encounters while preserving qualitatively correct dynamics.
+///
+/// Integration uses velocity Verlet (leapfrog), a second-order symplectic
+/// method that conserves the Hamiltonian to O(dt^2) per step.  The figure-8
+/// periodic orbit (Chenciner and Montgomery 2000) is used as the default
+/// initial condition for equal masses.
 pub struct ThreeBody {
     state: Vec<f64>,
     pub masses: [f64; 3],

@@ -14,6 +14,13 @@ pub struct DoublePendulum {
 }
 
 impl DoublePendulum {
+    /// Create a double pendulum with the given masses and arm lengths.
+    ///
+    /// # Parameters
+    /// - `m1`, `m2`: Masses of the first and second bob (kg).
+    /// - `l1`, `l2`: Lengths of the first and second arm (m).
+    ///
+    /// The initial state is θ₁ = θ₂ = π/2 (horizontal), momenta zero.
     pub fn new(m1: f64, m2: f64, l1: f64, l2: f64) -> Self {
         Self {
             // Start slightly off vertical for interesting dynamics

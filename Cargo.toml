@@ -1,9 +1,17 @@
 [package]
 name = "math-sonify"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.75"
-description = "Real-time procedural audio from mathematical dynamical systems"
+description = "Real-time procedural audio from mathematical dynamical systems (Lorenz, Rossler, Double Pendulum, and more)"
+license = "MIT"
+repository = "https://github.com/Mattbusel/math-sonify"
+homepage = "https://github.com/Mattbusel/math-sonify"
+keywords = ["audio", "chaos", "dynamical-systems", "synthesis", "generative"]
+categories = ["multimedia::audio", "science", "simulation"]
+authors = ["Matt Busel"]
+readme = "README.md"
+documentation = "https://docs.rs/math-sonify"
 
 [[bin]]
 name = "math-sonify"
@@ -32,6 +40,7 @@ crossbeam-channel = "0.5"
 parking_lot = "0.12"
 rayon = "1"
 anyhow = "1"
+thiserror = "1"
 log = "0.4"
 env_logger = "0.11"
 hound = "3.5"

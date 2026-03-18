@@ -1,8 +1,21 @@
 use super::{DynamicalSystem, rk4};
 
-/// Kuramoto model: N coupled phase oscillators.
-/// dθᵢ/dt = ωᵢ + (K/N) Σⱼ sin(θⱼ - θᵢ)
-/// Natural frequencies ωᵢ drawn from a Lorentzian distribution.
+/// Kuramoto model of coupled phase oscillators (Kuramoto 1975).
+///
+/// Equations of motion for N oscillators with phases theta_i:
+///
+///   d(theta_i)/dt = omega_i + (K/N) * sum_j sin(theta_j - theta_i)
+///
+/// Natural frequencies omega_i are drawn from a Lorentzian distribution with
+/// center 1.0 and half-width 0.5, sampled via the quantile function.
+///
+/// The system undergoes a phase transition from incoherence to synchronization
+/// at a critical coupling K_c = 2 * gamma = 1.0 (where gamma=0.5 is the
+/// half-width of the frequency distribution).  Above K_c the order parameter
+/// r = |sum exp(i*theta_j)| / N approaches 1.
+///
+/// Integration uses fourth-order Runge-Kutta (RK4); phases are wrapped to
+/// [0, 2*pi] after each step to prevent floating-point drift.
 pub struct Kuramoto {
     state: Vec<f64>,     // phases θᵢ
     omega: Vec<f64>,     // natural frequencies
