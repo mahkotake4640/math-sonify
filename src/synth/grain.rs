@@ -8,7 +8,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-const MAX_GRAINS: usize = 96; // increased from 64 for denser texture
+const MAX_GRAINS: usize = 256; // increased from 96 for even denser texture
 
 struct Grain {
     osc_phase: f32,

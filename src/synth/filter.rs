@@ -100,6 +100,59 @@ impl BiquadFilter {
         }
     }
 
+    /// Construct a low-shelf biquad filter (RBJ audio cookbook, §"Low Shelf EQ filter").
+    ///
+    /// Boosts or cuts frequencies below `shelf_hz` by `gain_db` dB.
+    /// Q controls the shelf transition slope; 0.707 gives a maximally-flat shelf.
+    pub fn low_shelf(shelf_hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Self {
+        let a = 10.0f32.powf(gain_db / 40.0); // sqrt(10^(dB/20))
+        let w0 = std::f32::consts::TAU * shelf_hz / sample_rate;
+        let cos_w0 = w0.cos();
+        let alpha = w0.sin() / 2.0 * (a + 1.0 / a).sqrt() / q.max(0.1);
+        let sq = 2.0 * a.sqrt() * alpha;
+        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + sq;
+        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + sq) / a0;
+        let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0) / a0;
+        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - sq) / a0;
+        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0) / a0;
+        let a2 = ((a + 1.0) + (a - 1.0) * cos_w0 - sq) / a0;
+        Self { b0, b1, b2, a1, a2, z1: 0.0, z2: 0.0 }
+    }
+
+    /// Construct a high-shelf biquad filter (RBJ audio cookbook, §"High Shelf EQ filter").
+    ///
+    /// Boosts or cuts frequencies above `shelf_hz` by `gain_db` dB.
+    pub fn high_shelf(shelf_hz: f32, gain_db: f32, q: f32, sample_rate: f32) -> Self {
+        let a = 10.0f32.powf(gain_db / 40.0);
+        let w0 = std::f32::consts::TAU * shelf_hz / sample_rate;
+        let cos_w0 = w0.cos();
+        let alpha = w0.sin() / 2.0 * (a + 1.0 / a).sqrt() / q.max(0.1);
+        let sq = 2.0 * a.sqrt() * alpha;
+        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + sq;
+        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + sq) / a0;
+        let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0) / a0;
+        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - sq) / a0;
+        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0) / a0;
+        let a2 = ((a + 1.0) - (a - 1.0) * cos_w0 - sq) / a0;
+        Self { b0, b1, b2, a1, a2, z1: 0.0, z2: 0.0 }
+    }
+
+    /// Update low-shelf coefficients in-place, preserving delay state.
+    pub fn update_low_shelf(&mut self, shelf_hz: f32, gain_db: f32, q: f32, sample_rate: f32) {
+        let new = Self::low_shelf(shelf_hz, gain_db, q, sample_rate);
+        self.b0 = new.b0; self.b1 = new.b1; self.b2 = new.b2;
+        self.a1 = new.a1; self.a2 = new.a2;
+        if !self.z1.is_finite() || !self.z2.is_finite() { self.z1 = 0.0; self.z2 = 0.0; }
+    }
+
+    /// Update high-shelf coefficients in-place, preserving delay state.
+    pub fn update_high_shelf(&mut self, shelf_hz: f32, gain_db: f32, q: f32, sample_rate: f32) {
+        let new = Self::high_shelf(shelf_hz, gain_db, q, sample_rate);
+        self.b0 = new.b0; self.b1 = new.b1; self.b2 = new.b2;
+        self.a1 = new.a1; self.a2 = new.a2;
+        if !self.z1.is_finite() || !self.z2.is_finite() { self.z1 = 0.0; self.z2 = 0.0; }
+    }
+
     /// Reset the delay-line state to zero if it has gone non-finite.
     pub fn reset_if_nan(&mut self) {
         if !self.z1.is_finite() || !self.z2.is_finite() {

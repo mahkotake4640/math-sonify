@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn ode_parser_validate_lorenz_exprs() {
         use crate::systems::custom_ode::validate_exprs;
-        let r = validate_exprs("10.0*(y-x)", "x*(28.0-z)-y", "x*y-2.667*z");
+        let r = validate_exprs("10.0*(y-x)", "x*(28.0-z)-y", "x*y-2.667*z", "");
         assert!(r.is_ok(), "Valid Lorenz expressions should pass: {:?}", r);
     }
 

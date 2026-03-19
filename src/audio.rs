@@ -135,7 +135,7 @@ impl LayerSynth {
     /// dither noise is decorrelated (identical seeds produce audible beating at
     /// high bit-crush settings).
     fn new_with_index(sr: f32, layer_idx: usize) -> Self {
-        let crush_seed = 0xDEADBEEFCAFEBABEu64.wrapping_add(layer_idx as u64 * 0x9E3779B97F4A7C15);
+        let crush_seed = 0xDEADBEEFCAFEBABEu64.wrapping_add((layer_idx as u64).wrapping_mul(0x9E3779B97F4A7C15));
         Self {
             sr,
             oscs: std::array::from_fn(|i| {
@@ -202,7 +202,9 @@ impl LayerSynth {
     }
 
     fn update(&mut self, p: &AudioParams) {
-        self.grains.spawn_rate += 0.05 * (p.grain_spawn_rate - self.grains.spawn_rate);
+        // grain_density multiplies spawn rate before smoothing to allow dense clouds.
+        let target_spawn_rate = p.grain_spawn_rate * p.grain_density.clamp(0.1, 4.0);
+        self.grains.spawn_rate += 0.05 * (target_spawn_rate - self.grains.spawn_rate);
         self.grains.base_freq = p.grain_base_freq;
         self.grains.freq_spread = p.grain_freq_spread;
         let samples = p.portamento_ms.max(1.0) * 0.001 * self.sr;
@@ -386,8 +388,22 @@ impl LayerSynth {
         let mut l = 0.0f32;
         let mut r = 0.0f32;
 
+        // Unison/detune spread: offset each voice by a fraction of voice_detune_cents.
+        // Voice 0 is centred (0 cents offset), voices spread symmetrically around it.
+        let num_voices = 4usize;
+        let detune_spread = |i: usize| -> f32 {
+            if p.voice_detune_cents.abs() < 0.001 || num_voices <= 1 {
+                return 0.0;
+            }
+            let half = (num_voices as f32 - 1.0) * 0.5;
+            let offset_normalized = (i as f32 - half) / half; // -1..1
+            p.voice_detune_cents * offset_normalized
+        };
+
         for i in 0..4 {
-            let target_freq = p.freqs[i] * transpose;
+            let cents_offset = detune_spread(i);
+            let detune_mult = 2.0f32.powf(cents_offset / 1200.0);
+            let target_freq = p.freqs[i] * transpose * detune_mult;
             let target_amp = p.amps[i] * p.voice_levels[i];
             if target_freq > 10.0 {
                 // #5 — Doppler-effect portamento overshoot
@@ -438,6 +454,23 @@ impl LayerSynth {
                 self.chord_amp_smooth[k] += 0.005 * (0.0 - self.chord_amp_smooth[k]);
             }
         }
+        // Sub oscillator: sine at half the frequency of voice[0], centred in the mix.
+        if p.sub_osc_level > 0.001 {
+            // Derive sub frequency from the smoothed voice[0] pitch (avoids zipper noise).
+            let sub_freq = self.freq_smooth[0] * 0.5;
+            // Use a simple per-call phase from existing oscillator state — advance by sub_phase_inc.
+            // We store the sub osc phase in fm_phase when in additive mode (fm_phase unused there).
+            self.fm_phase = (self.fm_phase + std::f32::consts::TAU * sub_freq / self.sr)
+                .rem_euclid(std::f32::consts::TAU);
+            let sub_sig = self.fm_phase.sin()
+                * p.sub_osc_level
+                * self.amp_smooth[0]
+                * gain;
+            // Sub is mono (centred)
+            l += sub_sig * 0.5f32.sqrt();
+            r += sub_sig * 0.5f32.sqrt();
+        }
+
         // Attractor-modulated stereo spread via mid-side encoding.
         // Low chaos = near-mono; high chaos = wide stereo field.
         // width 1.0 = unity, 2.0 = fully separated.
@@ -646,6 +679,10 @@ struct SynthState {
     breathing_phase: f64,
     // Snippet/song playback
     pub snippet_pb: SharedSnippetPlayback,
+    // Sonification mode cross-fade: blend previous mode output with new mode output over ~100ms.
+    mode_morph_alpha: f32,
+    mode_morph_prev_out: (f32, f32),
+    mode_morph_prev_mode: SonifMode,
 }
 
 impl SynthState {
@@ -697,6 +734,9 @@ impl SynthState {
             layer_last: [0.0; 3],
             breathing_phase: 0.0,
             snippet_pb,
+            mode_morph_alpha: 1.0,
+            mode_morph_prev_out: (0.0, 0.0),
+            mode_morph_prev_mode: SonifMode::Direct,
         }
     }
 
@@ -735,6 +775,16 @@ impl SynthState {
         // Sidechain compression: KS trigger ducks reverb/delay output
         if params.ks_trigger {
             self.sidechain_duck = 0.3; // -10 dB duck
+        }
+        // Mode cross-fade: detect mode change on layer 0 and reset morph alpha.
+        if idx == 0 {
+            let prev_mode = self.layer_params[0].as_ref().map(|p| p.mode);
+            if let Some(pm) = prev_mode {
+                if pm != params.mode {
+                    self.mode_morph_prev_mode = pm;
+                    self.mode_morph_alpha = 0.0;
+                }
+            }
         }
         self.layers[idx].update(&params);
         self.layer_params[idx] = Some(params);
@@ -795,6 +845,22 @@ impl SynthState {
                 self.layers[i].peak *= 0.98; // decay layer peak
             }
         }
+
+        // Sonification mode cross-fade: blend previous mode output with current over ~100ms.
+        // alpha advances at 10.0 per second (reaches 1.0 in 100ms); sample_rate used for dt.
+        let (sum_l, sum_r) = if self.mode_morph_alpha < 1.0 {
+            let dt = 1.0 / self.sample_rate;
+            self.mode_morph_alpha = (self.mode_morph_alpha + dt * 10.0).min(1.0);
+            let alpha = self.mode_morph_alpha;
+            let (pl, pr) = self.mode_morph_prev_out;
+            let bl = pl * (1.0 - alpha) + sum_l * alpha;
+            let br = pr * (1.0 - alpha) + sum_r * alpha;
+            self.mode_morph_prev_out = (sum_l, sum_r);
+            (bl, br)
+        } else {
+            self.mode_morph_prev_out = (sum_l, sum_r);
+            (sum_l, sum_r)
+        };
 
         // Shared master effects chain
         // Order: filter → delay → reverb → chorus → EQ → limiter

@@ -24,6 +24,7 @@ pub mod granular;
 pub mod orbital;
 pub mod spectral;
 pub mod vocal;
+pub mod waveguide_mapper;
 
 pub use direct::DirectMapping;
 pub use fm::FmMapping;
@@ -31,6 +32,7 @@ pub use granular::GranularMapping;
 pub use orbital::OrbitalResonance;
 pub use spectral::SpectralMapping;
 pub use vocal::VocalMapping;
+pub use waveguide_mapper::WaveguideMapping;
 
 use crate::config::SonificationConfig;
 use crate::synth::OscShape;
@@ -119,6 +121,12 @@ pub struct AudioParams {
     pub eq_mid_db: f32,
     pub eq_high_db: f32,
     pub eq_mid_freq: f32,
+    /// Unison/detune spread in cents (0 = no detune).
+    pub voice_detune_cents: f32,
+    /// Sub oscillator level (0..1).
+    pub sub_osc_level: f32,
+    /// Grain density multiplier (0.1..4.0, default 1.0).
+    pub grain_density: f32,
 }
 
 impl Default for AudioParams {
@@ -176,6 +184,9 @@ impl Default for AudioParams {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             eq_mid_freq: 1000.0,
+            voice_detune_cents: 0.0,
+            sub_osc_level: 0.0,
+            grain_density: 1.0,
         }
     }
 }

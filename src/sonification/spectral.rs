@@ -3,7 +3,7 @@ use crate::config::SonificationConfig;
 use std::collections::VecDeque;
 
 const NUM_PARTIALS: usize = 32;
-const HISTORY_LEN: usize = 64; // ~0.53s of trajectory at 120 Hz
+const HISTORY_LEN: usize = 256; // ~2.1s of trajectory at 120 Hz (4× improvement)
 
 /// Spectral mode: trajectory history → DFT magnitudes → additive synthesis.
 /// Each control tick, the latest state is pushed onto a ring buffer of length
@@ -26,32 +26,35 @@ impl SpectralMapping {
         }
     }
 
-    /// Compute DFT magnitude for bin `k` over `signal` (length N, zero-mean).
+    /// Compute DFT magnitude for bin `k` over `signal` (length N, zero-mean)
+    /// with a Hann window applied to reduce spectral leakage.
     ///
     /// Uses incremental angle accumulation (cos/sin recurrence) to avoid
     /// calling transcendental functions inside the inner loop — O(N) adds and
     /// multiplies rather than O(N) cos+sin calls.
     #[inline]
     fn dft_mag(signal: &[f64], k: usize) -> f32 {
-        let n = signal.len() as f64;
-        let angle_step = std::f64::consts::TAU * k as f64 / n;
-        // Recurrence: cos(a*(t+1)) = cos(a*t)*cos(a) - sin(a*t)*sin(a)
-        //             sin(a*(t+1)) = sin(a*t)*cos(a) + cos(a*t)*sin(a)
+        let n = signal.len();
+        let nf = n as f64;
+        let angle_step = std::f64::consts::TAU * k as f64 / nf;
         let (ca, sa) = (angle_step.cos(), angle_step.sin());
-        let mut cos_t = 1.0f64; // cos(0)
-        let mut sin_t = 0.0f64; // sin(0)
+        let mut cos_t = 1.0f64;
+        let mut sin_t = 0.0f64;
         let mut re = 0.0f64;
         let mut im = 0.0f64;
-        for &v in signal {
-            re += v * cos_t;
-            im -= v * sin_t;
-            // Advance angle by one step
+        for (i, &v) in signal.iter().enumerate() {
+            // Hann window: w(i) = 0.5 * (1 − cos(2π·i/(N−1)))
+            let w = 0.5 * (1.0 - (std::f64::consts::TAU * i as f64 / (nf - 1.0)).cos());
+            let wv = v * w;
+            re += wv * cos_t;
+            im -= wv * sin_t;
             let new_cos = cos_t * ca - sin_t * sa;
             let new_sin = sin_t * ca + cos_t * sa;
             cos_t = new_cos;
             sin_t = new_sin;
         }
-        ((re * re + im * im) / n).sqrt() as f32
+        // Normalise by N/2 (Hann window sum ≈ N/2)
+        ((re * re + im * im) / (nf * nf / 4.0)).sqrt() as f32
     }
 }
 
@@ -71,7 +74,7 @@ impl Sonification for SpectralMapping {
 
         let mut raw = [0.0f32; NUM_PARTIALS];
 
-        if self.history.len() >= 8 {
+        if self.history.len() >= 32 {
             let hn = self.history.len();
             let n_dims = state.len().min(3);
             let n_bins = NUM_PARTIALS.min(hn / 2 + 1);

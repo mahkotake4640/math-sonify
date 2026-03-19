@@ -31,6 +31,13 @@ pub struct Config {
     pub nose_hoover: NoseHooverConfig,
     pub henon_map: HenonMapConfig,
     pub lorenz96: Lorenz96Config,
+    pub logistic_map: LogisticMapConfig,
+    pub standard_map: StandardMapConfig,
+    pub stochastic_lorenz: StochasticLorenzConfig,
+    pub delayed_map: DelayedMapConfig,
+    pub oregonator: OregonatorConfig,
+    pub mathieu: MathieuConfig,
+    pub kuramoto_driven: KuramotoDrivenConfig,
 }
 
 impl Default for Config {
@@ -56,6 +63,13 @@ impl Default for Config {
             nose_hoover: NoseHooverConfig::default(),
             henon_map: HenonMapConfig::default(),
             lorenz96: Lorenz96Config::default(),
+            logistic_map: LogisticMapConfig::default(),
+            standard_map: StandardMapConfig::default(),
+            stochastic_lorenz: StochasticLorenzConfig::default(),
+            delayed_map: DelayedMapConfig::default(),
+            oregonator: OregonatorConfig::default(),
+            mathieu: MathieuConfig::default(),
+            kuramoto_driven: KuramotoDrivenConfig::default(),
         }
     }
 }
@@ -148,6 +162,8 @@ pub struct AudioConfig {
     pub chorus_depth: f32,
     pub waveshaper_drive: f32,
     pub waveshaper_mix: f32,
+    /// Simulation control rate in Hz. Default 120 Hz. Range: [30, 960].
+    pub control_rate_hz: f64,
 }
 
 impl Default for AudioConfig {
@@ -166,6 +182,7 @@ impl Default for AudioConfig {
             chorus_depth: 3.0,
             waveshaper_drive: 1.0,
             waveshaper_mix: 0.0,
+            control_rate_hz: 120.0,
         }
     }
 }
@@ -416,6 +433,92 @@ impl Default for Lorenz96Config {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LogisticMapConfig {
+    /// Bifurcation parameter r. Chaotic regime: r > 3.57. Default: 3.9.
+    pub r: f64,
+}
+impl Default for LogisticMapConfig {
+    fn default() -> Self {
+        Self { r: 3.9 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct StandardMapConfig {
+    /// Stochasticity parameter k. Global chaos for k > 0.97. Default: 1.5.
+    pub k: f64,
+}
+impl Default for StandardMapConfig {
+    fn default() -> Self {
+        Self { k: 1.5 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct StochasticLorenzConfig {
+    pub sigma: f64,
+    pub rho: f64,
+    pub beta: f64,
+    pub noise_strength: f64,
+}
+impl Default for StochasticLorenzConfig {
+    fn default() -> Self {
+        Self { sigma: 10.0, rho: 28.0, beta: 2.6667, noise_strength: 0.5 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DelayedMapConfig {
+    pub r: f64,
+    pub tau: usize,
+}
+impl Default for DelayedMapConfig {
+    fn default() -> Self {
+        Self { r: 3.9, tau: 5 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct OregonatorConfig {
+    pub f: f64,
+}
+impl Default for OregonatorConfig {
+    fn default() -> Self {
+        Self { f: 1.0 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MathieuConfig {
+    pub a: f64,
+    pub q: f64,
+}
+impl Default for MathieuConfig {
+    fn default() -> Self {
+        Self { a: 0.0, q: 0.5 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KuramotoDrivenConfig {
+    pub coupling: f64,
+    pub drive_amp: f64,
+    pub drive_freq: f64,
+}
+impl Default for KuramotoDrivenConfig {
+    fn default() -> Self {
+        Self { coupling: 1.0, drive_amp: 0.5, drive_freq: 1.2 }
+    }
+}
+
 impl Config {
     /// Clamp all parameters to physically sensible bounds.
     /// Call this after deserializing from user-supplied config files.
@@ -481,6 +584,12 @@ impl Config {
         );
         Self::clamp_log_f32(&mut self.audio.rate_crush, 0.0, 1.0, "audio.rate_crush");
         Self::clamp_log_f32(&mut self.audio.bit_depth, 1.0, 32.0, "audio.bit_depth");
+        Self::clamp_log_f64(
+            &mut self.audio.control_rate_hz,
+            30.0,
+            960.0,
+            "audio.control_rate_hz",
+        );
 
         // Sonification
         Self::clamp_log_f64(

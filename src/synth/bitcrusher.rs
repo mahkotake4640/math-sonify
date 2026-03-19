@@ -22,6 +22,8 @@ pub struct Bitcrusher {
     prev_input: f32,
     // TPDF dither toggle (default true)
     pub dither: bool,
+    // Anti-aliasing 1-pole LP filter state (applied before rate crush)
+    aa_lp_state: f32,
 }
 
 impl Bitcrusher {
@@ -41,6 +43,7 @@ impl Bitcrusher {
             rng_state: seed,
             prev_input: 0.0,
             dither: true,
+            aa_lp_state: 0.0,
         }
     }
 
@@ -90,6 +93,13 @@ impl Bitcrusher {
         if self.rate_crush < 0.001 {
             return crushed;
         }
+        // Anti-aliasing: 1-pole LP filter at approximately Nyquist/rate_crush frequency
+        // before applying sample-and-hold, to suppress alias content introduced by downsampling.
+        // alpha = 1/(1 + rate_crush/2), simple first-order approximation.
+        let aa_alpha = (1.0 / (1.0 + self.rate_crush * 0.5)).clamp(0.01, 1.0);
+        self.aa_lp_state += aa_alpha * (crushed - self.aa_lp_state);
+        let crushed = self.aa_lp_state;
+
         // Convert rate_crush [0,1] to a period: 1 = no crush, higher = more crush
         let new_period = (1.0 / self.rate_crush.clamp(0.001, 1.0)).round() as u32;
         if new_period != self.rate_period {

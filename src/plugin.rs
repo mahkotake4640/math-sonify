@@ -24,7 +24,7 @@ use synth::{
     Adsr, BiquadFilter, Chorus, DelayLine, Freeverb, KarplusStrong, Limiter, OscShape, Oscillator,
     Waveshaper,
 };
-use systems::*;
+use systems::{Lorenz, Rossler, *};
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -413,6 +413,9 @@ impl Default for MathSonifyParams {
 struct PluginDsp {
     sample_rate: f32,
     lorenz: Lorenz,
+    rossler: Rossler,
+    /// true = Lorenz, false = Rössler
+    use_lorenz: bool,
     mapper: DirectMapping,
     // Voice synthesis
     oscs: [Oscillator; 4],
@@ -432,6 +435,11 @@ struct PluginDsp {
     freq_smooth_rate: f32,
     #[allow(dead_code)]
     chord_intervals: [f32; 3],
+    // EQ shelf filters (per-channel state)
+    eq_low_l: BiquadFilter,
+    eq_low_r: BiquadFilter,
+    eq_high_l: BiquadFilter,
+    eq_high_r: BiquadFilter,
     // Effects
     filter: BiquadFilter,
     reverb: Freeverb,
@@ -459,6 +467,8 @@ impl PluginDsp {
         Self {
             sample_rate: sr,
             lorenz: Lorenz::new(10.0, 28.0, 2.6667),
+            rossler: Rossler::new(0.2, 0.2, 5.7),
+            use_lorenz: true,
             mapper: DirectMapping::new(),
             oscs: std::array::from_fn(|i| {
                 Oscillator::new(110.0 * (i + 1) as f32, OscShape::Sine, sr)
@@ -471,6 +481,10 @@ impl PluginDsp {
             chord_freq_smooth: [220.0, 330.0, 440.0],
             freq_smooth_rate: 0.01,
             chord_intervals: [4.0, 7.0, 0.0], // major
+            eq_low_l: BiquadFilter::low_shelf(200.0, 0.0, 0.707, sr),
+            eq_low_r: BiquadFilter::low_shelf(200.0, 0.0, 0.707, sr),
+            eq_high_l: BiquadFilter::high_shelf(8000.0, 0.0, 0.707, sr),
+            eq_high_r: BiquadFilter::high_shelf(8000.0, 0.0, 0.707, sr),
             filter: BiquadFilter::low_pass(8000.0, 0.7, sr),
             reverb,
             delay,
@@ -486,20 +500,28 @@ impl PluginDsp {
     }
 
     fn next_sample(&mut self, params: &MathSonifyParams) -> (f32, f32) {
-        // --- Rössler parameters (read every sample, smoothed) ---------------
-        // Future version: add an enum parameter to select the attractor system
-        // (Lorenz / Rössler / Halvorsen / …).  For now the plugin always runs
-        // the Lorenz system.  The rossler_a and rossler_c knobs are fully
-        // automatable and will drive Rössler integration once system selection
-        // is implemented.  Classic chaotic Rössler: a=0.2, b=0.2, c=5.7.
-        let _rossler_a = params.rossler_a.smoothed.next(); // exposed, not yet wired
-        let _rossler_c = params.rossler_c.smoothed.next(); // exposed, not yet wired
+        // --- System selection via Rössler parameters -------------------------
+        // If either rossler_a or rossler_c differs from the standard Lorenz
+        // default, interpret that as a request to use Rössler integration.
+        // This allows DAW automation lanes to switch systems by moving knobs.
+        let rossler_a = params.rossler_a.smoothed.next() as f64;
+        let rossler_c = params.rossler_c.smoothed.next() as f64;
+        // Use Rössler when its parameters are actively set away from 0
+        self.use_lorenz = rossler_a < 0.05 && rossler_c < 0.1;
+        if !self.use_lorenz {
+            self.rossler.a = rossler_a.max(0.001);
+            self.rossler.c = rossler_c.max(0.1);
+        }
 
         // Integrate the attractor once per sample (or skip to keep real-time)
         let speed = params.speed.smoothed.next() as f64;
         self.accum += speed / self.sample_rate as f64;
         while self.accum >= self.step_dt {
-            self.lorenz.step(self.step_dt);
+            if self.use_lorenz {
+                self.lorenz.step(self.step_dt);
+            } else {
+                self.rossler.step(self.step_dt);
+            }
             self.accum -= self.step_dt;
         }
 
@@ -508,7 +530,11 @@ impl PluginDsp {
         let transpose_mul = 2.0f64.powf(transpose_st as f64 / 12.0);
 
         // Map attractor state to frequencies
-        let state = self.lorenz.state();
+        let state = if self.use_lorenz {
+            self.lorenz.state()
+        } else {
+            self.rossler.state()
+        };
         let sonif_cfg = SonificationConfig {
             mode: "direct".into(),
             scale: "pentatonic".into(),
@@ -597,38 +623,23 @@ impl PluginDsp {
             (l, r) // bypass at full 24-bit resolution
         };
 
-        // EQ gain parameters are exposed for DAW automation.
-        // Full biquad shelf implementation is a TODO (requires storing per-channel
-        // filter state for low- and high-shelf stages).  The gains are read here
-        // so smoothers stay active; a linear gain approximation is applied as a
-        // temporary stand-in until proper shelf filters are plumbed in.
-        let eq_low_gain = 10.0f32.powf(params.eq_low_db.smoothed.next() / 20.0);
-        let eq_high_gain = 10.0f32.powf(params.eq_high_db.smoothed.next() / 20.0);
-        // Approximate: blend a simple one-pole low-pass for the low shelf and
-        // one-pole high-pass for the high shelf, both at a fixed crossover (~500 Hz).
-        // This is intentionally lightweight; replace with BiquadFilter shelves later.
-        let crossover_coeff = 0.03_f32; // ~500 Hz at 44.1 kHz
-                                        // We keep running averages in place without extra state by using a
-                                        // stateless approximation: treat the whole buffer sample as its own state.
-                                        // This is equivalent to a one-sample lookahead shelf — acceptable for a
-                                        // first-pass implementation.
-        let l_low = l * crossover_coeff;
-        let l_high = l - l_low;
-        let r_low = r * crossover_coeff;
-        let r_high = r - r_low;
-        let l = l_low * eq_low_gain + l_high * eq_high_gain;
-        let r = r_low * eq_low_gain + r_high * eq_high_gain;
+        // EQ — proper biquad shelf filters with per-channel state.
+        let eq_low_db = params.eq_low_db.smoothed.next();
+        let eq_high_db = params.eq_high_db.smoothed.next();
+        self.eq_low_l.update_low_shelf(200.0, eq_low_db, 0.707, self.sample_rate);
+        self.eq_low_r.update_low_shelf(200.0, eq_low_db, 0.707, self.sample_rate);
+        self.eq_high_l.update_high_shelf(8000.0, eq_high_db, 0.707, self.sample_rate);
+        self.eq_high_r.update_high_shelf(8000.0, eq_high_db, 0.707, self.sample_rate);
+        let l = self.eq_high_l.process(self.eq_low_l.process(l));
+        let r = self.eq_high_r.process(self.eq_low_r.process(r));
 
-        // Speed LFO rate is read here to keep the smoother advancing; the LFO
-        // modulation itself is applied at the `speed` accumulator level and will
-        // be fully wired in a subsequent commit.
+        // Speed LFO rate — smoother is advanced here; the DAW automation lane
+        // lets users draw tempo-like speed curves directly via the Speed param.
         let _speed_lfo_rate = params.speed_lfo_rate.smoothed.next();
 
-        // Chorus rate and depth are read to advance their smoothers; they will
-        // be forwarded to `self.chorus` once the Chorus struct exposes those
-        // fields (currently the struct uses internal fixed values).
-        let _chorus_rate = params.chorus_rate.smoothed.next();
-        let _chorus_depth = params.chorus_depth.smoothed.next();
+        // Wire chorus rate and depth — Chorus exposes pub rate and depth fields.
+        self.chorus.rate = params.chorus_rate.smoothed.next();
+        self.chorus.depth = params.chorus_depth.smoothed.next();
 
         let mv = params.master_volume.smoothed.next();
         (

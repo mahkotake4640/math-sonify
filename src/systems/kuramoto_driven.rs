@@ -1,0 +1,117 @@
+use super::{rk4, DynamicalSystem};
+
+/// Kuramoto model with external sinusoidal drive.
+///
+/// N=6 oscillators with phases θᵢ:
+///   dθᵢ/dt = ωᵢ + (K/N)*Σⱼ sin(θⱼ - θᵢ) + A*sin(Ω*t - θᵢ)
+///
+/// Parameters:
+///   K (coupling): mean-field coupling strength
+///   A (drive_amp): amplitude of external drive
+///   Ω (drive_freq): frequency of external drive
+///
+/// State: [θ₀, θ₁, θ₂, θ₃, θ₄, θ₅, t_internal] — 7 elements.
+/// `dimension()` returns 6 (the useful phase dimensions).
+pub struct KuramotoDriven {
+    /// [theta_0..theta_5, t_internal]
+    state: Vec<f64>,
+    omega: Vec<f64>,
+    pub coupling: f64,
+    pub drive_amp: f64,
+    pub drive_freq: f64,
+    speed: f64,
+}
+
+const N: usize = 6;
+
+impl KuramotoDriven {
+    pub fn new(coupling: f64, drive_amp: f64, drive_freq: f64) -> Self {
+        // Lorentzian natural frequencies (same spacing as kuramoto.rs)
+        let omega: Vec<f64> = (0..N)
+            .map(|i| {
+                let u = (i as f64 + 0.5) / N as f64;
+                let u_safe = u.clamp(1e-6, 1.0 - 1e-6);
+                1.0 + 0.5 * (std::f64::consts::PI * (u_safe - 0.5)).tan()
+            })
+            .collect();
+        // Uniform initial phases, then append t=0
+        let mut state: Vec<f64> = (0..N)
+            .map(|i| 2.0 * std::f64::consts::PI * i as f64 / N as f64)
+            .collect();
+        state.push(0.0); // t_internal
+        Self {
+            state,
+            omega,
+            coupling,
+            drive_amp,
+            drive_freq,
+            speed: 0.0,
+        }
+    }
+
+    fn compute_deriv(state: &[f64], omega: &[f64], coupling: f64, drive_amp: f64, drive_freq: f64) -> Vec<f64> {
+        let t = state[N]; // t_internal
+        let k_over_n = coupling / N as f64;
+        let mut deriv: Vec<f64> = (0..N)
+            .map(|i| {
+                let th_i = state[i];
+                let coupling_sum: f64 = (0..N).map(|j| (state[j] - th_i).sin()).sum();
+                let drive = drive_amp * (drive_freq * t - th_i).sin();
+                omega[i] + k_over_n * coupling_sum + drive
+            })
+            .collect();
+        deriv.push(1.0); // dt_internal/dt = 1
+        deriv
+    }
+}
+
+impl DynamicalSystem for KuramotoDriven {
+    fn state(&self) -> &[f64] {
+        &self.state
+    }
+
+    fn dimension(&self) -> usize {
+        N
+    }
+
+    fn name(&self) -> &str {
+        "Kuramoto Driven"
+    }
+
+    fn speed(&self) -> f64 {
+        self.speed
+    }
+
+    fn deriv_at(&self, state: &[f64]) -> Vec<f64> {
+        Self::compute_deriv(state, &self.omega, self.coupling, self.drive_amp, self.drive_freq)
+    }
+
+    fn set_state(&mut self, s: &[f64]) {
+        let n = self.state.len().min(s.len());
+        for i in 0..n {
+            if s[i].is_finite() {
+                self.state[i] = s[i];
+            }
+        }
+    }
+
+    fn step(&mut self, dt: f64) {
+        let omega = self.omega.clone();
+        let (coupling, drive_amp, drive_freq) = (self.coupling, self.drive_amp, self.drive_freq);
+        let prev = self.state.clone();
+        rk4(&mut self.state, dt, |s| {
+            Self::compute_deriv(s, &omega, coupling, drive_amp, drive_freq)
+        });
+        // Wrap only the phase components (not t_internal)
+        for i in 0..N {
+            self.state[i] = self.state[i].rem_euclid(std::f64::consts::TAU);
+        }
+        let ds: f64 = self.state[0..N]
+            .iter()
+            .zip(prev[0..N].iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        self.speed = ds / dt.max(1e-15);
+    }
+}

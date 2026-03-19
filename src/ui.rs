@@ -309,6 +309,8 @@ pub struct AppState {
     pub custom_ode_x: String,
     pub custom_ode_y: String,
     pub custom_ode_z: String,
+    /// Optional 4th equation dw/dt. Empty = 3-variable mode.
+    pub custom_ode_w: String,
     pub custom_ode_error: String,
     // Spectral freeze
     pub spectral_freeze_active: bool,
@@ -330,6 +332,10 @@ pub struct AppState {
     pub midi_in_last_note: u8,
     pub midi_in_last_vel: u8,
     pub midi_in_last_cc: u8,
+    // MIDI export recording
+    pub midi_rec_enabled: bool,
+    pub midi_rec_events: Vec<(u32, u8, u8, u8)>, // (tick_ms, status, data1, data2)
+    pub midi_rec_start: std::time::Instant,
     // Replay
     pub replay_recording: bool,
     pub replay_events: Vec<ReplayEvent>,
@@ -386,6 +392,8 @@ pub struct AppState {
     pub energy_error: f64,
     pub permutation_entropy: f64,
     pub integrator_divergence: f64,
+    /// Trajectory snapshot for recurrence plot (updated every ~2s with analysis data).
+    pub trajectory_points: Vec<Vec<f64>>,
     pub session_log: Vec<SessionEntry>,
     // ── Snippet Studio ──────────────────────────────────────────────────────
     /// Library of captured snippets (current session + loaded from disk).
@@ -626,6 +634,7 @@ impl AppState {
             custom_ode_x: "10.0 * (y - x)".into(),
             custom_ode_y: "x * (28.0 - z) - y".into(),
             custom_ode_z: "x * y - 2.667 * z".into(),
+            custom_ode_w: String::new(),
             custom_ode_error: String::new(),
             spectral_freeze_active: false,
             spectral_freeze_freqs: vec![0.0; 16],
@@ -641,6 +650,9 @@ impl AppState {
             midi_in_last_note: 0,
             midi_in_last_vel: 0,
             midi_in_last_cc: 0,
+            midi_rec_enabled: false,
+            midi_rec_events: Vec::new(),
+            midi_rec_start: std::time::Instant::now(),
             replay_recording: false,
             replay_events: Vec::new(),
             replay_start_time: std::time::Instant::now(),
@@ -681,6 +693,7 @@ impl AppState {
             energy_error: 0.0,
             permutation_entropy: 0.0,
             integrator_divergence: 0.0,
+            trajectory_points: Vec::new(),
             session_log: Vec::new(),
             snippets: Vec::new(),
             snippet_slots: vec![None; 32],
@@ -1278,6 +1291,50 @@ pub fn draw_ui(
                 egui::FontId::proportional(12.0),
                 Color32::from_rgba_premultiplied(150, 150, 150, 100),
             );
+            // VU meter strip — bottom-right corner overlay in performance mode
+            let (vu_vals, chaos) = {
+                let st = state.lock();
+                let vu = *st.vu_meter.lock();
+                (vu, st.chaos_level)
+            };
+            let bar_w = 10.0f32;
+            let bar_gap = 4.0f32;
+            let bar_h_max = 80.0f32;
+            let strip_x = rect.right() - 10.0 - 4.0 * (bar_w + bar_gap);
+            let strip_y = rect.bottom() - 10.0 - bar_h_max;
+            let labels = ["L1", "L2", "L3", "M"];
+            for (i, &v) in vu_vals.iter().enumerate() {
+                let h = (v.clamp(0.0, 1.0) * bar_h_max).max(1.0);
+                let x = strip_x + i as f32 * (bar_w + bar_gap);
+                let bar_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(x, strip_y + bar_h_max - h),
+                    egui::Vec2::new(bar_w, h),
+                );
+                let hue = if v > 0.85 { 0.0 } else if v > 0.6 { 0.12 } else { 0.35 };
+                let col: egui::Color32 = egui::epaint::Hsva::new(hue, 0.9, 0.9, 0.75).into();
+                ui.painter().rect_filled(bar_rect, 2.0, col);
+                ui.painter().text(
+                    egui::Pos2::new(x + bar_w * 0.5, rect.bottom() - 4.0),
+                    egui::Align2::CENTER_BOTTOM,
+                    labels[i],
+                    egui::FontId::proportional(9.0),
+                    Color32::from_rgba_premultiplied(180, 180, 180, 120),
+                );
+            }
+            // Chaos level pill
+            let chaos_txt = format!("⟁ {:.2}", chaos);
+            ui.painter().text(
+                egui::Pos2::new(rect.right() - 10.0, rect.top() + 10.0),
+                egui::Align2::RIGHT_TOP,
+                &chaos_txt,
+                egui::FontId::proportional(14.0),
+                Color32::from_rgba_premultiplied(
+                    (chaos * 255.0) as u8,
+                    ((1.0 - chaos) * 180.0) as u8,
+                    60,
+                    180,
+                ),
+            );
         });
         return;
     }
@@ -1548,6 +1605,7 @@ pub fn draw_ui(
                         ("📼", "Studio"),
                         ("⬡", "Basin"),
                         ("⊙", "Poincaré"),
+                        ("⧈", "Recurr"),
                     ];
                     let mut viz_tab = state.lock().viz_tab;
                     for (i, (icon, name)) in tabs.iter().enumerate() {
@@ -2305,6 +2363,7 @@ pub fn draw_ui(
             7 => draw_studio_tab(ui, state),
             8 => draw_basin_tab(ui, state),
             9 => draw_poincare_tab(ui, state),
+            10 => draw_recurrence_tab(ui, state),
             _ => {}
         }
     });
@@ -3528,6 +3587,54 @@ fn draw_advanced_panel(
                             .color(Color32::from_rgb(100, 200, 100)),
                     );
                 }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let rec = st.midi_rec_enabled;
+                    let btn_label = if rec { "⬤ Stop MIDI Rec" } else { "⬤ Record MIDI" };
+                    let btn_color = if rec {
+                        Color32::from_rgb(180, 40, 40)
+                    } else {
+                        Color32::from_rgb(40, 40, 70)
+                    };
+                    if ui
+                        .add(
+                            Button::new(RichText::new(btn_label).color(Color32::WHITE))
+                                .fill(btn_color)
+                                .min_size(Vec2::new(130.0, 24.0)),
+                        )
+                        .clicked()
+                    {
+                        if rec {
+                            st.midi_rec_enabled = false;
+                            let events = std::mem::take(&mut st.midi_rec_events);
+                            if !events.is_empty() {
+                                let path = format!(
+                                    "midi_exports/export_{}.mid",
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs()
+                                );
+                                match write_midi_file(&events, &path) {
+                                    Ok(_) => log::info!("MIDI exported to {path}"),
+                                    Err(e) => log::warn!("MIDI export failed: {e}"),
+                                }
+                            }
+                        } else {
+                            st.midi_rec_enabled = true;
+                            st.midi_rec_events.clear();
+                            st.midi_rec_start = std::time::Instant::now();
+                        }
+                    }
+                    if rec {
+                        let elapsed = st.midi_rec_start.elapsed().as_secs();
+                        ui.label(
+                            RichText::new(format!("{:02}:{:02}", elapsed / 60, elapsed % 60))
+                                .size(11.0)
+                                .color(Color32::from_rgb(255, 80, 80)),
+                        );
+                    }
+                });
             });
     });
 
@@ -3724,23 +3831,24 @@ fn draw_advanced_panel(
     // ---- CUSTOM ODE ----
     collapsing_section(ui, "CUSTOM ODE", false, |ui| {
         ui.label(
-            RichText::new("Define your own 3D ODE system")
+            RichText::new("Define your own 3D or 4D ODE system")
                 .color(GRAY_HINT)
                 .size(11.0),
         );
         ui.label(
-            RichText::new("Variables: x, y, z, t  |  Functions: sin, cos, exp, abs, sqrt")
+            RichText::new("Variables: x y z w t  |  Functions: sin cos exp abs sqrt ln log tan")
                 .color(GRAY_HINT)
                 .size(10.0),
         );
         ui.add_space(4.0);
 
-        let (mut ex, mut ey, mut ez, err) = {
+        let (mut ex, mut ey, mut ez, mut ew, err) = {
             let st = state.lock();
             (
                 st.custom_ode_x.clone(),
                 st.custom_ode_y.clone(),
                 st.custom_ode_z.clone(),
+                st.custom_ode_w.clone(),
                 st.custom_ode_error.clone(),
             )
         };
@@ -3767,10 +3875,25 @@ fn draw_advanced_panel(
                 any_expr_changed = true;
             }
         });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("dw/dt =")
+                    .color(Color32::from_rgb(180, 180, 100))
+                    .size(12.0),
+            );
+            let hint = RichText::new("(optional — enables 4D mode)").italics().size(10.0);
+            if ew.is_empty() {
+                ui.label(hint);
+            }
+            if ui.text_edit_singleline(&mut ew).changed() {
+                state.lock().custom_ode_w = ew.clone();
+                any_expr_changed = true;
+            }
+        });
         // Live validation on every keystroke
         if any_expr_changed {
             use crate::systems::validate_exprs;
-            let validation = validate_exprs(&ex, &ey, &ez);
+            let validation = validate_exprs(&ex, &ey, &ez, &ew);
             let mut st = state.lock();
             match validation {
                 Ok(()) => {
@@ -3794,7 +3917,8 @@ fn draw_advanced_panel(
         }
         let can_apply = !err.starts_with("dx/dt error")
             && !err.starts_with("dy/dt error")
-            && !err.starts_with("dz/dt error");
+            && !err.starts_with("dz/dt error")
+            && !err.starts_with("dw/dt error");
         let apply_btn = ui.add_enabled(
             can_apply,
             egui::Button::new(
@@ -3806,7 +3930,8 @@ fn draw_advanced_panel(
         if apply_btn.clicked() {
             use crate::systems::validate_exprs;
             let mut st = state.lock();
-            match validate_exprs(&st.custom_ode_x, &st.custom_ode_y, &st.custom_ode_z) {
+            let ew2 = st.custom_ode_w.clone();
+            match validate_exprs(&st.custom_ode_x, &st.custom_ode_y, &st.custom_ode_z, &ew2) {
                 Ok(()) => {
                     st.custom_ode_error.clear();
                     st.push_undo();
@@ -5973,7 +6098,7 @@ fn draw_bifurc_diagram(
     state: &SharedState,
 ) {
     let avail = ui.available_size();
-    let (response, painter) = ui.allocate_painter(avail, Sense::hover());
+    let (response, painter) = ui.allocate_painter(avail, Sense::click_and_drag());
     let rect = response.rect;
     painter.rect_filled(rect, 0.0, Color32::from_rgb(8, 8, 18));
 
@@ -6131,6 +6256,45 @@ fn draw_bifurc_diagram(
         FontId::proportional(9.0),
         Color32::from_rgb(80, 100, 140),
     );
+
+    // Hover: show parameter value under cursor as crosshair
+    let pad = 20.0f32;
+    if let Some(hover_pos) = response.hover_pos() {
+        if rect.contains(hover_pos) {
+            let t = ((hover_pos.x - rect.left() - pad) / (rect.width() - 2.0 * pad)).clamp(0.0, 1.0);
+            let param_val = min_x + t * rx;
+            // Vertical crosshair line
+            painter.line_segment(
+                [Pos2::new(hover_pos.x, rect.top()), Pos2::new(hover_pos.x, rect.bottom())],
+                egui::Stroke::new(1.0, Color32::from_rgba_premultiplied(255, 255, 100, 80)),
+            );
+            painter.text(
+                Pos2::new(hover_pos.x + 4.0, rect.top() + 6.0),
+                Align2::LEFT_TOP,
+                format!("{} = {:.4}", param1, param_val),
+                FontId::proportional(11.0),
+                Color32::from_rgb(255, 220, 80),
+            );
+            // Click to apply that parameter value to the live system
+            if response.clicked() {
+                let param_name = param1.clone();
+                let mut st = state.lock();
+                st.push_undo();
+                match param_name.as_str() {
+                    "rho" => st.config.lorenz.rho = param_val as f64,
+                    "sigma" => st.config.lorenz.sigma = param_val as f64,
+                    "coupling" => st.config.kuramoto.coupling = param_val as f64,
+                    "c" => st.config.rossler.c = param_val as f64,
+                    _ => {}
+                }
+                st.system_changed = true;
+                st.toast_queue.push(Toast::info(format!(
+                    "{} → {:.4} (from bifurcation diagram)",
+                    param_name, param_val
+                )));
+            }
+        }
+    }
 }
 
 /// Compute attractor basin: for each (x, y) initial condition on the grid, run the Lorenz
@@ -7520,6 +7684,71 @@ fn draw_mixer_tab(
     });
 }
 
+/// Write a Standard MIDI File (Type 0, 480 PPQ) from raw note events.
+/// Each event is (timestamp_ms, status, data1, data2).
+fn write_midi_file(events: &[(u32, u8, u8, u8)], path: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let dir = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)?;
+    }
+    const PPQ: u32 = 480;
+    const TEMPO: u32 = 500_000; // 120 BPM in microseconds/beat
+
+    // Convert ms timestamps → ticks (480 ticks/beat, 120 BPM → 1 beat = 500ms)
+    let ms_per_tick = TEMPO as f64 / 1000.0 / PPQ as f64;
+
+    fn write_vlq(buf: &mut Vec<u8>, mut v: u32) {
+        let mut bytes = [0u8; 4];
+        let mut n = 0;
+        bytes[n] = (v & 0x7f) as u8;
+        v >>= 7;
+        while v > 0 {
+            n += 1;
+            bytes[n] = 0x80 | (v & 0x7f) as u8;
+            v >>= 7;
+        }
+        for i in (0..=n).rev() {
+            buf.push(bytes[i]);
+        }
+    }
+
+    let mut track = Vec::<u8>::new();
+    // Tempo meta-event at tick 0
+    track.extend_from_slice(&[0x00, 0xFF, 0x51, 0x03]);
+    track.push((TEMPO >> 16) as u8);
+    track.push((TEMPO >> 8) as u8);
+    track.push(TEMPO as u8);
+
+    let mut last_tick: u32 = 0;
+    for &(ms, status, d1, d2) in events {
+        let tick = (ms as f64 / ms_per_tick).round() as u32;
+        let delta = tick.saturating_sub(last_tick);
+        last_tick = tick;
+        write_vlq(&mut track, delta);
+        track.push(status);
+        track.push(d1);
+        track.push(d2);
+    }
+    // End of track meta-event
+    track.extend_from_slice(&[0x00, 0xFF, 0x2F, 0x00]);
+
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+    // MThd chunk
+    f.write_all(b"MThd")?;
+    f.write_all(&6u32.to_be_bytes())?;
+    f.write_all(&0u16.to_be_bytes())?; // type 0
+    f.write_all(&1u16.to_be_bytes())?; // 1 track
+    f.write_all(&(PPQ as u16).to_be_bytes())?;
+    // MTrk chunk
+    f.write_all(b"MTrk")?;
+    f.write_all(&(track.len() as u32).to_be_bytes())?;
+    f.write_all(&track)?;
+    Ok(())
+}
+
 fn save_replay_file(events: &[crate::ui::ReplayEvent], path: &str) -> anyhow::Result<()> {
     use std::io::Write;
     let dir = std::path::Path::new(path)
@@ -7658,6 +7887,98 @@ fn dim_names(system: &str) -> &'static [&'static str] {
 // ---------------------------------------------------------------------------
 // Poincaré Section tab (Feature #8)
 // ---------------------------------------------------------------------------
+
+/// Draw a recurrence plot of the trajectory's x-coordinate.
+///
+/// A recurrence plot visualizes when the trajectory revisits (approximately)
+/// the same region of state space.  For each pair of time indices (i, j), a
+/// pixel is lit if |x[i] - x[j]| < threshold, revealing diagonal lines for
+/// periodic orbits and diffuse patterns for chaotic ones.
+fn draw_recurrence_tab(ui: &mut Ui, state: &SharedState) {
+    let traj = {
+        let st = state.lock();
+        // Use x-coordinate of the current trail (already collected by sim thread)
+        // We take up to the last 200 points for a manageable N×N grid
+        st.trajectory_points.iter().rev().take(200).map(|v| v[0]).collect::<Vec<f64>>()
+    };
+
+    let avail = ui.available_size();
+    let (response, painter) = ui.allocate_painter(avail, Sense::hover());
+    let rect = response.rect;
+    painter.rect_filled(rect, 0.0, Color32::from_rgb(4, 6, 16));
+
+    painter.text(
+        Pos2::new(rect.left() + 10.0, rect.top() + 8.0),
+        Align2::LEFT_TOP,
+        format!("Recurrence Plot  (N={}, x-coordinate)", traj.len()),
+        FontId::proportional(13.0),
+        Color32::from_rgb(80, 180, 220),
+    );
+
+    if traj.len() < 4 {
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "Collecting trajectory data…",
+            FontId::proportional(14.0),
+            Color32::from_rgb(80, 80, 120),
+        );
+        return;
+    }
+
+    let n = traj.len();
+    // Adaptive threshold: 10% of the signal range
+    let x_min = traj.iter().cloned().fold(f64::INFINITY, f64::min);
+    let x_max = traj.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let threshold = (x_max - x_min) * 0.10;
+
+    let pad = 24.0f32;
+    let plot_size = (rect.width() - 2.0 * pad).min(rect.height() - 2.0 * pad - 30.0).max(4.0);
+    let cell = plot_size / n as f32;
+    let origin = Pos2::new(rect.left() + pad, rect.top() + 30.0);
+
+    for i in 0..n {
+        for j in 0..n {
+            if (traj[i] - traj[j]).abs() < threshold {
+                let px = origin.x + j as f32 * cell;
+                let py = origin.y + i as f32 * cell;
+                // Color by distance from diagonal: white on diagonal, cyan off
+                let diag_dist = ((i as i64 - j as i64).unsigned_abs() as f32 / n as f32).min(1.0);
+                let alpha = (200.0 * (1.0 - diag_dist * 0.6)) as u8;
+                let col = Color32::from_rgba_premultiplied(0, 200, 255, alpha);
+                painter.rect_filled(
+                    egui::Rect::from_min_size(Pos2::new(px, py), Vec2::new(cell.max(1.0), cell.max(1.0))),
+                    0.0,
+                    col,
+                );
+            }
+        }
+    }
+
+    // Threshold label
+    painter.text(
+        Pos2::new(rect.left() + pad, rect.bottom() - 6.0),
+        Align2::LEFT_BOTTOM,
+        format!("ε = {:.3}  (10% of range {:.2}..{:.2})", threshold, x_min, x_max),
+        FontId::proportional(10.0),
+        Color32::from_rgb(100, 120, 160),
+    );
+
+    // Hover: show time indices
+    if let Some(hover_pos) = response.hover_pos() {
+        let i = ((hover_pos.y - origin.y) / cell) as usize;
+        let j = ((hover_pos.x - origin.x) / cell) as usize;
+        if i < n && j < n {
+            painter.text(
+                hover_pos + Vec2::new(6.0, -16.0),
+                Align2::LEFT_TOP,
+                format!("i={} j={}  |Δx|={:.3}", i, j, (traj[i] - traj[j]).abs()),
+                FontId::proportional(10.0),
+                Color32::from_rgb(255, 240, 100),
+            );
+        }
+    }
+}
 
 fn draw_poincare_tab(ui: &mut Ui, state: &SharedState) {
     let (points, system_name) = {

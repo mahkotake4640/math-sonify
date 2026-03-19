@@ -116,9 +116,55 @@ pub const SYSTEM_REGISTRY: &[SystemEntry] = &[
         display_name: "Fractional Lorenz",
         description: "Lorenz with fractional-order derivatives",
     },
+    SystemEntry {
+        name: "logistic_map",
+        display_name: "Logistic Map",
+        description: "Classic 1D chaos: x → r·x·(1−x)",
+    },
+    SystemEntry {
+        name: "standard_map",
+        display_name: "Standard Map",
+        description: "Chirikov area-preserving toral map",
+    },
+    SystemEntry {
+        name: "arnold_cat",
+        display_name: "Arnold Cat",
+        description: "Hyperbolic toral automorphism",
+    },
+    SystemEntry {
+        name: "stochastic_lorenz",
+        display_name: "Stochastic Lorenz",
+        description: "Lorenz attractor with Wiener noise",
+    },
+    SystemEntry {
+        name: "delayed_map",
+        display_name: "Delayed Map",
+        description: "Discrete delay logistic map",
+    },
+    SystemEntry {
+        name: "oregonator",
+        display_name: "Oregonator",
+        description: "Belousov-Zhabotinsky chemical oscillator",
+    },
+    SystemEntry {
+        name: "mathieu",
+        display_name: "Mathieu",
+        description: "Parametric resonance oscillator",
+    },
+    SystemEntry {
+        name: "kuramoto_driven",
+        display_name: "Kuramoto Driven",
+        description: "Kuramoto oscillators with external drive",
+    },
 ];
 
+pub mod arnold_cat;
 pub mod aizawa;
+pub mod delayed_map;
+pub mod kuramoto_driven;
+pub mod mathieu;
+pub mod oregonator;
+pub mod stochastic_lorenz;
 pub mod chua;
 pub mod coupled_map_lattice;
 pub mod custom_ode;
@@ -129,6 +175,8 @@ pub mod geodesic_torus;
 pub mod halvorsen;
 pub mod henon_map;
 pub mod hindmarsh_rose;
+pub mod logistic_map;
+pub mod standard_map;
 pub mod kuramoto;
 pub mod lorenz;
 pub mod lorenz96;
@@ -139,7 +187,13 @@ pub mod sprott_b;
 pub mod three_body;
 pub mod van_der_pol;
 
+pub use arnold_cat::ArnoldCat;
 pub use aizawa::Aizawa;
+pub use delayed_map::DelayedMap;
+pub use kuramoto_driven::KuramotoDriven;
+pub use mathieu::Mathieu;
+pub use oregonator::Oregonator;
+pub use stochastic_lorenz::StochasticLorenz;
 pub use chua::Chua;
 pub use coupled_map_lattice::CoupledMapLattice;
 pub use custom_ode::{validate_exprs, CustomOde};
@@ -151,8 +205,10 @@ pub use halvorsen::Halvorsen;
 pub use henon_map::HenonMap;
 pub use hindmarsh_rose::HindmarshRose;
 pub use kuramoto::Kuramoto;
+pub use logistic_map::LogisticMap;
 pub use lorenz::Lorenz;
 pub use lorenz96::Lorenz96;
+pub use standard_map::StandardMap;
 pub use mackey_glass::MackeyGlass;
 pub use nose_hoover::NoseHoover;
 pub use rossler::Rossler;

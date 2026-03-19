@@ -37,10 +37,13 @@ use crate::audio::{
 use crate::config::{load_config, Config};
 use crate::sonification::{
     chord_intervals_for, AudioParams, DirectMapping, FmMapping, GranularMapping, OrbitalResonance,
-    SonifMode, Sonification, SpectralMapping, VocalMapping,
+    SonifMode, Sonification, SpectralMapping, VocalMapping, WaveguideMapping,
 };
 use crate::synth::OscShape;
-use crate::systems::{CustomOde, FractionalLorenz, *};
+use crate::systems::{
+    ArnoldCat, CustomOde, DelayedMap, FractionalLorenz, KuramotoDriven, LogisticMap, Mathieu,
+    Oregonator, StandardMap, StochasticLorenz, *,
+};
 use crate::ui::{draw_ui, AppState, SharedState};
 use midir;
 
@@ -52,8 +55,8 @@ const CHANNEL_CAP: usize = 16;
 const CONTROL_RATE_HZ: f64 = 120.0;
 /// How often (in ticks) attractor state is saved to disk (~2 minutes).
 const STATE_SAVE_INTERVAL_TICKS: u64 = 120 * 120;
-/// How often (in ticks) the Lyapunov spectrum is recomputed (~5 seconds).
-const LYAP_INTERVAL_TICKS: u64 = 600;
+/// How often (in ticks) the Lyapunov spectrum is recomputed (~2 seconds).
+const LYAP_INTERVAL_TICKS: u64 = 240;
 /// How often (in ticks) a session log entry is recorded (~60 seconds).
 const SESSION_LOG_INTERVAL_TICKS: u64 = 120 * 60;
 /// Idle ticks before the attractor enters dream mode (~30 minutes).
@@ -319,7 +322,8 @@ fn sim_thread(
     let mut last_arr_sys: String = initial_config.system.name.clone();
     let mut last_arr_mode: String = initial_config.sonification.mode.clone();
 
-    let control_period = Duration::from_secs_f64(1.0 / CONTROL_RATE_HZ);
+    let control_rate_hz = shared.lock().config.audio.control_rate_hz;
+    let control_period = Duration::from_secs_f64(1.0 / control_rate_hz);
     let mut next_tick = Instant::now();
 
     // ── OSC output state ──────────────────────────────────────────────────────
@@ -885,15 +889,18 @@ fn sim_thread(
 
         if sys_changed {
             system = if config.system.name == "custom" {
-                let (ex, ey, ez) = {
+                let (ex, ey, ez, ew) = {
                     let st = shared.lock();
                     (
                         st.custom_ode_x.clone(),
                         st.custom_ode_y.clone(),
                         st.custom_ode_z.clone(),
+                        st.custom_ode_w.clone(),
                     )
                 };
-                Box::new(CustomOde::new(ex, ey, ez))
+                let mut ode = CustomOde::new(ex, ey, ez);
+                ode.expr_w = ew;
+                Box::new(ode)
             } else {
                 build_system(&config)
             };
@@ -1592,21 +1599,32 @@ fn sim_thread(
             }
         }
 
-        // Bidirectional: main system feeds back to coupled
+        // Bidirectional: main system state nudges the coupled system's integration each tick.
+        // The coupled system gets extra integration steps proportional to how far the main
+        // system's x-coordinate is from its centre, scaled by coupling strength.
         if coupled_enabled && coupled_bidirectional {
             if let Some(ref mut cs) = coupled_system {
                 let main_x = system.state().first().copied().unwrap_or(0.0);
                 let main_norm = ((main_x + 30.0) / 60.0).clamp(0.0, 1.0);
-                let reciprocal_delta = (main_norm - 0.5) * coupled_strength as f64 * 1.0;
-                // Apply to coupled system speed via a transient nudge (not persisted)
-                // We do this by stepping the coupled system with a modified dt
-                let nudge_steps = ((config.system.speed * (1.0 + reciprocal_delta)
-                    / CONTROL_RATE_HZ)
-                    / config.system.dt)
-                    .round() as usize;
-                // We already stepped it above; just update the coupled_strength feedback display
-                let _ = nudge_steps;
-                let _ = cs;
+                let reciprocal_delta = (main_norm - 0.5) * coupled_strength as f64;
+                // Extra steps: positive = run faster, negative = skip steps (clamped to [0, base*2])
+                let base_steps = ((config.system.speed / control_rate_hz) / config.system.dt)
+                    .round() as i64;
+                let extra_steps = (base_steps as f64 * reciprocal_delta).round() as i64;
+                let total_extra = extra_steps.clamp(0, base_steps);
+                for _ in 0..total_extra {
+                    cs.step(config.system.dt);
+                }
+                // Soft state push toward main system (1% of difference per tick)
+                let cs_x = cs.state().first().copied().unwrap_or(0.0);
+                let push = (main_x - cs_x) * coupled_strength as f64 * 0.01;
+                if push.is_finite() && push.abs() < 10.0 {
+                    let mut new_state = cs.state().to_vec();
+                    if !new_state.is_empty() {
+                        new_state[0] += push;
+                        cs.set_state(&new_state);
+                    }
+                }
             }
         }
 
@@ -2485,12 +2503,14 @@ fn sim_thread(
                         tick = uptime_ticks,
                         "lyapunov exponent updated"
                     );
+                    let traj_snapshot: Vec<Vec<f64>> = analysis_trajectory.iter().cloned().collect();
                     let mut st = shared.lock();
                     st.lyapunov_spectrum = lyap;
                     st.attractor_type = atype.to_string();
                     st.kolmogorov_entropy = k_entropy;
                     st.permutation_entropy = perm_ent;
                     st.integrator_divergence = integrator_div;
+                    st.trajectory_points = traj_snapshot;
                 }
             }
         }
@@ -2705,17 +2725,12 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
             Box::new(s)
         }
         "custom" => {
-            let (ex, ey, ez) = {
-                // Read custom ODE expressions from... we pass them via config or use defaults
-                // Since Config doesn't have custom ODE fields, we use placeholder defaults here;
-                // AppState fields are read directly in the UI-triggered rebuild path
-                (
-                    "10.0 * (y - x)".to_string(),
-                    "x * (28.0 - z) - y".to_string(),
-                    "x * y - 2.667 * z".to_string(),
-                )
-            };
-            Box::new(CustomOde::new(ex, ey, ez))
+            // Default expressions (Lorenz); actual expressions come from AppState in sim thread
+            Box::new(CustomOde::new(
+                "10.0 * (y - x)".into(),
+                "x * (28.0 - z) - y".into(),
+                "x * y - 2.667 * z".into(),
+            ))
         }
         "fractional_lorenz" => Box::new(FractionalLorenz::new(
             1.0,
@@ -2756,6 +2771,26 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
             s.f = config.lorenz96.f;
             Box::new(s)
         }
+        "logistic_map" => Box::new(LogisticMap::new(config.logistic_map.r)),
+        "standard_map" => Box::new(StandardMap::new(config.standard_map.k)),
+        "arnold_cat" => Box::new(ArnoldCat::new()),
+        "stochastic_lorenz" => Box::new(StochasticLorenz::new(
+            config.stochastic_lorenz.sigma,
+            config.stochastic_lorenz.rho,
+            config.stochastic_lorenz.beta,
+            config.stochastic_lorenz.noise_strength,
+        )),
+        "delayed_map" => Box::new(DelayedMap::new(
+            config.delayed_map.r,
+            config.delayed_map.tau,
+        )),
+        "oregonator" => Box::new(Oregonator::new(config.oregonator.f)),
+        "mathieu" => Box::new(Mathieu::new(config.mathieu.a, config.mathieu.q)),
+        "kuramoto_driven" => Box::new(KuramotoDriven::new(
+            config.kuramoto_driven.coupling,
+            config.kuramoto_driven.drive_amp,
+            config.kuramoto_driven.drive_freq,
+        )),
         _ => Box::new(Lorenz::new(
             config.lorenz.sigma,
             config.lorenz.rho,
@@ -2771,7 +2806,7 @@ fn build_mapper(mode: &str) -> Box<dyn Sonification> {
         "spectral" => Box::new(SpectralMapping::new()),
         "fm" => Box::new(FmMapping::new()),
         "vocal" => Box::new(VocalMapping::new()),
-        "waveguide" => Box::new(DirectMapping::new()), // waveguide synthesis driven by direct mapping
+        "waveguide" => Box::new(WaveguideMapping::new()),
         _ => Box::new(DirectMapping::new()),
     }
 }
@@ -2807,14 +2842,15 @@ fn start_midi_thread(shared: SharedState) {
 
         let mut last_notes = [255u8; 4];
         let mut last_chaos = 0.0f32;
+        let mut rec_start = std::time::Instant::now();
 
         loop {
             std::thread::sleep(std::time::Duration::from_millis(20)); // 50 Hz
 
-            let (freqs, amps, chaos, midi_enabled) = {
+            let (freqs, amps, chaos, midi_enabled, rec_enabled) = {
                 let st = shared.lock();
                 if !st.midi_enabled {
-                    ([0.0f32; 4], [0.0f32; 4], 0.0f32, false)
+                    ([0.0f32; 4], [0.0f32; 4], 0.0f32, false, false)
                 } else {
                     let f = [
                         st.config.sonification.base_frequency as f32,
@@ -2822,12 +2858,20 @@ fn start_midi_thread(shared: SharedState) {
                         st.config.sonification.base_frequency as f32 * 2.0,
                         st.config.sonification.base_frequency as f32 * 2.5,
                     ];
-                    (f, st.config.sonification.voice_levels, st.chaos_level, true)
+                    (f, st.config.sonification.voice_levels, st.chaos_level, true, st.midi_rec_enabled)
                 }
             };
 
             if !midi_enabled {
                 continue;
+            }
+
+            if rec_enabled && rec_start.elapsed().as_secs() == 0 {
+                // Reset reference clock when recording starts (first tick with rec_enabled)
+                rec_start = std::time::Instant::now();
+            }
+            if !rec_enabled {
+                rec_start = std::time::Instant::now();
             }
 
             for (i, (&freq, &amp)) in freqs.iter().zip(amps.iter()).enumerate() {
@@ -2836,12 +2880,19 @@ fn start_midi_thread(shared: SharedState) {
                 let velocity = (amp * 100.0).min(127.0) as u8;
 
                 if last_notes[i] != new_note {
+                    let tick_ms = rec_start.elapsed().as_millis() as u32;
                     if last_notes[i] != 255 {
                         let _ = conn.send(&[0x80 | channel, last_notes[i], 0]);
+                        if rec_enabled {
+                            shared.lock().midi_rec_events.push((tick_ms, 0x80 | channel, last_notes[i], 0));
+                        }
                     }
                     if velocity > 0 {
                         let _ = conn.send(&[0x90 | channel, new_note, velocity]);
                         last_notes[i] = new_note;
+                        if rec_enabled {
+                            shared.lock().midi_rec_events.push((tick_ms, 0x90 | channel, new_note, velocity));
+                        }
                     } else {
                         last_notes[i] = 255;
                     }

@@ -107,17 +107,19 @@ struct Parser<'a> {
     x: f64,
     y: f64,
     z: f64,
+    w: f64,
     t: f64,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a [Token], x: f64, y: f64, z: f64, t: f64) -> Self {
+    fn new(tokens: &'a [Token], x: f64, y: f64, z: f64, w: f64, t: f64) -> Self {
         Self {
             tokens,
             pos: 0,
             x,
             y,
             z,
+            w,
             t,
         }
     }
@@ -256,6 +258,7 @@ impl<'a> Parser<'a> {
                         "x" => self.x,
                         "y" => self.y,
                         "z" => self.z,
+                        "w" => self.w,
                         "t" => self.t,
                         "pi" | "PI" => std::f64::consts::PI,
                         "e" | "E" => std::f64::consts::E,
@@ -271,20 +274,21 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Evaluate an expression string for given x, y, z, t variables.
+/// Evaluate an expression string for given x, y, z, w, t variables.
 /// Returns 0.0 if the expression fails to parse or produces non-finite output.
 pub fn eval_expr(src: &str, x: f64, y: f64, z: f64, t: f64) -> f64 {
+    eval_expr_4d(src, x, y, z, 0.0, t)
+}
+
+/// Evaluate an expression string with all four variables x, y, z, w and time t.
+pub fn eval_expr_4d(src: &str, x: f64, y: f64, z: f64, w: f64, t: f64) -> f64 {
     let tokens = tokenize(src);
     if tokens.is_empty() {
         return 0.0;
     }
-    let mut parser = Parser::new(&tokens, x, y, z, t);
+    let mut parser = Parser::new(&tokens, x, y, z, w, t);
     let val = parser.expression();
-    if val.is_finite() {
-        val
-    } else {
-        0.0
-    }
+    if val.is_finite() { val } else { 0.0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +299,8 @@ pub struct CustomOde {
     pub expr_x: String,
     pub expr_y: String,
     pub expr_z: String,
+    /// Optional 4th equation (dw/dt). Empty string = 3-variable mode.
+    pub expr_w: String,
     state: Vec<f64>,
     t: f64,
     last_speed: f64,
@@ -306,18 +312,32 @@ impl CustomOde {
             expr_x,
             expr_y,
             expr_z,
-            state: vec![1.0, 0.0, 0.0], // start further from origin for faster attractor development
+            expr_w: String::new(),
+            state: vec![1.0, 0.0, 0.0, 0.0],
             t: 0.0,
             last_speed: 0.0,
         }
     }
 
+    /// Returns true when a 4th equation (dw/dt) is active.
+    pub fn is_4d(&self) -> bool {
+        !self.expr_w.trim().is_empty()
+    }
+
     fn deriv_internal(&self, state: &[f64]) -> Vec<f64> {
-        let (x, y, z) = (state[0], state[1], state[2]);
-        let dx = eval_expr(&self.expr_x, x, y, z, self.t).clamp(-1e6, 1e6);
-        let dy = eval_expr(&self.expr_y, x, y, z, self.t).clamp(-1e6, 1e6);
-        let dz = eval_expr(&self.expr_z, x, y, z, self.t).clamp(-1e6, 1e6);
-        vec![dx, dy, dz]
+        let x = state[0];
+        let y = state[1];
+        let z = state[2];
+        let w = state.get(3).copied().unwrap_or(0.0);
+        let dx = eval_expr_4d(&self.expr_x, x, y, z, w, self.t).clamp(-1e6, 1e6);
+        let dy = eval_expr_4d(&self.expr_y, x, y, z, w, self.t).clamp(-1e6, 1e6);
+        let dz = eval_expr_4d(&self.expr_z, x, y, z, w, self.t).clamp(-1e6, 1e6);
+        if self.is_4d() {
+            let dw = eval_expr_4d(&self.expr_w, x, y, z, w, self.t).clamp(-1e6, 1e6);
+            vec![dx, dy, dz, dw]
+        } else {
+            vec![dx, dy, dz, 0.0]
+        }
     }
 }
 
@@ -328,37 +348,43 @@ impl DynamicalSystem for CustomOde {
 
     fn step(&mut self, dt: f64) {
         let deriv_before = self.deriv_internal(&self.state);
-        let ex = &self.expr_x;
-        let ey = &self.expr_y;
-        let ez = &self.expr_z;
+        let ex = self.expr_x.clone();
+        let ey = self.expr_y.clone();
+        let ez = self.expr_z.clone();
+        let ew = self.expr_w.clone();
+        let is_4d = self.is_4d();
         let t = self.t;
         rk4(&mut self.state, dt, |s| {
-            let (x, y, z) = (s[0], s[1], s[2]);
+            let x = s[0]; let y = s[1]; let z = s[2];
+            let w = s.get(3).copied().unwrap_or(0.0);
+            let dw = if is_4d {
+                eval_expr_4d(&ew, x, y, z, w, t).clamp(-1e6, 1e6)
+            } else {
+                0.0
+            };
             vec![
-                eval_expr(ex, x, y, z, t).clamp(-1e6, 1e6),
-                eval_expr(ey, x, y, z, t).clamp(-1e6, 1e6),
-                eval_expr(ez, x, y, z, t).clamp(-1e6, 1e6),
+                eval_expr_4d(&ex, x, y, z, w, t).clamp(-1e6, 1e6),
+                eval_expr_4d(&ey, x, y, z, w, t).clamp(-1e6, 1e6),
+                eval_expr_4d(&ez, x, y, z, w, t).clamp(-1e6, 1e6),
+                dw,
             ]
         });
         self.t += dt;
 
         // Reset if state blows up (divide-by-zero, unstable ODE, etc.)
-        let magnitude = self.state[0].powi(2) + self.state[1].powi(2) + self.state[2].powi(2);
-        if magnitude > 1e10
-            || !self.state[0].is_finite()
-            || !self.state[1].is_finite()
-            || !self.state[2].is_finite()
-        {
-            self.state = vec![1.0, 0.0, 0.0];
+        let magnitude = self.state[0].powi(2) + self.state[1].powi(2)
+            + self.state[2].powi(2) + self.state.get(3).copied().unwrap_or(0.0).powi(2);
+        if magnitude > 1e10 || !self.state.iter().all(|v| v.is_finite()) {
+            self.state = vec![1.0, 0.0, 0.0, 0.0];
         }
 
-        let speed =
-            (deriv_before[0].powi(2) + deriv_before[1].powi(2) + deriv_before[2].powi(2)).sqrt();
+        let speed = (deriv_before[0].powi(2) + deriv_before[1].powi(2)
+            + deriv_before[2].powi(2)).sqrt();
         self.last_speed = speed;
     }
 
     fn dimension(&self) -> usize {
-        3
+        if self.is_4d() { 4 } else { 3 }
     }
     fn name(&self) -> &str {
         "custom"
@@ -377,8 +403,8 @@ impl DynamicalSystem for CustomOde {
 /// Returns a warning string if suspicious identifiers are found (likely typos).
 fn warn_unknown_idents(src: &str) -> Option<String> {
     const KNOWN: &[&str] = &[
-        "x", "y", "z", "t", "pi", "PI", "e", "E", "sin", "cos", "exp", "abs", "sqrt", "ln", "log",
-        "tan",
+        "x", "y", "z", "w", "t", "pi", "PI", "e", "E", "sin", "cos", "exp", "abs", "sqrt", "ln",
+        "log", "tan",
     ];
     let tokens = tokenize(src);
     let mut unknowns: Vec<String> = Vec::new();
@@ -402,21 +428,21 @@ fn warn_unknown_idents(src: &str) -> Option<String> {
 }
 
 /// Try to validate expressions by evaluating at multiple test points.
-/// Returns Ok(()) if all three produce finite results at all test points.
+/// Pass `ew = ""` for 3-variable mode; a non-empty `ew` enables 4D validation.
+/// Returns Ok(()) if all equations produce finite results at all test points.
 /// Returns Err with a descriptive message if an issue is detected, including
 /// warnings about unknown identifiers (likely typos).
-pub fn validate_exprs(ex: &str, ey: &str, ez: &str) -> Result<(), String> {
-    // Test at several points to catch more divide-by-zero and domain errors
-    let test_points: &[(f64, f64, f64, f64)] = &[
-        (1.0, 1.0, 1.0, 0.0),
-        (0.0, 0.0, 0.0, 0.0),
-        (-1.0, -1.0, -1.0, 0.0),
-        (5.0, -3.0, 2.0, 1.0),
+pub fn validate_exprs(ex: &str, ey: &str, ez: &str, ew: &str) -> Result<(), String> {
+    let test_points: &[(f64, f64, f64, f64, f64)] = &[
+        (1.0, 1.0, 1.0, 0.5, 0.0),
+        (0.0, 0.0, 0.0, 0.0, 0.0),
+        (-1.0, -1.0, -1.0, -0.5, 0.0),
+        (5.0, -3.0, 2.0, 1.0, 1.0),
     ];
-    for &(x, y, z, t) in test_points {
-        let dx = eval_expr(ex, x, y, z, t);
-        let dy = eval_expr(ey, x, y, z, t);
-        let dz = eval_expr(ez, x, y, z, t);
+    for &(x, y, z, w, t) in test_points {
+        let dx = eval_expr_4d(ex, x, y, z, w, t);
+        let dy = eval_expr_4d(ey, x, y, z, w, t);
+        let dz = eval_expr_4d(ez, x, y, z, w, t);
         if !dx.is_finite() {
             return Err(format!("dx/dt error at ({x},{y},{z}): result is {dx}"));
         }
@@ -426,17 +452,20 @@ pub fn validate_exprs(ex: &str, ey: &str, ez: &str) -> Result<(), String> {
         if !dz.is_finite() {
             return Err(format!("dz/dt error at ({x},{y},{z}): result is {dz}"));
         }
+        if !ew.trim().is_empty() {
+            let dw = eval_expr_4d(ew, x, y, z, w, t);
+            if !dw.is_finite() {
+                return Err(format!("dw/dt error at ({x},{y},{z},{w}): result is {dw}"));
+            }
+        }
     }
     // Warn about unknown identifiers (typo detection)
     let mut warnings = Vec::new();
-    if let Some(w) = warn_unknown_idents(ex) {
-        warnings.push(format!("dx/dt: {w}"));
-    }
-    if let Some(w) = warn_unknown_idents(ey) {
-        warnings.push(format!("dy/dt: {w}"));
-    }
-    if let Some(w) = warn_unknown_idents(ez) {
-        warnings.push(format!("dz/dt: {w}"));
+    for (label, expr) in [("dx/dt", ex), ("dy/dt", ey), ("dz/dt", ez), ("dw/dt", ew)] {
+        if expr.trim().is_empty() { continue; }
+        if let Some(w) = warn_unknown_idents(expr) {
+            warnings.push(format!("{label}: {w}"));
+        }
     }
     if !warnings.is_empty() {
         return Err(format!("Warning — {}", warnings.join("; ")));
