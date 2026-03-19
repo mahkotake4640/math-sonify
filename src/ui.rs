@@ -920,6 +920,14 @@ fn system_display_name(s: &str) -> &'static str {
         "sprott_b" => "Sprott B",
         "henon_map" => "Henon Map",
         "lorenz96" => "Lorenz-96",
+        "logistic_map" => "Logistic Map",
+        "standard_map" => "Standard Map",
+        "arnold_cat" => "Arnold's Cat Map",
+        "stochastic_lorenz" => "Stochastic Lorenz",
+        "delayed_map" => "Delayed Logistic Map",
+        "oregonator" => "Oregonator",
+        "mathieu" => "Mathieu Equation",
+        "kuramoto_driven" => "Driven Kuramoto",
         _ => "Unknown System",
     }
 }
@@ -950,6 +958,14 @@ fn system_internal_name(display: &str) -> &'static str {
         "Sprott B" => "sprott_b",
         "Henon Map" => "henon_map",
         "Lorenz-96" => "lorenz96",
+        "Logistic Map" => "logistic_map",
+        "Standard Map" => "standard_map",
+        "Arnold's Cat Map" => "arnold_cat",
+        "Stochastic Lorenz" => "stochastic_lorenz",
+        "Delayed Logistic Map" => "delayed_map",
+        "Oregonator" => "oregonator",
+        "Mathieu Equation" => "mathieu",
+        "Driven Kuramoto" => "kuramoto_driven",
         _ => "lorenz",
     }
 }
@@ -3009,10 +3025,14 @@ fn draw_advanced_panel(
                         .on_hover_text("Primary chaos parameter — drives period-doubling bifurcations above ~5.");
                 }
                 "double_pendulum" => {
-                    ui.add(Slider::new(&mut st.config.double_pendulum.m1, 0.1..=5.0).text("m1"));
-                    ui.add(Slider::new(&mut st.config.double_pendulum.m2, 0.1..=5.0).text("m2"));
-                    ui.add(Slider::new(&mut st.config.double_pendulum.l1, 0.1..=3.0).text("l1"));
-                    ui.add(Slider::new(&mut st.config.double_pendulum.l2, 0.1..=3.0).text("l2"));
+                    ui.add(Slider::new(&mut st.config.double_pendulum.m1, 0.1..=5.0).text("m1"))
+                        .on_hover_text("Mass of first bob. Heavier = slower swings and larger inertia.");
+                    ui.add(Slider::new(&mut st.config.double_pendulum.m2, 0.1..=5.0).text("m2"))
+                        .on_hover_text("Mass of second bob. Unequal masses increase the sensitivity to initial conditions.");
+                    ui.add(Slider::new(&mut st.config.double_pendulum.l1, 0.1..=3.0).text("l1"))
+                        .on_hover_text("Length of first arm. Longer arm = slower natural period.");
+                    ui.add(Slider::new(&mut st.config.double_pendulum.l2, 0.1..=3.0).text("l2"))
+                        .on_hover_text("Length of second arm. Short second arm relative to first gives rapid chaotic flipping.");
                 }
                 "geodesic_torus" => {
                     ui.add(Slider::new(&mut st.config.geodesic_torus.big_r, 1.0..=8.0).text("R"))
@@ -3025,9 +3045,12 @@ fn draw_advanced_panel(
                         .on_hover_text("Coupling strength between oscillators. Watch synchronization emerge as you raise this above ~1.5 — the oscillators phase-lock and the sound suddenly coheres.");
                 }
                 "duffing" => {
-                    ui.add(Slider::new(&mut st.config.duffing.delta, 0.1..=1.0).text("delta"));
-                    ui.add(Slider::new(&mut st.config.duffing.gamma, 0.0..=1.5).text("Forcing"));
-                    ui.add(Slider::new(&mut st.config.duffing.omega, 0.5..=3.0).text("Drive freq"));
+                    ui.add(Slider::new(&mut st.config.duffing.delta, 0.1..=1.0).text("Damping δ"))
+                        .on_hover_text("Energy dissipation. Low values sustain chaotic oscillations longer; high values damp to a fixed point.");
+                    ui.add(Slider::new(&mut st.config.duffing.gamma, 0.0..=1.5).text("Forcing γ"))
+                        .on_hover_text("Drive amplitude. Chaos onset depends on the ratio γ/δ; sweep this to hear the period-doubling cascade.");
+                    ui.add(Slider::new(&mut st.config.duffing.omega, 0.5..=3.0).text("Drive freq ω"))
+                        .on_hover_text("Driving frequency. Near ω≈1.2 gives the classic chaotic Duffing response.");
                 }
                 "van_der_pol" => {
                     ui.add(Slider::new(&mut st.config.van_der_pol.mu, 0.1..=5.0).text("Nonlinearity"));
@@ -3036,9 +3059,12 @@ fn draw_advanced_panel(
                     ui.add(Slider::new(&mut st.config.halvorsen.a, 1.0..=3.0).text("a"));
                 }
                 "aizawa" => {
-                    ui.add(Slider::new(&mut st.config.aizawa.a, 0.5..=1.5).text("a"));
-                    ui.add(Slider::new(&mut st.config.aizawa.c, 0.3..=1.0).text("c"));
-                    ui.add(Slider::new(&mut st.config.aizawa.d, 2.0..=5.0).text("d"));
+                    ui.add(Slider::new(&mut st.config.aizawa.a, 0.5..=1.5).text("a"))
+                        .on_hover_text("Primary shape parameter. Controls the curvature of the torus-like surface.");
+                    ui.add(Slider::new(&mut st.config.aizawa.c, 0.3..=1.0).text("c"))
+                        .on_hover_text("Radial nonlinearity. Higher values widen the attractor tube.");
+                    ui.add(Slider::new(&mut st.config.aizawa.d, 2.0..=5.0).text("d"))
+                        .on_hover_text("Polar distortion. Drives the slow z-wobble; increase for more vertical spread.");
                 }
                 "chua" => {
                     ui.add(Slider::new(&mut st.config.chua.alpha, 10.0..=20.0).text("alpha"));
