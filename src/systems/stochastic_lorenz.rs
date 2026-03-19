@@ -23,7 +23,7 @@ impl StochasticLorenz {
             rho,
             beta,
             noise_strength,
-            step_count: 1,
+            step_count: 0,
             speed: 0.0,
         }
     }

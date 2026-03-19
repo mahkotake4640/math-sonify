@@ -100,8 +100,9 @@ impl Bitcrusher {
         self.aa_lp_state += aa_alpha * (crushed - self.aa_lp_state);
         let crushed = self.aa_lp_state;
 
-        // Convert rate_crush [0,1] to a period: 1 = no crush, higher = more crush
-        let new_period = (1.0 / self.rate_crush.clamp(0.001, 1.0)).round() as u32;
+        // Convert rate_crush [0,1] to a period: rate_crush=0 ≈ bypass, rate_crush=1 = max crush
+        // Linear map: rate_crush 0..1 → period 1..64 samples held
+        let new_period = (1.0 + self.rate_crush.clamp(0.001, 1.0) * 63.0).round() as u32;
         if new_period != self.rate_period {
             self.rate_period = new_period;
             self.sample_counter = 0;
