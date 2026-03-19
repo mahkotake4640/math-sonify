@@ -4,6 +4,24 @@
 use crate::config::*;
 use crate::patches::load_preset;
 
+/// Controls how the arranger transitions from one scene to the next.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransitionType {
+    /// Current behaviour: interpolate all parameters over `morph_secs`.
+    Morph,
+    /// Instant parameter jump — `morph_secs` is ignored and treated as 0.
+    Snap,
+    /// Parameters jump immediately (like Snap) but the audio layer cross-fades
+    /// via its existing `mode_morph` mechanism.  Config-side `t` is always 1.0.
+    Fade,
+}
+
+impl Default for TransitionType {
+    fn default() -> Self {
+        Self::Morph
+    }
+}
+
 /// A single named snapshot of synthesis configuration used by the scene arranger.
 ///
 /// Scenes are arranged in a linear timeline.  The arranger holds at each scene
@@ -27,6 +45,8 @@ pub struct Scene {
     /// Relative probability weight used when `transition_mode = "random"`.
     /// Higher values increase the chance of the arranger jumping to this scene.
     pub transition_prob: f32,
+    /// How this scene transitions in from the previous one.
+    pub transition_type: TransitionType,
 }
 
 impl Scene {
@@ -38,6 +58,7 @@ impl Scene {
             morph_secs: 8.0,
             active: false,
             transition_prob: 1.0,
+            transition_type: TransitionType::default(),
         }
     }
 }
@@ -190,7 +211,11 @@ pub fn total_duration(scenes: &[Scene]) -> f32 {
         .enumerate()
         .map(|(ord, &idx)| {
             let s = &scenes[idx];
-            let morph = if ord > 0 { s.morph_secs } else { 0.0 };
+            let morph = if ord > 0 && s.transition_type != TransitionType::Snap {
+                s.morph_secs
+            } else {
+                0.0
+            };
             morph + s.hold_secs
         })
         .sum()
@@ -206,8 +231,9 @@ pub fn scene_at(scenes: &[Scene], elapsed: f32) -> Option<(usize, bool, f32)> {
     let mut t = elapsed;
     for (ord, &idx) in active.iter().enumerate() {
         let scene = &scenes[idx];
-        // Morph phase first (transition INTO this scene FROM previous), skip for first scene
-        if ord > 0 {
+        // Morph phase first (transition INTO this scene FROM previous), skip for first scene.
+        // Snap transitions skip the morph phase entirely (treated as morph_secs = 0).
+        if ord > 0 && scene.transition_type != TransitionType::Snap {
             if t < scene.morph_secs {
                 return Some((idx, true, t / scene.morph_secs.max(0.001)));
             }
@@ -257,6 +283,7 @@ fn make_scene(
         morph_secs: morph,
         active: true,
         transition_prob: 1.0,
+        transition_type: TransitionType::default(),
     }
 }
 

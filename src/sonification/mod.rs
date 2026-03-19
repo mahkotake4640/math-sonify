@@ -18,6 +18,7 @@
 // the compiler can't see through the string-based dispatch, hence these suppressions.
 #![allow(dead_code)]
 
+pub mod am;
 pub mod direct;
 pub mod fm;
 pub mod granular;
@@ -26,6 +27,7 @@ pub mod spectral;
 pub mod vocal;
 pub mod waveguide_mapper;
 
+pub use am::AmMapping;
 pub use direct::DirectMapping;
 pub use fm::FmMapping;
 pub use granular::GranularMapping;
@@ -233,6 +235,8 @@ pub enum SonifMode {
     FM,
     Vocal,
     Waveguide,
+    AM,
+    Resonator,
 }
 
 impl std::fmt::Display for SonifMode {
@@ -245,6 +249,8 @@ impl std::fmt::Display for SonifMode {
             Self::FM => write!(f, "FM"),
             Self::Vocal => write!(f, "Vocal"),
             Self::Waveguide => write!(f, "Waveguide"),
+            Self::AM => write!(f, "AM"),
+            Self::Resonator => write!(f, "Resonator"),
         }
     }
 }

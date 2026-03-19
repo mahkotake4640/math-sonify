@@ -52,7 +52,14 @@ impl Sonification for FmMapping {
         };
 
         // Mod index based on speed and chaos
-        let mod_index = (speed as f32 / 50.0).clamp(0.1, 20.0) * chaos.max(0.1);
+        let mut mod_index = (speed as f32 / 50.0).clamp(0.1, 20.0) * chaos.max(0.1);
+
+        // Z-dimension (state[2]) drives FM mod index as a feedback-like offset,
+        // adding timbral depth when the third state variable is available.
+        if state.len() >= 3 {
+            mod_index += (state[2].tanh() * 0.3) as f32;
+            mod_index = mod_index.max(0.1);
+        }
 
         params.fm_carrier_freq = carrier_freq;
         params.fm_mod_ratio = mod_ratio;
@@ -60,9 +67,20 @@ impl Sonification for FmMapping {
         params.gain = 0.5;
         params.chaos_level = chaos;
 
-        // Also set freqs[0] for display purposes
+        // Higher-dimension voice distribution: voices 1-3 use state dims 1-3
+        // with tanh normalisation matching voice 0.
         params.freqs[0] = carrier_freq;
         params.amps[0] = 0.8;
+        for i in 1..4.min(state.len()) {
+            let norm_i = (state[i] as f32 / 30.0).tanh() * 0.5 + 0.5;
+            params.freqs[i] = super::quantize_to_scale(
+                norm_i,
+                base_hz,
+                octave_range,
+                scale,
+            );
+            params.amps[i] = 0.4; // quieter secondary voices
+        }
 
         params
     }

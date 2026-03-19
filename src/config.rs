@@ -797,8 +797,10 @@ impl From<&str> for SonifMode {
             "granular" => Self::Granular,
             "spectral" => Self::Spectral,
             "fm" => Self::FM,
+            "am" => Self::AM,
             "vocal" => Self::Vocal,
             "waveguide" => Self::Waveguide,
+            "resonator" => Self::Resonator,
             _ => Self::Direct,
         }
     }

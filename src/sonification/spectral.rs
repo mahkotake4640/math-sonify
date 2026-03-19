@@ -15,6 +15,10 @@ pub struct SpectralMapping {
     smoothed: [f32; NUM_PARTIALS],
     alpha: f32,
     history: VecDeque<Vec<f64>>,
+    /// Cached DFT result — reused when state hash is unchanged.
+    cached_raw: [f32; NUM_PARTIALS],
+    /// Hash of the state vector on the previous call.
+    prev_state_hash: u64,
 }
 
 impl SpectralMapping {
@@ -23,7 +27,20 @@ impl SpectralMapping {
             smoothed: [0.0; NUM_PARTIALS],
             alpha: 0.05,
             history: VecDeque::with_capacity(HISTORY_LEN + 1),
+            cached_raw: [0.0; NUM_PARTIALS],
+            prev_state_hash: u64::MAX,
         }
+    }
+
+    /// Compute a simple hash of the state vector to detect changes.
+    fn hash_state(state: &[f64]) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
+        for &v in state {
+            let bits = v.to_bits();
+            h ^= bits;
+            h = h.wrapping_mul(0x100000001b3); // FNV prime
+        }
+        h
     }
 
     /// Compute DFT magnitude for bin `k` over `signal` (length N, zero-mean)
@@ -72,60 +89,79 @@ impl Sonification for SpectralMapping {
             self.history.pop_front();
         }
 
-        let mut raw = [0.0f32; NUM_PARTIALS];
+        // --- DFT caching: only recompute when the state vector has changed ----
+        let state_hash = Self::hash_state(state);
+        if state_hash != self.prev_state_hash {
+            self.prev_state_hash = state_hash;
 
-        if self.history.len() >= 32 {
-            let hn = self.history.len();
-            let n_dims = state.len().min(3);
-            let n_bins = NUM_PARTIALS.min(hn / 2 + 1);
+            let mut raw = [0.0f32; NUM_PARTIALS];
 
-            // Build zero-mean signals per dimension
-            let signals: Vec<Vec<f64>> = (0..n_dims)
-                .map(|d| {
-                    let s: Vec<f64> = self
-                        .history
-                        .iter()
-                        .map(|h| h.get(d).copied().unwrap_or(0.0))
-                        .collect();
-                    let mean = s.iter().sum::<f64>() / s.len() as f64;
-                    s.iter().map(|&v| v - mean).collect()
-                })
-                .collect();
+            if self.history.len() >= 32 {
+                let hn = self.history.len();
+                let n_dims = state.len().min(3);
+                let n_bins = NUM_PARTIALS.min(hn / 2 + 1);
 
-            // Sum DFT magnitudes across all dimensions for each bin
-            for k in 0..n_bins {
-                raw[k] = signals.iter().map(|sig| Self::dft_mag(sig, k)).sum();
+                // Build zero-mean signals per dimension
+                let signals: Vec<Vec<f64>> = (0..n_dims)
+                    .map(|d| {
+                        let s: Vec<f64> = self
+                            .history
+                            .iter()
+                            .map(|h| h.get(d).copied().unwrap_or(0.0))
+                            .collect();
+                        let mean = s.iter().sum::<f64>() / s.len() as f64;
+                        s.iter().map(|&v| v - mean).collect()
+                    })
+                    .collect();
+
+                // Sum DFT magnitudes across all dimensions for each bin
+                for k in 0..n_bins {
+                    raw[k] = signals.iter().map(|sig| Self::dft_mag(sig, k)).sum();
+                }
+
+                // Normalize to [0, 1]
+                let max_val = raw.iter().cloned().fold(0.0f32, f32::max).max(1e-9);
+                for r in &mut raw {
+                    *r /= max_val;
+                }
+            } else {
+                // Fallback while history fills: cyclic state mapping
+                let max_abs = state
+                    .iter()
+                    .map(|v| v.abs())
+                    .fold(0.0f64, f64::max)
+                    .max(1e-9);
+                for (k, slot) in raw.iter_mut().enumerate() {
+                    let i = k % state.len();
+                    *slot = (state[i].abs() / max_abs) as f32;
+                }
             }
 
-            // Normalize to [0, 1]
-            let max_val = raw.iter().cloned().fold(0.0f32, f32::max).max(1e-9);
-            for r in &mut raw {
-                *r /= max_val;
-            }
-        } else {
-            // Fallback while history fills: cyclic state mapping
-            let max_abs = state
-                .iter()
-                .map(|v| v.abs())
-                .fold(0.0f64, f64::max)
-                .max(1e-9);
+            // Spectral roll-off: steeper natural rolloff (~-12 dB/oct)
             for (k, slot) in raw.iter_mut().enumerate() {
-                let i = k % state.len();
-                *slot = (state[i].abs() / max_abs) as f32;
+                *slot *= 1.0 / (1.0 + (k as f32).powf(1.5) * 0.08);
             }
+
+            self.cached_raw = raw;
         }
 
-        // Spectral roll-off: steeper natural rolloff (~-12 dB/oct)
-        for (k, slot) in raw.iter_mut().enumerate() {
-            *slot *= 1.0 / (1.0 + (k as f32).powf(1.5) * 0.08);
-        }
-
-        // Smooth to prevent clicks
+        // Smooth to prevent clicks (always run, even on cache hit)
         for (k, s) in self.smoothed.iter_mut().enumerate() {
-            *s += self.alpha * (raw[k] - *s);
+            *s += self.alpha * (self.cached_raw[k] - *s);
         }
+
+        // Chaos estimate from state magnitude
+        let chaos_level = {
+            let mag: f64 = state.iter().take(3).map(|v| v * v).sum::<f64>().sqrt();
+            ((mag / 50.0) as f32).clamp(0.0, 1.0)
+        };
 
         let base = config.base_frequency as f32;
+
+        // Buzz oscillator frequency with chaos shimmer: during chaotic regions
+        // the excitation is slightly detuned, adding shimmer to the texture.
+        let buzz_freq = base * (1.0 + chaos_level * 0.08);
+
         // Gain scales with the number of active (non-zero) partials so perceived
         // loudness stays consistent whether 2 or 32 bins are populated.
         let active_partials = self.smoothed.iter().filter(|&&v| v > 0.01).count().max(1);
@@ -133,13 +169,13 @@ impl Sonification for SpectralMapping {
         let mut p = AudioParams {
             mode: SonifMode::Spectral,
             partials: self.smoothed,
-            partials_base_freq: base,
+            partials_base_freq: buzz_freq,
             gain,
             filter_cutoff: 8000.0,
             filter_q: 0.7,
             ..Default::default()
         };
-        p.chaos_level = 0.3;
+        p.chaos_level = chaos_level;
         p
     }
 }

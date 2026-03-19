@@ -31,6 +31,7 @@ pub mod karplus;
 pub mod limiter;
 pub mod oscillator;
 pub mod reverb;
+pub mod resonator;
 pub mod waveguide;
 pub mod waveshaper;
 
@@ -49,6 +50,7 @@ pub use grain::GrainEngine;
 pub use karplus::KarplusStrong;
 pub use limiter::Limiter;
 #[allow(unused_imports)]
+pub use resonator::ResonatorBank;
 pub use reverb::Freeverb;
 pub use waveguide::WaveguideString;
 pub use waveshaper::Waveshaper;

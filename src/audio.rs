@@ -15,7 +15,7 @@ use std::sync::Arc;
 use crate::sonification::{AudioParams, SonifMode};
 use crate::synth::{
     Adsr, BiquadFilter, Bitcrusher, Chorus, DelayLine, FdnReverb, GrainEngine, KarplusStrong,
-    Limiter, OscShape, Oscillator, ThreeBandEq, WaveguideString, Waveshaper,
+    Limiter, OscShape, Oscillator, ResonatorBank, ThreeBandEq, WaveguideString, Waveshaper,
 };
 
 pub type WavRecorder = Arc<Mutex<Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>>>;
@@ -114,6 +114,8 @@ struct LayerSynth {
     vocal_osc_phase: f32,
     // Waveguide physical model
     waveguide: WaveguideString,
+    // Resonator bank: 8 high-Q bandpass filters for resonator mode
+    resonator: ResonatorBank,
     // Spectral freeze oscillators (up to 16 partials)
     freeze_oscs: Vec<Oscillator>,
     // Vocoder filter bank: 16 bandpass channels covering 80 Hz to 8 kHz
@@ -174,6 +176,7 @@ impl LayerSynth {
             pan: 0.0,
             peak: 0.0,
             waveguide: WaveguideString::new(sr),
+            resonator: ResonatorBank::new(sr),
             freeze_oscs: (0..16)
                 .map(|i| Oscillator::new(220.0 * (i + 1) as f32, OscShape::Sine, sr))
                 .collect(),
@@ -296,8 +299,18 @@ impl LayerSynth {
                 let s = self.waveguide.next_sample() * p.gain;
                 (s, s)
             }
-            SonifMode::AM => self.synth_additive(p),
-            SonifMode::Resonator => self.synth_additive(p),
+            SonifMode::AM => self.synth_am(p),
+            SonifMode::Resonator => {
+                // Update resonator tuning from freqs[], then excite with noise scaled by gain
+                for i in 0..self.resonator.frequencies.len().min(p.freqs.len()) {
+                    if p.freqs[i] > 20.0 {
+                        self.resonator.frequencies[i] = p.freqs[i];
+                    }
+                }
+                self.resonator.excite_level = p.gain.clamp(0.0, 1.0);
+                self.resonator.update();
+                self.resonator.next_sample()
+            }
         };
 
         // Spectral freeze: mix in frozen partials
@@ -573,6 +586,24 @@ impl LayerSynth {
         let phase_offset = TAU * carrier * 0.0015;
         let r = (carrier_in + phase_offset).sin() * p.gain;
         (mono, r)
+    }
+
+    fn synth_am(&mut self, p: &AudioParams) -> (f32, f32) {
+        use std::f32::consts::TAU;
+        let carrier_freq = p.fm_carrier_freq.max(20.0);
+        let mod_freq = carrier_freq * p.fm_mod_ratio.max(0.1);
+        let depth = p.fm_mod_index.clamp(0.0, 1.0);
+        // Advance modulator
+        let mod_sample = self.fm_mod_phase.sin();
+        self.fm_mod_phase = (self.fm_mod_phase + TAU * mod_freq / self.sr).rem_euclid(TAU);
+        // AM: output = carrier * (1 + depth * modulator)
+        let envelope = 1.0 + depth * mod_sample;
+        let carrier = self.fm_phase.sin();
+        self.fm_phase = (self.fm_phase + TAU * carrier_freq / self.sr).rem_euclid(TAU);
+        let mono = carrier * envelope * p.gain;
+        // Slight stereo spread
+        let r_phase = (self.fm_phase + TAU * carrier_freq * 0.0015).sin() * envelope * p.gain;
+        (mono, r_phase)
     }
 
     fn synth_vocal(&mut self, p: &AudioParams) -> (f32, f32) {

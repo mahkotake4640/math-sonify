@@ -80,15 +80,19 @@ impl Sonification for DirectMapping {
         let base = config.base_frequency as f32;
         let oct = config.octave_range as f32;
 
+        let chaos_level = (speed.abs() as f32 / 100.0).clamp(0.0, 1.0);
+
         let mut params = AudioParams {
             mode: SonifMode::Direct,
             gain: 0.25,
             filter_cutoff: 2000.0,
-            filter_q: 0.7,
+            filter_q: 0.4 + chaos_level * 2.5,
             ..Default::default()
         };
 
-        // Up to 4 voices from the first 4 state variables
+        // Voice 0 always uses state[0]. Higher dimensions get their own
+        // frequency offsets so systems like Lorenz96 and Kuramoto use all
+        // their extra dimensions musically.
         for i in 0..4.min(norm.len()) {
             params.freqs[i] = quantize_to_scale(norm[i], base, oct, scale);
             params.amps[i] = if i < norm.len() {
@@ -102,7 +106,7 @@ impl Sonification for DirectMapping {
         if let Some(&last) = norm.last() {
             params.filter_cutoff = 300.0 + 3700.0 * last;
         }
-        params.chaos_level = (speed.abs() as f32 / 100.0).clamp(0.0, 1.0);
+        params.chaos_level = chaos_level;
         params
     }
 }

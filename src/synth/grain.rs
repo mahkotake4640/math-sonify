@@ -79,6 +79,9 @@ pub struct GrainEngine {
     /// Grain overlap ratio (0.5 = 50% overlap, i.e., spawn rate relative to grain duration).
     /// Used externally to scale spawn_rate: spawn_rate = overlap * sample_rate / avg_grain_duration.
     pub overlap: f32,
+    /// Stochastic variation level (0..1).  At 0: all grains are identical/coherent.
+    /// At 1: duration varies ±30% and pitch varies ±0.05 semitones per grain.
+    pub chaos_level: f32,
     spawn_counter: f32,
     rng_state: u64,
 }
@@ -93,6 +96,7 @@ impl GrainEngine {
             base_freq: 220.0,
             freq_spread: 0.5,
             overlap: 0.5,
+            chaos_level: 0.0,
             spawn_counter: 0.0,
             // Unique seed per instance: prevents correlated noise across simultaneous layers.
             rng_state: GRAIN_ENGINE_COUNTER
@@ -115,8 +119,10 @@ impl GrainEngine {
     fn spawn_grain(&mut self) {
         let sr = self.sample_rate;
 
-        // Random detune in semitones → frequency ratio
-        let detune_st = (self.rand_f32() - 0.5) * 2.0 * self.freq_spread;
+        // Random detune in semitones → frequency ratio.
+        // chaos_level adds ±0.05 semitones of per-grain pitch shimmer on top of freq_spread.
+        let shimmer_st = (self.rand_f32() - 0.5) * 2.0 * self.chaos_level * 0.05;
+        let detune_st = (self.rand_f32() - 0.5) * 2.0 * self.freq_spread + shimmer_st;
         let freq = self.base_freq * 2.0f32.powf(detune_st / 12.0);
 
         // Occasional harmonic shift: octave down (25%), fifth up (15%), unison (60%)
@@ -131,8 +137,11 @@ impl GrainEngine {
 
         let pan = (self.rand_f32() - 0.5) * 1.6; // slight extra spread
         let osc_phase = self.rand_f32() * TAU;
-        // Duration 40–220 ms; shorter grains at higher spawn rates → pitched texture
-        let dur_ms = 40.0 + self.rand_f32() * 180.0;
+        // Duration 40–220 ms; shorter grains at higher spawn rates → pitched texture.
+        // chaos_level scales ±30% duration jitter for shimmer at high chaos.
+        let dur_ms_base = 40.0 + self.rand_f32() * 180.0;
+        let dur_jitter = (self.rand_f32() - 0.5) * 2.0 * self.chaos_level * 0.3;
+        let dur_ms = dur_ms_base * (1.0 + dur_jitter);
         let dur_samples = (dur_ms * 0.001 * sr).max(1.0);
         // Amplitude: compensate for Hann window energy loss.
         // The Hann window averages 0.5 vs a rectangle window's 1.0, so multiply

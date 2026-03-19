@@ -58,6 +58,8 @@ impl Sonification for GranularMapping {
             0.5
         };
 
+        let chaos_level = (speed.abs() as f32 / 200.0).clamp(0.0, 1.0);
+
         let mut p = AudioParams {
             mode: SonifMode::Granular,
             grain_spawn_rate: grain_rate,
@@ -65,10 +67,24 @@ impl Sonification for GranularMapping {
             grain_freq_spread: spread * 2.0,
             gain: 0.4,
             filter_cutoff: 4000.0,
-            filter_q: 0.7,
+            filter_q: 0.4 + chaos_level * 2.5,
             ..Default::default()
         };
-        p.chaos_level = (speed.abs() as f32 / 200.0).clamp(0.0, 1.0);
+
+        // Higher-dimension voice distribution: each state dimension drives its
+        // own voice frequency, enabling systems with many dimensions (Lorenz96,
+        // Kuramoto) to use all available state variables musically.
+        for i in 0..4.min(state.len()) {
+            let norm_i = {
+                let range = (self.max_state[i] - self.min_state[i]).abs().max(1e-9);
+                ((state[i] - self.min_state[i]) / range) as f32
+            };
+            p.freqs[i] = quantize_to_scale(norm_i, base, oct, scale);
+            p.amps[i] = 0.5 + 0.5 * norm_i;
+            p.pans[i] = norm_i * 2.0 - 1.0;
+        }
+
+        p.chaos_level = chaos_level;
         p
     }
 }
