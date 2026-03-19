@@ -990,6 +990,7 @@ fn scale_description(scale: &str) -> &'static str {
         "whole_tone" => "6-note whole-tone scale — dreamy, symmetric, no leading tone",
         "phrygian" => "E Phrygian: dark and tense — flamenco and metal favourite",
         "lydian" => "F Lydian: bright and ethereal — raised 4th creates tension",
+        "harmonic_series" => "Integer multiples of A2 (110 Hz) — natural overtone series",
         _ => "",
     }
 }
@@ -2836,6 +2837,7 @@ fn draw_advanced_panel(
             ("whole_tone", "Whole Tone"),
             ("phrygian", "Phrygian"),
             ("lydian", "Lydian"),
+            ("harmonic_series", "Harmonic Series"),
         ];
         let current_scale = st.config.sonification.scale.clone();
         let current_scale_label = scales
@@ -3309,8 +3311,10 @@ fn draw_advanced_panel(
                 .min_size(Vec2::new(ui.available_width(), 26.0)),
         ).on_hover_text("Reset the system to the custom initial conditions above.").clicked() {
             // Copy custom_ic into current_state to trigger a reset in the sim thread
-            for (i, v) in st.custom_ic.iter().enumerate() {
-                if i < st.current_state.len() {
+            let ic: Vec<f64> = st.custom_ic.clone();
+            let state_len = st.current_state.len();
+            for (i, v) in ic.iter().enumerate() {
+                if i < state_len {
                     st.current_state[i] = *v;
                 }
             }

@@ -822,6 +822,7 @@ impl From<&str> for Scale {
             "whole_tone" => Self::WholeTone,
             "phrygian" => Self::Phrygian,
             "lydian" => Self::Lydian,
+            "harmonic_series" => Self::HarmonicSeries,
             _ => Self::Pentatonic,
         }
     }
