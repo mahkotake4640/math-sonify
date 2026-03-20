@@ -291,6 +291,18 @@ pub fn eval_expr_4d(src: &str, x: f64, y: f64, z: f64, w: f64, t: f64) -> f64 {
     if val.is_finite() { val } else { 0.0 }
 }
 
+/// Like `eval_expr_4d` but returns the raw value without coercing non-finite
+/// results to 0.0.  Used by `validate_exprs` so that division-by-zero and
+/// overflow are detectable.
+fn eval_expr_4d_raw(src: &str, x: f64, y: f64, z: f64, w: f64, t: f64) -> f64 {
+    let tokens = tokenize(src);
+    if tokens.is_empty() {
+        return 0.0;
+    }
+    let mut parser = Parser::new(&tokens, x, y, z, w, t);
+    parser.expression()
+}
+
 // ---------------------------------------------------------------------------
 // CustomOde DynamicalSystem
 // ---------------------------------------------------------------------------
@@ -441,9 +453,11 @@ pub fn validate_exprs(ex: &str, ey: &str, ez: &str, ew: &str) -> Result<(), Stri
         (5.0, -3.0, 2.0, 1.0, 1.0),
     ];
     for &(x, y, z, w, t) in test_points {
-        let dx = eval_expr_4d(ex, x, y, z, w, t);
-        let dy = eval_expr_4d(ey, x, y, z, w, t);
-        let dz = eval_expr_4d(ez, x, y, z, w, t);
+        // Use the raw evaluator so that division-by-zero (→ ±inf) and overflow
+        // are not silently coerced to 0.0 before the finite check.
+        let dx = eval_expr_4d_raw(ex, x, y, z, w, t);
+        let dy = eval_expr_4d_raw(ey, x, y, z, w, t);
+        let dz = eval_expr_4d_raw(ez, x, y, z, w, t);
         if !dx.is_finite() {
             return Err(format!("dx/dt error at ({x},{y},{z}): result is {dx}"));
         }
@@ -454,7 +468,7 @@ pub fn validate_exprs(ex: &str, ey: &str, ez: &str, ew: &str) -> Result<(), Stri
             return Err(format!("dz/dt error at ({x},{y},{z}): result is {dz}"));
         }
         if !ew.trim().is_empty() {
-            let dw = eval_expr_4d(ew, x, y, z, w, t);
+            let dw = eval_expr_4d_raw(ew, x, y, z, w, t);
             if !dw.is_finite() {
                 return Err(format!("dw/dt error at ({x},{y},{z},{w}): result is {dw}"));
             }
