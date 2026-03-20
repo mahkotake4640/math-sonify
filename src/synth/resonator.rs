@@ -1,7 +1,11 @@
-/// Resonator bank: 8 high-Q bandpass filters tuned to a major chord.
+/// Resonator bank: 8 high-Q bandpass filters.
+///
+/// By default the filters are tuned to an A major chord across two octaves.
+/// Call [`ResonatorBank::tune_to_scale`] to retune to any scale and base
+/// frequency from the sonification configuration, so the resonator mode
+/// stays harmonically consistent with all other synthesis modes.
 ///
 /// Noise excitation is run through all 8 filters and summed with stereo spread.
-/// This produces a pitched, resonant texture driven by the attractor trajectory.
 use crate::synth::BiquadFilter;
 
 /// Default tuning: A major chord across two octaves.
@@ -44,6 +48,41 @@ impl ResonatorBank {
         for (filter, &freq) in self.filters.iter_mut().zip(self.frequencies.iter()) {
             filter.update_bp(freq, self.q, self.sr);
         }
+    }
+
+    /// Retune the 8 resonators to evenly-spaced pitches across the given scale
+    /// and octave range.  This keeps the resonator mode harmonically consistent
+    /// with the currently selected musical scale.
+    ///
+    /// # Parameters
+    /// - `base_hz`: Lowest resonator frequency in Hz.
+    /// - `octave_range`: Number of octaves to span across all 8 resonators.
+    /// - `scale_intervals`: Scale semitone intervals (e.g. `[0,2,4,7,9]` for pentatonic).
+    pub fn tune_to_scale(&mut self, base_hz: f32, octave_range: f32, scale_intervals: &[f32]) {
+        if scale_intervals.is_empty() {
+            return;
+        }
+        let n = self.frequencies.len();
+        for i in 0..n {
+            let t = i as f32 / (n - 1).max(1) as f32; // 0..1 across all resonators
+            let total_semitones = octave_range * 12.0;
+            let semitone_pos = t * total_semitones;
+            let octave = (semitone_pos / 12.0).floor();
+            let semitone_in_oct = semitone_pos % 12.0;
+            // Find the nearest scale degree
+            let nearest = scale_intervals
+                .iter()
+                .min_by(|a, b| {
+                    let da = ((*a) - semitone_in_oct).abs();
+                    let db = ((*b) - semitone_in_oct).abs();
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .copied()
+                .unwrap_or(0.0);
+            let freq = base_hz * 2.0f32.powf(octave + nearest / 12.0);
+            self.frequencies[i] = freq.clamp(20.0, self.sr * 0.45);
+        }
+        self.update();
     }
 
     /// xorshift64 — returns a noise sample in [-1, 1].
