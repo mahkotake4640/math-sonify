@@ -156,8 +156,14 @@ pub const SYSTEM_REGISTRY: &[SystemEntry] = &[
         display_name: "Kuramoto Driven",
         description: "Kuramoto oscillators with external drive",
     },
+    SystemEntry {
+        name: "thomas",
+        display_name: "Thomas",
+        description: "Cyclically symmetric dissipative chaotic attractor",
+    },
 ];
 
+pub mod thomas;
 pub mod arnold_cat;
 pub mod aizawa;
 pub mod delayed_map;
@@ -187,6 +193,7 @@ pub mod sprott_b;
 pub mod three_body;
 pub mod van_der_pol;
 
+pub use thomas::Thomas;
 pub use arnold_cat::ArnoldCat;
 pub use aizawa::Aizawa;
 pub use delayed_map::DelayedMap;

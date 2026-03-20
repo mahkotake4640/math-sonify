@@ -98,7 +98,7 @@ impl Sonification for SpectralMapping {
 
             if self.history.len() >= 32 {
                 let hn = self.history.len();
-                let n_dims = state.len().min(3);
+                let n_dims = state.len().min(4);
                 let n_bins = NUM_PARTIALS.min(hn / 2 + 1);
 
                 // Build zero-mean signals per dimension

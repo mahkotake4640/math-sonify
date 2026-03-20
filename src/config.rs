@@ -38,6 +38,7 @@ pub struct Config {
     pub oregonator: OregonatorConfig,
     pub mathieu: MathieuConfig,
     pub kuramoto_driven: KuramotoDrivenConfig,
+    pub thomas: ThomasConfig,
 }
 
 impl Default for Config {
@@ -70,6 +71,7 @@ impl Default for Config {
             oregonator: OregonatorConfig::default(),
             mathieu: MathieuConfig::default(),
             kuramoto_driven: KuramotoDrivenConfig::default(),
+            thomas: ThomasConfig::default(),
         }
     }
 }
@@ -519,6 +521,18 @@ impl Default for KuramotoDrivenConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ThomasConfig {
+    /// Dissipation parameter. b ≈ 0.208186 gives a strange attractor.
+    pub b: f64,
+}
+impl Default for ThomasConfig {
+    fn default() -> Self {
+        Self { b: 0.208186 }
+    }
+}
+
 impl Config {
     /// Clamp all parameters to physically sensible bounds.
     /// Call this after deserializing from user-supplied config files.
@@ -755,6 +769,8 @@ impl Config {
         Self::clamp_log_f64(&mut self.kuramoto_driven.coupling, 0.0, 20.0, "kuramoto_driven.coupling");
         Self::clamp_log_f64(&mut self.kuramoto_driven.drive_amp, 0.0, 10.0, "kuramoto_driven.drive_amp");
         Self::clamp_log_f64(&mut self.kuramoto_driven.drive_freq, 0.0, 100.0, "kuramoto_driven.drive_freq");
+        // Thomas attractor: b controls dissipation (strange attractor near 0.208186)
+        Self::clamp_log_f64(&mut self.thomas.b, 0.05, 0.5, "thomas.b");
     }
 
     /// Clamp a `f64` field to `[min, max]`, emitting a tracing warning if clamped.
