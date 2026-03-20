@@ -253,6 +253,12 @@ pub const PRESETS: &[Preset] = &[
         color: Color32::from_rgb(100, 160, 255),
         category: "Atmospheric",
     },
+    Preset {
+        name: "Jerk Circuit",
+        description: "Genesio-Tesi: a single x² term makes a 3rd-order ODE chaotic. Electronically realizable as a Jerk circuit.",
+        color: Color32::from_rgb(200, 200, 60),
+        category: "Experimental",
+    },
 ];
 
 pub fn load_preset(name: &str) -> Config {
@@ -1658,6 +1664,38 @@ pub fn load_preset(name: &str) -> Config {
                 waveshaper_mix: 0.0,
                 ..Default::default()
             },
+            ..Default::default()
+        },
+        "Jerk Circuit" => Config {
+            system: SystemConfig {
+                name: "genesio_tesi".into(),
+                dt: 0.005,
+                speed: 1.1,
+            },
+            sonification: SonificationConfig {
+                mode: "fm".into(),
+                scale: "chromatic".into(),
+                base_frequency: 220.0,
+                octave_range: 3.0,
+                chord_mode: "none".into(),
+                transpose_semitones: 3.0,
+                voice_levels: [1.0, 0.7, 0.45, 0.2],
+                portamento_ms: 25.0,
+                voice_shapes: ["saw".into(), "triangle".into(), "saw".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.2,
+                delay_ms: 90.0,
+                delay_feedback: 0.45,
+                master_volume: 0.74,
+                chorus_mix: 0.1,
+                chorus_rate: 1.0,
+                chorus_depth: 0.15,
+                waveshaper_drive: 5.0,
+                waveshaper_mix: 0.45,
+                ..Default::default()
+            },
+            genesio_tesi: GenesioTesiConfig { a: 1.2, b: 2.92, c: 6.0 },
             ..Default::default()
         },
 

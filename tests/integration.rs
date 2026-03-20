@@ -1617,3 +1617,110 @@ fn sprott_f_deterministic() {
     }
 }
 
+
+// ── Sprott B integration tests ────────────────────────────────────────────────
+
+#[test]
+fn sprott_b_state_bounded() {
+    let mut sys = SprottB::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(all_finite(s), "Sprott-B non-finite: {:?}", s);
+    assert!(s[0].abs() < 30.0, "Sprott-B x out of range: {}", s[0]);
+    assert!(s[1].abs() < 30.0, "Sprott-B y out of range: {}", s[1]);
+    assert!(s[2].abs() < 30.0, "Sprott-B z out of range: {}", s[2]);
+}
+
+#[test]
+fn sprott_b_deterministic() {
+    let mut s1 = SprottB::new();
+    let mut s2 = SprottB::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-B not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Sprott C additional integration tests ─────────────────────────────────────
+
+#[test]
+fn sprott_c_state_bounded_generous() {
+    // Secondary bounds check with generous limit; primary test is at line ~1033
+    let mut sys = SprottC::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(all_finite(s), "Sprott-C non-finite: {:?}", s);
+    assert!(s[0].abs() < 50.0, "Sprott-C x out of range: {}", s[0]);
+    assert!(s[1].abs() < 50.0, "Sprott-C y out of range: {}", s[1]);
+    assert!(s[2].abs() < 50.0, "Sprott-C z out of range: {}", s[2]);
+}
+
+#[test]
+fn sprott_c_deterministic() {
+    let mut s1 = SprottC::new();
+    let mut s2 = SprottC::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-C not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Sprott G integration tests ────────────────────────────────────────────────
+
+#[test]
+fn sprott_g_state_bounded() {
+    let mut sys = SprottG::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(all_finite(s), "Sprott-G non-finite: {:?}", s);
+}
+
+#[test]
+fn sprott_g_deterministic() {
+    let mut s1 = SprottG::new();
+    let mut s2 = SprottG::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-G not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Sprott H integration tests ────────────────────────────────────────────────
+
+#[test]
+fn sprott_h_state_bounded() {
+    let mut sys = SprottH::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(all_finite(s), "Sprott-H non-finite: {:?}", s);
+}
+
+#[test]
+fn sprott_h_deterministic() {
+    let mut s1 = SprottH::new();
+    let mut s2 = SprottH::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-H not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Sprott L integration tests ────────────────────────────────────────────────
+
+#[test]
+fn sprott_l_state_bounded() {
+    let mut sys = SprottL::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(all_finite(s), "Sprott-L non-finite: {:?}", s);
+}
+
+#[test]
+fn sprott_l_deterministic() {
+    let mut s1 = SprottL::new();
+    let mut s2 = SprottL::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-L not deterministic: {} vs {}", a, b);
+    }
+}

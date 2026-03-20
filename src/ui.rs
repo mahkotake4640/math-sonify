@@ -955,6 +955,7 @@ fn system_display_name(s: &str) -> &'static str {
         "bouali" => "Bouali Attractor",
         "newton_leipnik" => "Newton-Leipnik",
         "shimizu_morioka" => "Shimizu-Morioka",
+        "genesio_tesi" => "Genesio-Tesi",
         "sprott_d" => "Sprott D",
         "sprott_e" => "Sprott E",
         "sprott_f" => "Sprott F",
@@ -1008,6 +1009,7 @@ fn system_tagline(s: &str) -> &'static str {
         "bouali" => "Double-scroll spiral with x² feedback and z-coupling",
         "newton_leipnik" => "Two coupled rigid-body oscillators spontaneously generating chaos",
         "shimizu_morioka" => "A two-scroll oscillator — x²-driven z couples back to destabilize y",
+        "genesio_tesi" => "A third-order Jerk system: one x² term is all the chaos you need",
         "sprott_d" => "Sprott Case I: y² instability with −1.1z dissipation — bounded chaotic attractor",
         "sprott_e" => "Minimal chaos from a yz product — equilibrium at (¼, 1/16, 0)",
         "sprott_f" => "Slow-spiral chaos: x² drives z while y damps at half speed",
@@ -1064,6 +1066,7 @@ fn system_internal_name(display: &str) -> &'static str {
         "Bouali Attractor" => "bouali",
         "Newton-Leipnik" => "newton_leipnik",
         "Shimizu-Morioka" => "shimizu_morioka",
+        "Genesio-Tesi" => "genesio_tesi",
         "Sprott D" => "sprott_d",
         "Sprott E" => "sprott_e",
         "Sprott F" => "sprott_f",
@@ -3246,6 +3249,7 @@ fn draw_advanced_panel(
                 "bouali",
                 "newton_leipnik",
                 "shimizu_morioka",
+                "genesio_tesi",
                 "sprott_d",
                 "sprott_e",
                 "sprott_f",
@@ -3509,6 +3513,14 @@ fn draw_advanced_panel(
                     ui.add(Slider::new(&mut st.config.shimizu_morioka.b, 0.1..=1.5).text("b"))
                         .on_hover_text("z decay rate. Default 0.45 gives chaos.");
                 }
+                "genesio_tesi" => {
+                    ui.add(Slider::new(&mut st.config.genesio_tesi.a, 0.5..=3.0).text("a"))
+                        .on_hover_text("Linear damping (x'' coefficient). Default 1.2 gives chaos.");
+                    ui.add(Slider::new(&mut st.config.genesio_tesi.b, 1.0..=6.0).text("b"))
+                        .on_hover_text("Quadratic frequency (x' coefficient). Default 2.92 gives chaos.");
+                    ui.add(Slider::new(&mut st.config.genesio_tesi.c, 2.0..=12.0).text("c"))
+                        .on_hover_text("Restoring force coefficient. Default 6.0 gives chaos.");
+                }
                 _ => {}
             }
         });
@@ -3631,6 +3643,11 @@ fn draw_advanced_panel(
                 "shimizu_morioka" => {
                     st.config.shimizu_morioka.a = vary(st.config.shimizu_morioka.a, &mut seed).clamp(0.1, 2.0);
                     st.config.shimizu_morioka.b = vary(st.config.shimizu_morioka.b, &mut seed).clamp(0.1, 1.5);
+                }
+                "genesio_tesi" => {
+                    st.config.genesio_tesi.a = vary(st.config.genesio_tesi.a, &mut seed).clamp(0.5, 3.0);
+                    st.config.genesio_tesi.b = vary(st.config.genesio_tesi.b, &mut seed).clamp(1.0, 6.0);
+                    st.config.genesio_tesi.c = vary(st.config.genesio_tesi.c, &mut seed).clamp(2.0, 12.0);
                 }
                 _ => {}
             }
@@ -8525,6 +8542,7 @@ fn equation_text(system: &str) -> &'static str {
         "bouali" => "x' = x(4−y)+az\ny' = −y(1−x²)\nz' = −x(1−s)",
         "newton_leipnik" => "x' = −ax+y+10yz\ny' = −x−0.4y+5xz\nz' = bz−5xy",
         "shimizu_morioka" => "x' = y\ny' = (1−z)x−ay\nz' = x²−bz",
+        "genesio_tesi" => "x' = y\ny' = z\nz' = −cx−by−az+x²",
         "sprott_d" => "x' = −0.2y\ny' = x+z\nz' = x+y²−1.1z",
         "sprott_e" => "x' = yz\ny' = x²−y\nz' = 1−4x",
         "sprott_f" => "x' = y+z\ny' = −x+0.5y\nz' = x²−z",
@@ -8633,6 +8651,11 @@ fn equation_lines(system: &str) -> Vec<&'static str> {
             "x' = y",
             "y' = (1 - z)*x - a*y",
             "z' = x^2 - b*z",
+        ],
+        "genesio_tesi" => vec![
+            "x' = y",
+            "y' = z",
+            "z' = -c*x - b*y - a*z + x^2",
         ],
         "sprott_d" => vec![
             "x' = -0.2*y",

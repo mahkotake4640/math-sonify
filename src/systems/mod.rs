@@ -232,6 +232,11 @@ pub const SYSTEM_REGISTRY: &[SystemEntry] = &[
         description: "Two-scroll oscillator with z-coupling, topologically similar to Lorenz",
     },
     SystemEntry {
+        name: "genesio_tesi",
+        display_name: "Genesio-Tesi",
+        description: "Third-order Jerk attractor: x'''+ax''+bx'+cx = x², polynomial chaos",
+    },
+    SystemEntry {
         name: "sprott_d",
         display_name: "Sprott D",
         description: "Strongly dissipative attractor: y² drives chaos, −2y damps it tightly",
@@ -251,6 +256,7 @@ pub const SYSTEM_REGISTRY: &[SystemEntry] = &[
 pub mod bouali;
 pub mod newton_leipnik;
 pub mod shimizu_morioka;
+pub mod genesio_tesi;
 pub mod sprott_d;
 pub mod sprott_e;
 pub mod sprott_f;
@@ -298,6 +304,7 @@ pub mod van_der_pol;
 pub use bouali::Bouali;
 pub use newton_leipnik::NewtonLeipnik;
 pub use shimizu_morioka::ShimizuMorioka;
+pub use genesio_tesi::GenesioTesi;
 pub use sprott_d::SprottD;
 pub use sprott_e::SprottE;
 pub use sprott_f::SprottF;

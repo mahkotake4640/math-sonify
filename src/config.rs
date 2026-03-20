@@ -50,6 +50,7 @@ pub struct Config {
     pub bouali: BoualiConfig,
     pub newton_leipnik: NewtonLeipnikConfig,
     pub shimizu_morioka: ShimizuMoriokaConfig,
+    pub genesio_tesi: GenesioTesiConfig,
 }
 
 impl Default for Config {
@@ -94,6 +95,7 @@ impl Default for Config {
             bouali: BoualiConfig::default(),
             newton_leipnik: NewtonLeipnikConfig::default(),
             shimizu_morioka: ShimizuMoriokaConfig::default(),
+            genesio_tesi: GenesioTesiConfig::default(),
         }
     }
 }
@@ -719,6 +721,22 @@ impl Default for ShimizuMoriokaConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GenesioTesiConfig {
+    /// Linear damping coefficient a. Default 1.2 gives chaos.
+    pub a: f64,
+    /// Quadratic frequency coefficient b. Default 2.92 gives chaos.
+    pub b: f64,
+    /// Restoring force coefficient c. Default 6.0 gives chaos.
+    pub c: f64,
+}
+impl Default for GenesioTesiConfig {
+    fn default() -> Self {
+        Self { a: 1.2, b: 2.92, c: 6.0 }
+    }
+}
+
 impl Config {
     /// Clamp all parameters to physically sensible bounds.
     /// Call this after deserializing from user-supplied config files.
@@ -998,6 +1016,10 @@ impl Config {
         // Shimizu-Morioka
         Self::clamp_log_f64(&mut self.shimizu_morioka.a, 0.1, 2.0, "shimizu_morioka.a");
         Self::clamp_log_f64(&mut self.shimizu_morioka.b, 0.1, 1.5, "shimizu_morioka.b");
+        // Genesio-Tesi
+        Self::clamp_log_f64(&mut self.genesio_tesi.a, 0.5, 3.0, "genesio_tesi.a");
+        Self::clamp_log_f64(&mut self.genesio_tesi.b, 1.0, 6.0, "genesio_tesi.b");
+        Self::clamp_log_f64(&mut self.genesio_tesi.c, 2.0, 12.0, "genesio_tesi.c");
     }
 
     /// Clamp a `f64` field to `[min, max]`, emitting a tracing warning if clamped.
@@ -1068,6 +1090,8 @@ impl From<&str> for Scale {
             "phrygian" => Self::Phrygian,
             "lydian" => Self::Lydian,
             "harmonic_series" => Self::HarmonicSeries,
+            "hirajoshi" => Self::Hirajoshi,
+            "blues" => Self::Blues,
             _ => Self::Pentatonic,
         }
     }

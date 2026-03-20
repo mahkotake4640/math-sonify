@@ -42,7 +42,7 @@ use crate::sonification::{
 use crate::synth::OscShape;
 use crate::systems::{
     ArnoldCat, Bouali, BurkeShaw, Chen, CustomOde, Dadras, DelayedMap, FractionalLorenz,
-    KuramotoDriven, LogisticMap, Lorenz84, Mathieu, NewtonLeipnik, Oregonator,
+    GenesioTesi, KuramotoDriven, LogisticMap, Lorenz84, Mathieu, NewtonLeipnik, Oregonator,
     RabinovichFabrikant, Rikitake, Rucklidge, ShimizuMorioka, SprottC, SprottD, SprottE,
     SprottF, SprottG, SprottH, SprottL, StandardMap, StochasticLorenz, Thomas, *,
 };
@@ -2915,6 +2915,13 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
             let mut s = ShimizuMorioka::new();
             s.a = config.shimizu_morioka.a;
             s.b = config.shimizu_morioka.b;
+            Box::new(s)
+        }
+        "genesio_tesi" => {
+            let mut s = GenesioTesi::new();
+            s.a = config.genesio_tesi.a;
+            s.b = config.genesio_tesi.b;
+            s.c = config.genesio_tesi.c;
             Box::new(s)
         }
         _ => Box::new(Lorenz::new(

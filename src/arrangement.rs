@@ -282,6 +282,11 @@ pub fn lerp_config(a: &Config, b: &Config, t: f32) -> Config {
             a: lf64(a.shimizu_morioka.a, b.shimizu_morioka.a),
             b: lf64(a.shimizu_morioka.b, b.shimizu_morioka.b),
         },
+        genesio_tesi: crate::config::GenesioTesiConfig {
+            a: lf64(a.genesio_tesi.a, b.genesio_tesi.a),
+            b: lf64(a.genesio_tesi.b, b.genesio_tesi.b),
+            c: lf64(a.genesio_tesi.c, b.genesio_tesi.c),
+        },
         viz: a.viz.clone(), // don't morph viz settings
         ..a.clone()
     }
@@ -469,11 +474,28 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "Xz Knot",
         "Equilibrium Fugue",
         "Half-Speed Spiral",
+        "Jerk Circuit",
+    ];
+
+    let melodic_pool: &[&str] = &[
+        "Glass Harp",
+        "Electric Kelp",
+        "The Butterfly's Aria",
+        "Solar Wind",
+        "Möbius Lead",
+        "Breathing Galaxy",
+        "Siren Call",
+        "Aurora Borealis",
+        "The Synchronization",
+        "Equilibrium Fugue",
+        "Half-Speed Spiral",
+        "Memory of Water",
     ];
 
     let pool = match mood {
         "rhythmic" => rhythmic_pool,
         "experimental" => experimental_pool,
+        "melodic" => melodic_pool,
         _ => ambient_pool,
     };
 
@@ -499,9 +521,13 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "waveguide",
         "fm",
     ];
+    let modes_melodic: &[&str] = &[
+        "direct", "direct", "orbital", "vocal", "waveguide", "fm", "direct",
+    ];
     let mode_pool = match mood {
         "rhythmic" => modes_rhythmic,
         "experimental" => modes_experimental,
+        "melodic" => modes_melodic,
         _ => modes_ambient,
     };
 
@@ -527,9 +553,17 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "pentatonic",
         "microtonal",
     ];
+    let scales_melodic: &[&str] = &[
+        "major",
+        "pentatonic",
+        "pentatonic",
+        "just_intonation",
+        "major",
+    ];
     let scale_pool = match mood {
         "rhythmic" => scales_rhythmic,
         "experimental" => scales_experimental,
+        "melodic" => scales_melodic,
         _ => scales_ambient,
     };
 
@@ -560,6 +594,7 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
     let (hold_lo, hold_hi, morph_lo, morph_hi) = match mood {
         "rhythmic" => (10.0f32, 20.0, 18.0f32, 32.0),
         "experimental" => (8.0f32, 18.0, 22.0f32, 42.0),
+        "melodic" => (14.0f32, 28.0, 24.0f32, 44.0),
         _ => (12.0f32, 26.0, 22.0f32, 40.0),
     };
 
@@ -589,9 +624,13 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
     let names_experimental: &[&str] = &[
         "Fracture", "Warp", "Corrupt", "Scatter", "Void", "Strange", "Collapse", "Mutate",
     ];
+    let names_melodic: &[&str] = &[
+        "Theme", "Variation", "Bridge", "Return", "Coda", "Interlude", "Cadence", "Resolution",
+    ];
     let name_pool = match mood {
         "rhythmic" => names_rhythmic,
         "experimental" => names_experimental,
+        "melodic" => names_melodic,
         _ => names_ambient,
     };
 
@@ -671,6 +710,9 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         let rucklidge_lambda = rrange(&mut rng, 5.0, 9.0) as f64;
         let shimizu_a = rrange(&mut rng, 0.5, 1.2) as f64;
         let shimizu_b = rrange(&mut rng, 0.3, 0.8) as f64;
+        let genesio_a = rrange(&mut rng, 0.8, 1.8) as f64;
+        let genesio_b = rrange(&mut rng, 2.0, 4.0) as f64;
+        let genesio_c = rrange(&mut rng, 4.0, 8.0) as f64;
 
         let name_idx = (i + ri(&mut rng, 3)) % name_pool.len();
         let name = name_pool[name_idx];
@@ -714,6 +756,9 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
             c.rucklidge.lambda = rucklidge_lambda;
             c.shimizu_morioka.a = shimizu_a;
             c.shimizu_morioka.b = shimizu_b;
+            c.genesio_tesi.a = genesio_a;
+            c.genesio_tesi.b = genesio_b;
+            c.genesio_tesi.c = genesio_c;
 
             c.audio.master_volume = c.audio.master_volume.max(0.62);
         }));
@@ -893,7 +938,7 @@ mod tests {
 
     #[test]
     fn generate_song_returns_eight_scenes() {
-        for mood in &["ambient", "rhythmic", "experimental", "unknown_mood"] {
+        for mood in &["ambient", "rhythmic", "experimental", "melodic", "unknown_mood"] {
             let scenes = generate_song(mood, 42);
             assert_eq!(scenes.len(), 8, "mood={} returned {} scenes", mood, scenes.len());
         }
