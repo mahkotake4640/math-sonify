@@ -191,4 +191,11 @@ mod tests {
         let r = sys.order_parameter();
         assert!(r > 0.8, "High coupling should synchronize: r={}", r);
     }
+
+    #[test]
+    fn test_kuramoto_speed_positive_after_step() {
+        let mut sys = Kuramoto::new(4, 0.5);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

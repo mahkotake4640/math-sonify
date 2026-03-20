@@ -156,4 +156,11 @@ mod tests {
         assert!(d[1].abs() < 1e-12, "d[1]={}", d[1]);
         assert!((d[2] - 4.272).abs() < 1e-12, "d[2]={}", d[2]);
     }
+
+    #[test]
+    fn test_burke_shaw_speed_positive_after_step() {
+        let mut sys = BurkeShaw::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

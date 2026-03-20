@@ -135,4 +135,11 @@ mod tests {
             assert!((a - b).abs() < 1e-15, "NaN state should be ignored");
         }
     }
+
+    #[test]
+    fn test_van_der_pol_speed_positive_after_step() {
+        let mut sys = VanDerPol::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

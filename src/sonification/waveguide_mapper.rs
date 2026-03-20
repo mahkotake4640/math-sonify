@@ -153,4 +153,35 @@ mod tests {
                 "tension {} out of [0,1]", p.waveguide_tension);
         }
     }
+
+    #[test]
+    fn test_waveguide_gain_increases_with_speed() {
+        let mut m_low = WaveguideMapping::new();
+        let mut m_high = WaveguideMapping::new();
+        let p_low = m_low.map(&[1.0, 1.0], 0.0, &default_config());
+        let p_high = m_high.map(&[1.0, 1.0], 200.0, &default_config());
+        assert!(p_high.gain > p_low.gain,
+            "Higher speed should produce higher gain: low={}, high={}", p_low.gain, p_high.gain);
+    }
+
+    #[test]
+    fn test_waveguide_excite_cooldown_prevents_double_trigger() {
+        let mut m = WaveguideMapping::new();
+        // First high-speed call should excite
+        let p1 = m.map(&[1.0, 1.0], 200.0, &default_config());
+        assert!(p1.waveguide_excite, "first high-speed call should excite");
+        // Immediately after, cooldown should prevent re-triggering
+        let p2 = m.map(&[1.0, 1.0], 200.0, &default_config());
+        assert!(!p2.waveguide_excite, "cooldown should prevent immediate re-trigger");
+    }
+
+    #[test]
+    fn test_waveguide_filter_cutoff_increases_with_speed() {
+        let mut m_low = WaveguideMapping::new();
+        let mut m_high = WaveguideMapping::new();
+        let p_low = m_low.map(&[1.0, 1.0], 0.0, &default_config());
+        let p_high = m_high.map(&[1.0, 1.0], 200.0, &default_config());
+        assert!(p_high.filter_cutoff > p_low.filter_cutoff,
+            "filter_cutoff should increase with speed: low={}, high={}", p_low.filter_cutoff, p_high.filter_cutoff);
+    }
 }

@@ -141,4 +141,11 @@ mod tests {
         assert!((s[0] - 0.1).abs() < 1e-15, "NaN should not change state[0]");
         assert!((s[1] - 2.0).abs() < 1e-15);
     }
+
+    #[test]
+    fn test_sprott_c_speed_positive_after_step() {
+        let mut sys = SprottC::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

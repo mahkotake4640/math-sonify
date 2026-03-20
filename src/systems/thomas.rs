@@ -156,4 +156,11 @@ mod tests {
         // d[2] = sin(0) - b*0 = 0
         assert!(d[2].abs() < 1e-10, "d[2] expected 0.0, got {}", d[2]);
     }
+
+    #[test]
+    fn test_thomas_speed_positive_after_step() {
+        let mut sys = Thomas::new(0.19);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

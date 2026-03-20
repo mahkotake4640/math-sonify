@@ -105,4 +105,29 @@ mod tests {
         let y = ws.process(x).abs();
         assert!(y < x, "Waveshaper should saturate large signals: {} -> {}", x, y);
     }
+
+    #[test]
+    fn test_waveshaper_higher_drive_more_saturation() {
+        // Higher drive compresses more: output amplitude should be closer to saturation ceiling
+        let ws_low = Waveshaper { drive: 1.0, mix: 1.0, asymmetry: 0.0 };
+        let ws_high = Waveshaper { drive: 20.0, mix: 1.0, asymmetry: 0.0 };
+        let x = 2.0_f32;
+        let y_low = ws_low.process(x).abs();
+        let y_high = ws_high.process(x).abs();
+        // High drive saturates harder: output range is more compressed
+        assert!(y_high < y_low, "Higher drive should produce smaller output (more saturation): low={}, high={}", y_low, y_high);
+    }
+
+    #[test]
+    fn test_waveshaper_asymmetry_zero_is_more_symmetric() {
+        // With asymmetry=0, positive and negative inputs of same magnitude should give opposite-sign outputs of equal magnitude
+        let ws = Waveshaper { drive: 3.0, mix: 1.0, asymmetry: 0.0 };
+        let x = 0.5_f32;
+        let y_pos = ws.process(x);
+        let y_neg = ws.process(-x);
+        assert!(
+            (y_pos + y_neg).abs() < 0.01,
+            "asymmetry=0 should be symmetric: pos={}, neg={}", y_pos, y_neg
+        );
+    }
 }

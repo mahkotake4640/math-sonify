@@ -157,4 +157,11 @@ mod tests {
         assert!((d[1] - 1.0).abs() < 1e-12, "d[1] expected 1.0, got {}", d[1]);
         assert!((d[2] - (-4.5)).abs() < 1e-12, "d[2] expected -4.5, got {}", d[2]);
     }
+
+    #[test]
+    fn test_rucklidge_speed_positive_after_step() {
+        let mut sys = Rucklidge::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

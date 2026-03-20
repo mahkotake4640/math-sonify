@@ -258,4 +258,11 @@ mod tests {
             assert!((a - b).abs() < 1e-12, "Non-deterministic: {} vs {}", a, b);
         }
     }
+
+    #[test]
+    fn test_three_body_speed_positive_after_step() {
+        let mut sys = ThreeBody::new([1.0, 1.0, 1.0]);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

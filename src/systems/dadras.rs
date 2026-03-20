@@ -163,4 +163,11 @@ mod tests {
         assert!((d[1] - 1.7).abs() < 1e-12, "d[1] expected 1.7, got {}", d[1]);
         assert!((d[2] - 2.0).abs() < 1e-12, "d[2] expected 2.0, got {}", d[2]);
     }
+
+    #[test]
+    fn test_dadras_speed_positive_after_step() {
+        let mut sys = Dadras::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }

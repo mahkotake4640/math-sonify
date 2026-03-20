@@ -271,4 +271,25 @@ mod tests {
         // Just check that we did not panic and the output is finite.
         assert!(env.level().is_finite());
     }
+
+    #[test]
+    fn test_adsr_set_params_updates_sustain() {
+        // set_params should change behavior: updating sustain from 0.7 to 0.3 should yield
+        // a lower settled level after attack+decay.
+        let mut env = Adsr::new(1.0, 50.0, 0.7, 500.0, SR);
+        env.trigger();
+        // fast forward past attack+decay
+        run_for(&mut env, 5000);
+        // Now update sustain to 0.3 — next decay cycle uses new target
+        env.set_params(1.0, 50.0, 0.3, 500.0);
+        // Re-trigger to restart the envelope with the new sustain
+        env.trigger();
+        run_for(&mut env, 5000);
+        let level = env.level();
+        assert!(
+            (level - 0.3).abs() < 0.05,
+            "After set_params(sustain=0.3) and re-trigger, level should be near 0.3, got {}",
+            level
+        );
+    }
 }

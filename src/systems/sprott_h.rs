@@ -145,4 +145,14 @@ mod tests {
         sys.step(0.01);
         assert!(sys.speed() > 0.0);
     }
+
+    #[test]
+    fn test_sprott_h_set_state() {
+        let mut sys = SprottH::new();
+        sys.set_state(&[1.0, 2.0, 3.0]);
+        let s = sys.state();
+        assert!((s[0] - 1.0).abs() < 1e-15);
+        assert!((s[1] - 2.0).abs() < 1e-15);
+        assert!((s[2] - 3.0).abs() < 1e-15);
+    }
 }

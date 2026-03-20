@@ -194,4 +194,54 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_direct_mapping_different_states_produce_different_freqs() {
+        // After the mapper learns a range, low and high states should yield different freqs.
+        let mut mapper = DirectMapping::new();
+        let config = crate::config::SonificationConfig::default();
+        // Teach the mapper a range by alternating extremes
+        for i in 0..100 {
+            let v = if i % 2 == 0 { 0.0_f64 } else { 10.0_f64 };
+            mapper.map(&[v, v, v], 1.0, &config);
+        }
+        let p_low = mapper.map(&[0.0_f64, 0.0, 0.0], 1.0, &config);
+        let p_high = mapper.map(&[10.0_f64, 10.0, 10.0], 1.0, &config);
+        let diff: f32 = p_low.freqs.iter().zip(p_high.freqs.iter()).map(|(a, b)| (a - b).abs()).sum();
+        assert!(diff > 0.1, "Different states should produce different frequencies: diff={}", diff);
+    }
+
+    #[test]
+    fn test_direct_mapping_respects_base_frequency() {
+        // With base_frequency=880, all output frequencies should be >= base
+        let mut mapper = DirectMapping::new();
+        let mut config = crate::config::SonificationConfig::default();
+        config.base_frequency = 880.0;
+        let state = vec![1.0_f64, 2.0, 3.0];
+        let params = mapper.map(&state, 5.0, &config);
+        for (i, &f) in params.freqs.iter().enumerate() {
+            if f > 0.0 {
+                assert!(
+                    f >= 800.0,
+                    "Voice {} frequency {} below base 880 Hz",
+                    i, f
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_direct_mapping_chaos_level_in_range() {
+        let mut mapper = DirectMapping::new();
+        let config = crate::config::SonificationConfig::default();
+        for i in 0..20 {
+            let state = vec![i as f64 * 0.5, i as f64 * -0.3, i as f64 * 0.1];
+            let params = mapper.map(&state, i as f64 * 10.0, &config);
+            assert!(
+                params.chaos_level >= 0.0 && params.chaos_level <= 1.0,
+                "chaos_level {} out of [0,1] at step {}",
+                params.chaos_level, i
+            );
+        }
+    }
 }

@@ -188,4 +188,11 @@ mod tests {
         assert_eq!(sys.dimension(), 8);
         assert!(sys.state().iter().all(|v| v.is_finite()));
     }
+
+    #[test]
+    fn test_lorenz96_speed_positive_after_step() {
+        let mut sys = Lorenz96::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive after step: {}", sys.speed());
+    }
 }
