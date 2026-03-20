@@ -135,4 +135,76 @@ impl DynamicalSystem for DoublePendulum {
             .sqrt();
         self.speed = ds / dt;
     }
+
+    fn set_state(&mut self, s: &[f64]) {
+        let n = self.state.len().min(s.len());
+        for i in 0..n {
+            if s[i].is_finite() {
+                self.state[i] = s[i];
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::systems::DynamicalSystem;
+
+    #[test]
+    fn test_double_pendulum_initial_state() {
+        let sys = DoublePendulum::new(1.0, 1.0, 1.0, 1.0);
+        let s = sys.state();
+        assert_eq!(s.len(), 4);
+        assert!(s.iter().all(|v| v.is_finite()), "Initial state has non-finite values");
+        assert_eq!(sys.name(), "Double Pendulum");
+        assert_eq!(sys.dimension(), 4);
+    }
+
+    #[test]
+    fn test_double_pendulum_step_changes_state() {
+        let mut sys = DoublePendulum::new(1.0, 1.0, 1.0, 1.0);
+        let before: Vec<f64> = sys.state().to_vec();
+        sys.step(0.01);
+        let after = sys.state();
+        assert!(
+            before.iter().zip(after.iter()).any(|(a, b)| (a - b).abs() > 1e-15),
+            "State did not change after step"
+        );
+    }
+
+    #[test]
+    fn test_double_pendulum_deterministic() {
+        let mut sys1 = DoublePendulum::new(1.0, 1.0, 1.0, 1.0);
+        let mut sys2 = DoublePendulum::new(1.0, 1.0, 1.0, 1.0);
+        for _ in 0..200 {
+            sys1.step(0.01);
+            sys2.step(0.01);
+        }
+        for (a, b) in sys1.state().iter().zip(sys2.state().iter()) {
+            assert!((a - b).abs() < 1e-12, "Non-deterministic: {} vs {}", a, b);
+        }
+    }
+
+    #[test]
+    fn test_double_pendulum_state_stays_finite() {
+        let mut sys = DoublePendulum::new(1.0, 1.0, 1.0, 1.0);
+        for _ in 0..1000 {
+            sys.step(0.01);
+        }
+        for v in sys.state().iter() {
+            assert!(v.is_finite(), "State became non-finite: {}", v);
+        }
+    }
+
+    #[test]
+    fn test_double_pendulum_set_state() {
+        let mut sys = DoublePendulum::new(1.0, 1.0, 1.0, 1.0);
+        sys.set_state(&[0.1, 0.2, 0.3, 0.4]);
+        let s = sys.state();
+        assert!((s[0] - 0.1).abs() < 1e-15);
+        assert!((s[1] - 0.2).abs() < 1e-15);
+        assert!((s[2] - 0.3).abs() < 1e-15);
+        assert!((s[3] - 0.4).abs() < 1e-15);
+    }
 }

@@ -132,3 +132,68 @@ impl DynamicalSystem for MackeyGlass {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::systems::DynamicalSystem;
+
+    #[test]
+    fn test_mackey_glass_initial_state() {
+        let sys = MackeyGlass::new();
+        let s = sys.state();
+        assert_eq!(s.len(), 3);
+        assert!(s.iter().all(|v| v.is_finite()), "Initial state has non-finite values");
+        assert_eq!(sys.name(), "mackey_glass");
+        assert_eq!(sys.dimension(), 3);
+    }
+
+    #[test]
+    fn test_mackey_glass_step_changes_state() {
+        let mut sys = MackeyGlass::new();
+        // After enough steps to get past the constant-history warm-up
+        for _ in 0..50 {
+            sys.step(0.5);
+        }
+        let before: Vec<f64> = sys.state().to_vec();
+        sys.step(0.5);
+        let after = sys.state();
+        assert!(
+            before.iter().zip(after.iter()).any(|(a, b)| (a - b).abs() > 1e-15),
+            "State did not change after step"
+        );
+    }
+
+    #[test]
+    fn test_mackey_glass_state_stays_finite() {
+        let mut sys = MackeyGlass::new();
+        for _ in 0..500 {
+            sys.step(0.5);
+        }
+        for v in sys.state().iter() {
+            assert!(v.is_finite(), "State became non-finite: {}", v);
+        }
+    }
+
+    #[test]
+    fn test_mackey_glass_set_state() {
+        let mut sys = MackeyGlass::new();
+        sys.set_state(&[2.0]);
+        // After set_state, all observable values should reflect the new x
+        let s = sys.state();
+        for v in s.iter() {
+            assert!((*v - 2.0).abs() < 1e-10, "Observable not reset to new x: {}", v);
+        }
+    }
+
+    #[test]
+    fn test_mackey_glass_set_state_nan_ignored() {
+        let mut sys = MackeyGlass::new();
+        let original_x = sys.state()[0];
+        sys.set_state(&[f64::NAN]);
+        assert!(
+            (sys.state()[0] - original_x).abs() < 1e-10,
+            "NaN set_state should be ignored"
+        );
+    }
+}
