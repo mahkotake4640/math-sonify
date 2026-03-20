@@ -229,6 +229,12 @@ pub const PRESETS: &[Preset] = &[
         color: Color32::from_rgb(40, 160, 220),
         category: "Atmospheric",
     },
+    Preset {
+        name: "Mirror Attractor",
+        description: "Shimizu-Morioka two-scroll — a left-right symmetric pair of lobes connected by unstable manifolds. The x²-bz coupling creates the scroll pinch.",
+        color: Color32::from_rgb(160, 80, 220),
+        category: "Experimental",
+    },
 ];
 
 pub fn load_preset(name: &str) -> Config {
@@ -1511,6 +1517,38 @@ pub fn load_preset(name: &str) -> Config {
             rucklidge: RucklidgeConfig { kappa: 2.0, lambda: 6.7 },
             ..Default::default()
         },
+        "Mirror Attractor" => Config {
+            system: SystemConfig {
+                name: "shimizu_morioka".into(),
+                dt: 0.002,
+                speed: 0.9,
+            },
+            sonification: SonificationConfig {
+                mode: "spectral".into(),
+                scale: "phrygian".into(),
+                base_frequency: 110.0,
+                octave_range: 3.0,
+                chord_mode: "minor".into(),
+                transpose_semitones: -3.0,
+                voice_levels: [1.0, 0.8, 0.5, 0.2],
+                portamento_ms: 80.0,
+                voice_shapes: ["triangle".into(), "sine".into(), "triangle".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.55,
+                delay_ms: 250.0,
+                delay_feedback: 0.38,
+                master_volume: 0.72,
+                chorus_mix: 0.35,
+                chorus_rate: 0.3,
+                chorus_depth: 0.45,
+                waveshaper_drive: 2.0,
+                waveshaper_mix: 0.15,
+                ..Default::default()
+            },
+            shimizu_morioka: ShimizuMoriokaConfig { a: 0.75, b: 0.45 },
+            ..Default::default()
+        },
 
         _ => Config::default(),
     }
@@ -1650,4 +1688,60 @@ fn sanitize_name(name: &str) -> String {
         })
         .collect::<String>()
         .replace(' ', "_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_name_alphanumeric_passthrough() {
+        assert_eq!(sanitize_name("hello123"), "hello123");
+    }
+
+    #[test]
+    fn test_sanitize_name_spaces_become_underscores() {
+        assert_eq!(sanitize_name("my patch"), "my_patch");
+    }
+
+    #[test]
+    fn test_sanitize_name_special_chars_replaced() {
+        assert_eq!(sanitize_name("foo/bar.baz"), "foo_bar_baz");
+    }
+
+    #[test]
+    fn test_sanitize_name_dashes_and_underscores_kept() {
+        assert_eq!(sanitize_name("my-patch_v2"), "my-patch_v2");
+    }
+
+    #[test]
+    fn test_load_preset_unknown_returns_default() {
+        let c = load_preset("nonexistent");
+        let d = Config::default();
+        assert_eq!(c.system.name, d.system.name, "unknown preset should return default system");
+    }
+
+    #[test]
+    fn test_all_presets_loadable_and_valid() {
+        for p in PRESETS {
+            let mut c = load_preset(p.name);
+            c.validate(); // should not panic
+            assert!(!c.system.name.is_empty(), "system name empty for preset '{}'", p.name);
+        }
+    }
+
+    #[test]
+    fn test_preset_names_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for p in PRESETS {
+            assert!(seen.insert(p.name), "duplicate preset name: {}", p.name);
+        }
+    }
+
+    #[test]
+    fn test_preset_categories_nonempty() {
+        for p in PRESETS {
+            assert!(!p.category.is_empty(), "empty category for preset '{}'", p.name);
+        }
+    }
 }

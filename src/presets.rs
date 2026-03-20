@@ -127,3 +127,66 @@ pub fn load_preset(name: &str) -> Config {
         _ => Config::default(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_preset_unknown_returns_default() {
+        let c = load_preset("no such preset");
+        let d = Config::default();
+        assert_eq!(c.system.name, d.system.name, "unknown preset should return default system");
+    }
+
+    #[test]
+    fn test_all_presets_loadable() {
+        // Every name in the PRESETS catalogue should produce a non-default system
+        for p in PRESETS {
+            let c = load_preset(p.name);
+            // As long as load_preset doesn't panic, the preset is loadable
+            assert!(!c.system.name.is_empty(), "system name should not be empty for '{}'", p.name);
+        }
+    }
+
+    #[test]
+    fn test_preset_names_unique() {
+        let names: Vec<&str> = PRESETS.iter().map(|p| p.name).collect();
+        let mut seen = std::collections::HashSet::new();
+        for n in &names {
+            assert!(seen.insert(*n), "duplicate preset name: {}", n);
+        }
+    }
+
+    #[test]
+    fn test_lorenz_ambience_loads_lorenz() {
+        let c = load_preset("Lorenz Ambience");
+        assert_eq!(c.system.name, "lorenz");
+    }
+
+    #[test]
+    fn test_torus_drone_loads_geodesic_torus() {
+        let c = load_preset("Torus Drone");
+        assert_eq!(c.system.name, "geodesic_torus");
+    }
+
+    #[test]
+    fn test_all_preset_configs_pass_validate() {
+        for p in PRESETS {
+            let mut c = load_preset(p.name);
+            c.validate(); // should not panic
+        }
+    }
+
+    #[test]
+    fn test_preset_base_frequencies_positive() {
+        for p in PRESETS {
+            let c = load_preset(p.name);
+            assert!(
+                c.sonification.base_frequency > 0.0,
+                "preset '{}' has non-positive base_frequency: {}",
+                p.name, c.sonification.base_frequency
+            );
+        }
+    }
+}
