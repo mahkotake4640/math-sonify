@@ -322,8 +322,6 @@ pub struct AppState {
     /// Live partials from the spectral sonification (updated by sim thread each tick).
     /// Used by the UI to capture real attractor spectral content on FREEZE.
     pub spectral_live_partials: [f32; 32],
-    // Fractional Lorenz alpha
-    pub lorenz_alpha: f64,
     // Arrangement probabilistic
     pub arr_probabilistic: bool,
     // MIDI input
@@ -651,7 +649,6 @@ impl AppState {
             spectral_freeze_freqs: vec![0.0; 16],
             spectral_freeze_amps: vec![0.0; 16],
             spectral_live_partials: [0.0; 32],
-            lorenz_alpha: 1.0,
             arr_probabilistic: false,
             midi_in_enabled: false,
             midi_in_note_target: "rho".into(),

@@ -49,8 +49,6 @@ pub struct Config {
     pub fractional_lorenz: FractionalLorenzConfig,
     pub bouali: BoualiConfig,
     pub newton_leipnik: NewtonLeipnikConfig,
-    pub dequan_li: DequanLiConfig,
-    pub sakarya: SakaryaConfig,
 }
 
 impl Default for Config {
@@ -94,8 +92,6 @@ impl Default for Config {
             fractional_lorenz: FractionalLorenzConfig::default(),
             bouali: BoualiConfig::default(),
             newton_leipnik: NewtonLeipnikConfig::default(),
-            dequan_li: DequanLiConfig::default(),
-            sakarya: SakaryaConfig::default(),
         }
     }
 }
@@ -707,38 +703,6 @@ impl Default for NewtonLeipnikConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct DequanLiConfig {
-    pub a: f64,
-    pub c: f64,
-    pub d: f64,
-    pub k: f64,
-    pub f: f64,
-    pub e: f64,
-}
-impl Default for DequanLiConfig {
-    fn default() -> Self {
-        Self { a: 40.0, c: -11.0 / 6.0, d: 0.16, k: 55.0, f: 20.0, e: 4.0 }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct SakaryaConfig {
-    /// x damping coefficient. Default 0.4.
-    pub a: f64,
-    /// Additive constant in dy/dt. Default 1.0.
-    pub b: f64,
-    /// z damping coefficient. Default 2.0.
-    pub c: f64,
-}
-impl Default for SakaryaConfig {
-    fn default() -> Self {
-        Self { a: 0.4, b: 1.0, c: 2.0 }
-    }
-}
-
 impl Config {
     /// Clamp all parameters to physically sensible bounds.
     /// Call this after deserializing from user-supplied config files.
@@ -1015,16 +979,6 @@ impl Config {
         // Newton-Leipnik
         Self::clamp_log_f64(&mut self.newton_leipnik.a, 0.1, 2.0, "newton_leipnik.a");
         Self::clamp_log_f64(&mut self.newton_leipnik.b, 0.01, 1.0, "newton_leipnik.b");
-        // Dequan Li
-        Self::clamp_log_f64(&mut self.dequan_li.a, 1.0, 100.0, "dequan_li.a");
-        Self::clamp_log_f64(&mut self.dequan_li.d, 0.01, 1.0, "dequan_li.d");
-        Self::clamp_log_f64(&mut self.dequan_li.k, 1.0, 200.0, "dequan_li.k");
-        Self::clamp_log_f64(&mut self.dequan_li.f, 1.0, 100.0, "dequan_li.f");
-        Self::clamp_log_f64(&mut self.dequan_li.e, 0.5, 20.0, "dequan_li.e");
-        // Sakarya
-        Self::clamp_log_f64(&mut self.sakarya.a, 0.01, 5.0, "sakarya.a");
-        Self::clamp_log_f64(&mut self.sakarya.b, 0.0, 5.0, "sakarya.b");
-        Self::clamp_log_f64(&mut self.sakarya.c, 0.01, 10.0, "sakarya.c");
     }
 
     /// Clamp a `f64` field to `[min, max]`, emitting a tracing warning if clamped.
