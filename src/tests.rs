@@ -2573,4 +2573,103 @@ mod ode_property_tests {
             r.geodesic_torus.big_r
         );
     }
+
+    #[test]
+    fn lerp_config_interpolates_aizawa() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.aizawa.e = 0.1;
+        b.aizawa.e = 0.3;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.aizawa.e - 0.2).abs() < 1e-9, "aizawa.e not interpolated: {}", r.aizawa.e);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_chua() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.chua.alpha = 10.0;
+        b.chua.alpha = 16.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.chua.alpha - 13.0).abs() < 1e-9, "chua.alpha not interpolated: {}", r.chua.alpha);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_burke_shaw() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.burke_shaw.rho = 3.0;
+        b.burke_shaw.rho = 5.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.burke_shaw.rho - 4.0).abs() < 1e-9, "burke_shaw.rho not interpolated: {}", r.burke_shaw.rho);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_dadras() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.dadras.e = 7.0;
+        b.dadras.e = 11.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.dadras.e - 9.0).abs() < 1e-9, "dadras.e not interpolated: {}", r.dadras.e);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_rucklidge() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.rucklidge.lambda = 5.0;
+        b.rucklidge.lambda = 8.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.rucklidge.lambda - 6.5).abs() < 1e-9, "rucklidge.lambda not interpolated: {}", r.rucklidge.lambda);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_henon_map() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.henon_map.a = 1.0;
+        b.henon_map.a = 1.4;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.henon_map.a - 1.2).abs() < 1e-9, "henon_map.a not interpolated: {}", r.henon_map.a);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_lorenz96() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.lorenz96.f = 6.0;
+        b.lorenz96.f = 10.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.lorenz96.f - 8.0).abs() < 1e-9, "lorenz96.f not interpolated: {}", r.lorenz96.f);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_mackey_glass() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.mackey_glass.tau = 15.0;
+        b.mackey_glass.tau = 25.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.mackey_glass.tau - 20.0).abs() < 1e-9, "mackey_glass.tau not interpolated: {}", r.mackey_glass.tau);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_nose_hoover() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.nose_hoover.a = 2.0;
+        b.nose_hoover.a = 4.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.nose_hoover.a - 3.0).abs() < 1e-9, "nose_hoover.a not interpolated: {}", r.nose_hoover.a);
+    }
 }
