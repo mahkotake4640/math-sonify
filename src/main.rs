@@ -43,8 +43,8 @@ use crate::synth::OscShape;
 use crate::systems::{
     ArnoldCat, Bouali, BurkeShaw, Chen, CustomOde, Dadras, DelayedMap, FractionalLorenz,
     KuramotoDriven, LogisticMap, Lorenz84, Mathieu, NewtonLeipnik, Oregonator,
-    RabinovichFabrikant, Rikitake, Rucklidge, SprottC, SprottG, SprottH, SprottL, StandardMap,
-    StochasticLorenz, Thomas, *,
+    RabinovichFabrikant, Rikitake, Rucklidge, SprottC, SprottG, SprottH, SprottL,
+    StandardMap, StochasticLorenz, Thomas, *,
 };
 use crate::ui::{draw_ui, AppState, SharedState};
 use midir;

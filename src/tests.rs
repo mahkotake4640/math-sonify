@@ -2447,4 +2447,30 @@ mod ode_property_tests {
         let r = lerp_config(&a, &b, 0.5);
         assert!((r.rikitake.mu - 1.0).abs() < 1e-9, "rikitake.mu not interpolated: {}", r.rikitake.mu);
     }
+
+    #[test]
+    fn lerp_config_interpolates_bouali() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.bouali.a = 0.1;
+        b.bouali.a = 0.5;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.bouali.a - 0.3).abs() < 1e-9, "bouali.a not interpolated: {}", r.bouali.a);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_newton_leipnik() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.newton_leipnik.b = 0.1;
+        b.newton_leipnik.b = 0.25;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!(
+            (r.newton_leipnik.b - 0.175).abs() < 1e-9,
+            "newton_leipnik.b not interpolated: {}",
+            r.newton_leipnik.b
+        );
+    }
 }

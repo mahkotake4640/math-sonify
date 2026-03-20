@@ -278,18 +278,6 @@ pub fn lerp_config(a: &Config, b: &Config, t: f32) -> Config {
             a: lf64(a.newton_leipnik.a, b.newton_leipnik.a),
             b: lf64(a.newton_leipnik.b, b.newton_leipnik.b),
         },
-        dequan_li: crate::config::DequanLiConfig {
-            a: lf64(a.dequan_li.a, b.dequan_li.a),
-            c: lf64(a.dequan_li.c, b.dequan_li.c),
-            d: lf64(a.dequan_li.d, b.dequan_li.d),
-            k: lf64(a.dequan_li.k, b.dequan_li.k),
-            f: lf64(a.dequan_li.f, b.dequan_li.f),
-            e: lf64(a.dequan_li.e, b.dequan_li.e),
-        },
-        sakarya: crate::config::SakaryaConfig {
-            a: lf64(a.sakarya.a, b.sakarya.a),
-            b: lf64(a.sakarya.b, b.sakarya.b),
-        },
         viz: a.viz.clone(), // don't morph viz settings
         ..a.clone()
     }
@@ -869,5 +857,73 @@ mod tests {
         let scenes = vec![make_scene(10.0, 5.0, false)];
         let result = scene_at(&scenes, 5.0);
         assert!(result.is_none());
+    }
+
+    // ── generate_song ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn generate_song_returns_eight_scenes() {
+        for mood in &["ambient", "rhythmic", "experimental", "unknown_mood"] {
+            let scenes = generate_song(mood, 42);
+            assert_eq!(scenes.len(), 8, "mood={} returned {} scenes", mood, scenes.len());
+        }
+    }
+
+    #[test]
+    fn generate_song_all_configs_pass_validate() {
+        let scenes = generate_song("ambient", 42);
+        for (i, scene) in scenes.iter().enumerate() {
+            let mut c = scene.config.clone();
+            c.validate(); // must not panic
+            // After validate(), active-scene configs should still be reasonable
+            if scene.active {
+                assert!(
+                    c.audio.master_volume >= 0.0 && c.audio.master_volume <= 1.0,
+                    "Scene {} master_volume out of range: {}", i, c.audio.master_volume
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generate_song_deterministic_same_seed() {
+        let s1 = generate_song("ambient", 99);
+        let s2 = generate_song("ambient", 99);
+        assert_eq!(s1.len(), s2.len());
+        for (a, b) in s1.iter().zip(s2.iter()) {
+            assert_eq!(a.name, b.name, "Same seed produced different scene names");
+        }
+    }
+
+    #[test]
+    fn generate_song_different_seeds_differ() {
+        let s1 = generate_song("ambient", 1);
+        let s2 = generate_song("ambient", 2);
+        // With different seeds the arrangement should differ in at least one scene name
+        let any_diff = s1.iter().zip(s2.iter()).any(|(a, b)| a.name != b.name);
+        assert!(any_diff, "Different seeds produced identical arrangements");
+    }
+
+    #[test]
+    fn generate_song_all_scenes_have_positive_durations() {
+        let scenes = generate_song("rhythmic", 7);
+        for (i, scene) in scenes.iter().filter(|s| s.active).enumerate() {
+            assert!(scene.hold_secs > 0.0, "Active scene {} hold_secs = {}", i, scene.hold_secs);
+        }
+    }
+
+    // ── demo_arrangement ──────────────────────────────────────────────────────
+
+    #[test]
+    fn demo_arrangement_returns_scenes() {
+        let scenes = demo_arrangement();
+        assert!(!scenes.is_empty(), "demo_arrangement returned no scenes");
+    }
+
+    #[test]
+    fn demo_arrangement_has_at_least_one_active_scene() {
+        let scenes = demo_arrangement();
+        let active_count = scenes.iter().filter(|s| s.active).count();
+        assert!(active_count > 0, "demo_arrangement has no active scenes");
     }
 }
