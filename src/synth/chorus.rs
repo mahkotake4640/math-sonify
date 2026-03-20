@@ -69,22 +69,18 @@ impl Chorus {
             let dl = Self::read_interp(&self.buf_l, self.pos, delay_samples);
             let dr = Self::read_interp(&self.buf_r, self.pos, delay_samples);
 
-            // Distribute voices symmetrically: L-dominant, R-dominant, R-dominant.
-            // Weight sums: L = 1+0.5+0.5 = 2.0, R = 0.5+1+1 = 2.5 — equal after
-            // the per-channel normalisation below.  (Previously voices 0 and 2
-            // were both L-dominant giving L=2.5, R=2.0 → 1.94 dB stereo imbalance.)
-            if i == 0 {
-                out_l += dl;
-                out_r += dr * 0.5;
-            } else {
-                out_l += dl * 0.5;
-                out_r += dr;
+            // Three-voice stereo spread: L-dominant, R-dominant, centre.
+            // Weight sums: L = 1.0+0.5+0.75 = 2.25, R = 0.5+1.0+0.75 = 2.25.
+            // Mirror-symmetric by design → equal RMS on L and R for mono input.
+            match i {
+                0 => { out_l += dl;        out_r += dr * 0.5; }
+                1 => { out_l += dl * 0.5;  out_r += dr; }
+                _ => { out_l += dl * 0.75; out_r += dr * 0.75; }
             }
         }
-        // Normalise each channel by its actual total voice weight so the wet
-        // level is equal on L and R regardless of the panning distribution.
-        out_l /= 2.0; // L weights: 1 + 0.5 + 0.5 = 2.0
-        out_r /= 2.5; // R weights: 0.5 + 1   + 1   = 2.5
+        // Normalise by total weight per channel (2.25 each).
+        out_l /= 2.25;
+        out_r /= 2.25;
 
         self.pos = (self.pos + 1) % self.buf_l.len();
 
