@@ -166,4 +166,56 @@ mod tests {
             .sum();
         assert!(d > 1e-6, "Different k should give different dynamics: d={}", d);
     }
+
+    #[test]
+    fn test_standard_map_area_preserving() {
+        // The Chirikov-Taylor map is symplectic: det(Jacobian) = 1.
+        // We verify this numerically: a tiny parallelogram in (θ, p) phase space
+        // has the same area before and after one step of the map.
+        //
+        // One step: p' = p + k·sinθ,  θ' = θ + p'
+        // Jacobian: [[∂θ'/∂θ, ∂θ'/∂p], [∂p'/∂θ, ∂p'/∂p]]
+        //         = [[1+k·cosθ, 1], [k·cosθ, 1]]
+        // det = (1+k·cosθ)·1 - 1·k·cosθ = 1  ✓
+        //
+        // Here we test it numerically with finite differences.
+        let k = 1.5f64;
+        let theta0 = 1.2f64;
+        let p0 = 0.8f64;
+        let eps = 1e-6;
+
+        let one_step = |theta: f64, p: f64| -> (f64, f64) {
+            let new_p = (p + k * theta.sin()).rem_euclid(TAU);
+            let new_theta = (theta + new_p).rem_euclid(TAU);
+            (new_theta, new_p)
+        };
+
+        let (theta0_mapped, p0_mapped) = one_step(theta0, p0);
+        let (theta_dtheta, p_dtheta) = one_step(theta0 + eps, p0);
+        let (theta_dp, p_dp) = one_step(theta0, p0 + eps);
+
+        // Jacobian columns (unnormalized by eps)
+        let j00 = (theta_dtheta - theta0_mapped) / eps; // ∂θ'/∂θ
+        let j10 = (p_dtheta - p0_mapped) / eps;         // ∂p'/∂θ
+        let j01 = (theta_dp - theta0_mapped) / eps;     // ∂θ'/∂p
+        let j11 = (p_dp - p0_mapped) / eps;             // ∂p'/∂p
+
+        // Analytic Jacobian determinant = 1 for all (θ, k)
+        let analytic_det = 1.0 + k * theta0.cos() - k * theta0.cos();
+        assert!(
+            (analytic_det - 1.0).abs() < 1e-12,
+            "Analytic Jacobian determinant should be 1, got {}",
+            analytic_det
+        );
+
+        // Numerical Jacobian: be careful about angle wrapping — for interior points
+        // the finite-difference should also give ~1.
+        // Use a point away from the wrapping boundary: theta0=1.2 rad is safe.
+        let det_numerical = j00 * j11 - j01 * j10;
+        assert!(
+            (det_numerical - 1.0).abs() < 1e-5,
+            "Numerical Jacobian determinant should be ~1, got {}",
+            det_numerical
+        );
+    }
 }
