@@ -2406,4 +2406,45 @@ mod ode_property_tests {
         let r1 = lerp_config(&a, &b, 0.7);
         assert_eq!(r1.delayed_map.tau, 10, "tau should be b's value after midpoint");
     }
+
+    // -------------------------------------------------------------------------
+    // lerp_config for systems added after the initial fix (Lorenz84, RF, Rikitake)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn lerp_config_interpolates_lorenz84() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.lorenz84.f = 6.0;
+        b.lorenz84.f = 10.0;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.lorenz84.f - 8.0).abs() < 1e-9, "lorenz84.f not interpolated: {}", r.lorenz84.f);
+    }
+
+    #[test]
+    fn lerp_config_interpolates_rabinovich_fabrikant() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.rabinovich_fabrikant.gamma = 0.05;
+        b.rabinovich_fabrikant.gamma = 0.15;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!(
+            (r.rabinovich_fabrikant.gamma - 0.1).abs() < 1e-9,
+            "rabinovich_fabrikant.gamma not interpolated: {}",
+            r.rabinovich_fabrikant.gamma
+        );
+    }
+
+    #[test]
+    fn lerp_config_interpolates_rikitake() {
+        use crate::arrangement::lerp_config;
+        let mut a = Config::default();
+        let mut b = Config::default();
+        a.rikitake.mu = 0.5;
+        b.rikitake.mu = 1.5;
+        let r = lerp_config(&a, &b, 0.5);
+        assert!((r.rikitake.mu - 1.0).abs() < 1e-9, "rikitake.mu not interpolated: {}", r.rikitake.mu);
+    }
 }
