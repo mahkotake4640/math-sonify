@@ -259,6 +259,12 @@ pub const PRESETS: &[Preset] = &[
         color: Color32::from_rgb(200, 200, 60),
         category: "Experimental",
     },
+    Preset {
+        name: "Velocity Band",
+        description: "Liu attractor: the y² coupling to x creates a tight single-band scroll unlike Lorenz's double butterfly.",
+        color: Color32::from_rgb(60, 220, 200),
+        category: "Rhythmic",
+    },
 ];
 
 pub fn load_preset(name: &str) -> Config {
@@ -1696,6 +1702,38 @@ pub fn load_preset(name: &str) -> Config {
                 ..Default::default()
             },
             genesio_tesi: GenesioTesiConfig { a: 1.2, b: 2.92, c: 6.0 },
+            ..Default::default()
+        },
+        "Velocity Band" => Config {
+            system: SystemConfig {
+                name: "liu".into(),
+                dt: 0.001,
+                speed: 1.2,
+            },
+            sonification: SonificationConfig {
+                mode: "direct".into(),
+                scale: "chromatic".into(),
+                base_frequency: 196.0,
+                octave_range: 2.5,
+                chord_mode: "power".into(),
+                transpose_semitones: 0.0,
+                voice_levels: [1.0, 0.75, 0.5, 0.25],
+                portamento_ms: 35.0,
+                voice_shapes: ["saw".into(), "triangle".into(), "saw".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.3,
+                delay_ms: 130.0,
+                delay_feedback: 0.4,
+                master_volume: 0.75,
+                chorus_mix: 0.15,
+                chorus_rate: 0.6,
+                chorus_depth: 0.25,
+                waveshaper_drive: 3.0,
+                waveshaper_mix: 0.3,
+                ..Default::default()
+            },
+            liu: LiuConfig { a: 1.0, b: 2.5, c: 5.0, e: 1.0, k: 4.0, m: 4.0 },
             ..Default::default()
         },
 

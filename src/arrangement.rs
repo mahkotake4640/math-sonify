@@ -287,6 +287,14 @@ pub fn lerp_config(a: &Config, b: &Config, t: f32) -> Config {
             b: lf64(a.genesio_tesi.b, b.genesio_tesi.b),
             c: lf64(a.genesio_tesi.c, b.genesio_tesi.c),
         },
+        liu: crate::config::LiuConfig {
+            a: lf64(a.liu.a, b.liu.a),
+            b: lf64(a.liu.b, b.liu.b),
+            c: lf64(a.liu.c, b.liu.c),
+            e: lf64(a.liu.e, b.liu.e),
+            k: lf64(a.liu.k, b.liu.k),
+            m: lf64(a.liu.m, b.liu.m),
+        },
         viz: a.viz.clone(), // don't morph viz settings
         ..a.clone()
     }
@@ -453,6 +461,7 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "Electric Kelp",
         "Möbius Lead",
         "Polarity Reversal",
+        "Velocity Band",
     ];
     let experimental_pool: &[&str] = &[
         "Neon Labyrinth",
@@ -713,6 +722,9 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         let genesio_a = rrange(&mut rng, 0.8, 1.8) as f64;
         let genesio_b = rrange(&mut rng, 2.0, 4.0) as f64;
         let genesio_c = rrange(&mut rng, 4.0, 8.0) as f64;
+        let liu_b = rrange(&mut rng, 1.5, 3.5) as f64;
+        let liu_k = rrange(&mut rng, 2.0, 6.0) as f64;
+        let liu_m = rrange(&mut rng, 2.0, 6.0) as f64;
 
         let name_idx = (i + ri(&mut rng, 3)) % name_pool.len();
         let name = name_pool[name_idx];
@@ -759,6 +771,9 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
             c.genesio_tesi.a = genesio_a;
             c.genesio_tesi.b = genesio_b;
             c.genesio_tesi.c = genesio_c;
+            c.liu.b = liu_b;
+            c.liu.k = liu_k;
+            c.liu.m = liu_m;
 
             c.audio.master_volume = c.audio.master_volume.max(0.62);
         }));

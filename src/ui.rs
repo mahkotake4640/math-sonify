@@ -956,6 +956,7 @@ fn system_display_name(s: &str) -> &'static str {
         "newton_leipnik" => "Newton-Leipnik",
         "shimizu_morioka" => "Shimizu-Morioka",
         "genesio_tesi" => "Genesio-Tesi",
+        "liu" => "Liu Attractor",
         "sprott_d" => "Sprott D",
         "sprott_e" => "Sprott E",
         "sprott_f" => "Sprott F",
@@ -1010,6 +1011,7 @@ fn system_tagline(s: &str) -> &'static str {
         "newton_leipnik" => "Two coupled rigid-body oscillators spontaneously generating chaos",
         "shimizu_morioka" => "A two-scroll oscillator — x²-driven z couples back to destabilize y",
         "genesio_tesi" => "A third-order Jerk system: one x² term is all the chaos you need",
+        "liu" => "Single-band scroll: y² drags x down while mxy and kxz exchange energy",
         "sprott_d" => "Sprott Case I: y² instability with −1.1z dissipation — bounded chaotic attractor",
         "sprott_e" => "Minimal chaos from a yz product — equilibrium at (¼, 1/16, 0)",
         "sprott_f" => "Slow-spiral chaos: x² drives z while y damps at half speed",
@@ -1067,6 +1069,7 @@ fn system_internal_name(display: &str) -> &'static str {
         "Newton-Leipnik" => "newton_leipnik",
         "Shimizu-Morioka" => "shimizu_morioka",
         "Genesio-Tesi" => "genesio_tesi",
+        "Liu Attractor" => "liu",
         "Sprott D" => "sprott_d",
         "Sprott E" => "sprott_e",
         "Sprott F" => "sprott_f",
@@ -1089,6 +1092,9 @@ fn scale_description(scale: &str) -> &'static str {
         "harmonic_series" => "Integer multiples of A2 (110 Hz) — natural overtone series",
         "hirajoshi" => "Japanese pentatonic — sparse, austere, evokes koto and shakuhachi",
         "blues" => "Blues hexatonic — flat third and fifth give a soulful bent-note feel",
+        "dorian" => "D Dorian — minor with raised 6th; modal jazz and Celtic folk favourite",
+        "mixolydian" => "G Mixolydian — major with flat 7th; bluesy, open, rock-inflected brightness",
+        "hungarian_minor" => "Hungarian minor — augmented 4th and leading 7th; dramatic, Eastern European colour",
         _ => "",
     }
 }
@@ -3049,6 +3055,9 @@ fn draw_advanced_panel(
             ("harmonic_series", "Harmonic Series"),
             ("hirajoshi", "Hirajoshi"),
             ("blues", "Blues"),
+            ("dorian", "Dorian"),
+            ("mixolydian", "Mixolydian"),
+            ("hungarian_minor", "Hungarian Minor"),
         ];
         let current_scale = st.config.sonification.scale.clone();
         let current_scale_label = scales
@@ -3254,6 +3263,7 @@ fn draw_advanced_panel(
                 "newton_leipnik",
                 "shimizu_morioka",
                 "genesio_tesi",
+                "liu",
                 "sprott_d",
                 "sprott_e",
                 "sprott_f",
@@ -3525,6 +3535,20 @@ fn draw_advanced_panel(
                     ui.add(Slider::new(&mut st.config.genesio_tesi.c, 2.0..=12.0).text("c"))
                         .on_hover_text("Restoring force coefficient. Default 6.0 gives chaos.");
                 }
+                "liu" => {
+                    ui.add(Slider::new(&mut st.config.liu.a, 0.1..=5.0).text("a"))
+                        .on_hover_text("x damping coefficient. Default 1.0.");
+                    ui.add(Slider::new(&mut st.config.liu.b, 0.5..=8.0).text("b"))
+                        .on_hover_text("y growth rate. Default 2.5 gives chaos.");
+                    ui.add(Slider::new(&mut st.config.liu.c, 1.0..=15.0).text("c"))
+                        .on_hover_text("z damping coefficient. Default 5.0.");
+                    ui.add(Slider::new(&mut st.config.liu.e, 0.1..=5.0).text("e"))
+                        .on_hover_text("y² coupling to x. Default 1.0.");
+                    ui.add(Slider::new(&mut st.config.liu.k, 0.5..=10.0).text("k"))
+                        .on_hover_text("xz coupling in y equation. Default 4.0.");
+                    ui.add(Slider::new(&mut st.config.liu.m, 0.5..=10.0).text("m"))
+                        .on_hover_text("xy coupling in z equation. Default 4.0.");
+                }
                 _ => {}
             }
         });
@@ -3652,6 +3676,14 @@ fn draw_advanced_panel(
                     st.config.genesio_tesi.a = vary(st.config.genesio_tesi.a, &mut seed).clamp(0.5, 3.0);
                     st.config.genesio_tesi.b = vary(st.config.genesio_tesi.b, &mut seed).clamp(1.0, 6.0);
                     st.config.genesio_tesi.c = vary(st.config.genesio_tesi.c, &mut seed).clamp(2.0, 12.0);
+                }
+                "liu" => {
+                    st.config.liu.a = vary(st.config.liu.a, &mut seed).clamp(0.1, 5.0);
+                    st.config.liu.b = vary(st.config.liu.b, &mut seed).clamp(0.5, 8.0);
+                    st.config.liu.c = vary(st.config.liu.c, &mut seed).clamp(1.0, 15.0);
+                    st.config.liu.e = vary(st.config.liu.e, &mut seed).clamp(0.1, 5.0);
+                    st.config.liu.k = vary(st.config.liu.k, &mut seed).clamp(0.5, 10.0);
+                    st.config.liu.m = vary(st.config.liu.m, &mut seed).clamp(0.5, 10.0);
                 }
                 _ => {}
             }
@@ -8547,6 +8579,7 @@ fn equation_text(system: &str) -> &'static str {
         "newton_leipnik" => "x' = −ax+y+10yz\ny' = −x−0.4y+5xz\nz' = bz−5xy",
         "shimizu_morioka" => "x' = y\ny' = (1−z)x−ay\nz' = x²−bz",
         "genesio_tesi" => "x' = y\ny' = z\nz' = −cx−by−az+x²",
+        "liu" => "x' = −ax−ey²\ny' = by−kxz\nz' = −cz+mxy",
         "sprott_d" => "x' = −0.2y\ny' = x+z\nz' = x+y²−1.1z",
         "sprott_e" => "x' = yz\ny' = x²−y\nz' = 1−4x",
         "sprott_f" => "x' = y+z\ny' = −x+0.5y\nz' = x²−z",
@@ -8675,6 +8708,11 @@ fn equation_lines(system: &str) -> Vec<&'static str> {
             "x' = y + z",
             "y' = -x + 0.5*y",
             "z' = x^2 - z",
+        ],
+        "liu" => vec![
+            "x' = -a*x - e*y^2",
+            "y' = b*y - k*x*z",
+            "z' = -c*z + m*x*y",
         ],
         "logistic_map" => vec!["x(n+1) = r * x(n) * (1 - x(n))"],
         "standard_map" => vec![

@@ -51,6 +51,7 @@ pub struct Config {
     pub newton_leipnik: NewtonLeipnikConfig,
     pub shimizu_morioka: ShimizuMoriokaConfig,
     pub genesio_tesi: GenesioTesiConfig,
+    pub liu: LiuConfig,
 }
 
 impl Default for Config {
@@ -96,6 +97,7 @@ impl Default for Config {
             newton_leipnik: NewtonLeipnikConfig::default(),
             shimizu_morioka: ShimizuMoriokaConfig::default(),
             genesio_tesi: GenesioTesiConfig::default(),
+            liu: LiuConfig::default(),
         }
     }
 }
@@ -737,6 +739,22 @@ impl Default for GenesioTesiConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LiuConfig {
+    pub a: f64,
+    pub b: f64,
+    pub c: f64,
+    pub e: f64,
+    pub k: f64,
+    pub m: f64,
+}
+impl Default for LiuConfig {
+    fn default() -> Self {
+        Self { a: 1.0, b: 2.5, c: 5.0, e: 1.0, k: 4.0, m: 4.0 }
+    }
+}
+
 impl Config {
     /// Clamp all parameters to physically sensible bounds.
     /// Call this after deserializing from user-supplied config files.
@@ -1020,6 +1038,13 @@ impl Config {
         Self::clamp_log_f64(&mut self.genesio_tesi.a, 0.5, 3.0, "genesio_tesi.a");
         Self::clamp_log_f64(&mut self.genesio_tesi.b, 1.0, 6.0, "genesio_tesi.b");
         Self::clamp_log_f64(&mut self.genesio_tesi.c, 2.0, 12.0, "genesio_tesi.c");
+        // Liu
+        Self::clamp_log_f64(&mut self.liu.a, 0.1, 5.0, "liu.a");
+        Self::clamp_log_f64(&mut self.liu.b, 0.5, 8.0, "liu.b");
+        Self::clamp_log_f64(&mut self.liu.c, 1.0, 15.0, "liu.c");
+        Self::clamp_log_f64(&mut self.liu.e, 0.1, 5.0, "liu.e");
+        Self::clamp_log_f64(&mut self.liu.k, 0.5, 10.0, "liu.k");
+        Self::clamp_log_f64(&mut self.liu.m, 0.5, 10.0, "liu.m");
     }
 
     /// Clamp a `f64` field to `[min, max]`, emitting a tracing warning if clamped.
@@ -1092,6 +1117,9 @@ impl From<&str> for Scale {
             "harmonic_series" => Self::HarmonicSeries,
             "hirajoshi" => Self::Hirajoshi,
             "blues" => Self::Blues,
+            "dorian" => Self::Dorian,
+            "mixolydian" => Self::Mixolydian,
+            "hungarian_minor" => Self::HungarianMinor,
             _ => Self::Pentatonic,
         }
     }

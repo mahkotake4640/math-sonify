@@ -251,12 +251,30 @@ pub const SYSTEM_REGISTRY: &[SystemEntry] = &[
         display_name: "Sprott F",
         description: "Parameter-free attractor with x² nonlinearity and 0.5·y damping",
     },
+    SystemEntry {
+        name: "liu",
+        display_name: "Liu Attractor",
+        description: "Single-band chaos: y² x-equation coupling creates a tight looping scroll",
+    },
+    SystemEntry {
+        name: "windmi",
+        display_name: "WINDMI",
+        description: "Ionospheric substorm model — exponential nonlinearity in a jerk attractor",
+    },
+    SystemEntry {
+        name: "finance",
+        display_name: "Finance",
+        description: "Macroeconomic chaos: interest rate, investment demand, and price index",
+    },
 ];
 
 pub mod bouali;
 pub mod newton_leipnik;
 pub mod shimizu_morioka;
 pub mod genesio_tesi;
+pub mod liu;
+pub mod windmi;
+pub mod finance;
 pub mod sprott_d;
 pub mod sprott_e;
 pub mod sprott_f;
@@ -305,6 +323,9 @@ pub use bouali::Bouali;
 pub use newton_leipnik::NewtonLeipnik;
 pub use shimizu_morioka::ShimizuMorioka;
 pub use genesio_tesi::GenesioTesi;
+pub use liu::Liu;
+pub use windmi::Windmi;
+pub use finance::Finance;
 pub use sprott_d::SprottD;
 pub use sprott_e::SprottE;
 pub use sprott_f::SprottF;
@@ -2101,6 +2122,4 @@ mod tests {
             leapfrog(&mut s, &q_idx, &p_idx, 0.01, &velocity, &force);
         }
         let energy = 0.5 * (s[0] * s[0] + s[1] * s[1]);
-        assert!((energy - 0.5).abs() < 1e-4, "Leapfrog energy drift: {}", energy);
-    }
-}
+        assert!((energy - 0.5).abs() < 1e-
