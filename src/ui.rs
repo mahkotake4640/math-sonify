@@ -3561,6 +3561,51 @@ fn draw_advanced_panel(
                     st.config.kuramoto_driven.drive_amp = vary(st.config.kuramoto_driven.drive_amp, &mut seed).clamp(0.0, 2.0);
                     st.config.kuramoto_driven.drive_freq = vary(st.config.kuramoto_driven.drive_freq, &mut seed).clamp(0.1, 5.0);
                 }
+                "thomas" => {
+                    st.config.thomas.b = vary(st.config.thomas.b, &mut seed).clamp(0.1, 0.5);
+                }
+                "dadras" => {
+                    st.config.dadras.a = vary(st.config.dadras.a, &mut seed).clamp(1.0, 6.0);
+                    st.config.dadras.b = vary(st.config.dadras.b, &mut seed).clamp(1.0, 5.0);
+                    st.config.dadras.c = vary(st.config.dadras.c, &mut seed).clamp(0.5, 4.0);
+                    st.config.dadras.d = vary(st.config.dadras.d, &mut seed).clamp(0.5, 4.0);
+                    st.config.dadras.e = vary(st.config.dadras.e, &mut seed).clamp(4.0, 15.0);
+                }
+                "rucklidge" => {
+                    st.config.rucklidge.kappa = vary(st.config.rucklidge.kappa, &mut seed).clamp(0.5, 4.0);
+                    st.config.rucklidge.lambda = vary(st.config.rucklidge.lambda, &mut seed).clamp(3.0, 10.0);
+                }
+                "chen" => {
+                    st.config.chen.a = vary(st.config.chen.a, &mut seed).clamp(20.0, 60.0);
+                    st.config.chen.b = vary(st.config.chen.b, &mut seed).clamp(1.0, 8.0);
+                    st.config.chen.c = vary(st.config.chen.c, &mut seed).clamp(15.0, 40.0);
+                }
+                "burke_shaw" => {
+                    st.config.burke_shaw.sigma = vary(st.config.burke_shaw.sigma, &mut seed).clamp(5.0, 20.0);
+                    st.config.burke_shaw.rho = vary(st.config.burke_shaw.rho, &mut seed).clamp(2.0, 8.0);
+                }
+                "lorenz84" => {
+                    st.config.lorenz84.a = vary(st.config.lorenz84.a, &mut seed).clamp(0.1, 0.5);
+                    st.config.lorenz84.b = vary(st.config.lorenz84.b, &mut seed).clamp(1.0, 8.0);
+                    st.config.lorenz84.f = vary(st.config.lorenz84.f, &mut seed).clamp(4.0, 12.0);
+                    st.config.lorenz84.g = vary(st.config.lorenz84.g, &mut seed).clamp(0.5, 3.0);
+                }
+                "rabinovich_fabrikant" => {
+                    st.config.rabinovich_fabrikant.alpha = vary(st.config.rabinovich_fabrikant.alpha, &mut seed).clamp(0.05, 0.5);
+                    st.config.rabinovich_fabrikant.gamma = vary(st.config.rabinovich_fabrikant.gamma, &mut seed).clamp(0.05, 0.3);
+                }
+                "rikitake" => {
+                    st.config.rikitake.mu = vary(st.config.rikitake.mu, &mut seed).clamp(0.1, 3.0);
+                    st.config.rikitake.a = vary(st.config.rikitake.a, &mut seed).clamp(1.0, 10.0);
+                }
+                "bouali" => {
+                    st.config.bouali.a = vary(st.config.bouali.a, &mut seed).clamp(0.0, 1.0);
+                    st.config.bouali.s = vary(st.config.bouali.s, &mut seed).clamp(0.1, 3.0);
+                }
+                "newton_leipnik" => {
+                    st.config.newton_leipnik.a = vary(st.config.newton_leipnik.a, &mut seed).clamp(0.1, 1.0);
+                    st.config.newton_leipnik.b = vary(st.config.newton_leipnik.b, &mut seed).clamp(0.05, 0.4);
+                }
                 _ => {}
             }
             st.system_changed = true;
@@ -8425,6 +8470,20 @@ fn equation_text(system: &str) -> &'static str {
         "oregonator" => "x' = s(y−xy+x−qx²)\ny' = (−y−xy+fz)/s\nz' = x−z",
         "mathieu" => "x'' + (a−2q cos 2t)x = 0",
         "mackey_glass" => "x'(t) = βx(t−τ)/(1+x(t−τ)ⁿ) − γx(t)",
+        "thomas" => "x' = sin(y)−bx\ny' = sin(z)−by\nz' = sin(x)−bz",
+        "sprott_c" => "x' = yz\ny' = x−y\nz' = 1−x²",
+        "dadras" => "x' = y−ax+byz\ny' = cy−xz+z\nz' = dxy−ez",
+        "rucklidge" => "x' = −κx+λy−yz\ny' = x\nz' = −z+y²",
+        "chen" => "x' = a(y−x)\ny' = (c−a)x−xz+cy\nz' = xy−bz",
+        "burke_shaw" => "x' = −σ(x+y)\ny' = −y−σxz\nz' = σxy+ρ",
+        "lorenz84" => "x' = −ax−y²−z²+aF\ny' = −y+xy−bxz+G\nz' = −z+bxy+xz",
+        "rabinovich_fabrikant" => "x' = y(z−1+x²)+γx\ny' = x(3z+1−x²)+γy\nz' = −2z(α+xy)",
+        "sprott_g" => "x' = 0.4x+z\ny' = xz−y\nz' = −x+y",
+        "sprott_h" => "x' = −y+z²\ny' = x+0.5y\nz' = x−z",
+        "sprott_l" => "x' = y+3.9z\ny' = 0.9x²−y\nz' = 1−x",
+        "rikitake" => "x' = −μx+yz\ny' = −μy+x(z−a)\nz' = 1−xy",
+        "bouali" => "x' = x(4−y)+az\ny' = −y(1−x²)\nz' = −x(1−s)",
+        "newton_leipnik" => "x' = −ax+y+10yz\ny' = −x−0.4y+5xz\nz' = bz−5xy",
         _ => "",
     }
 }
