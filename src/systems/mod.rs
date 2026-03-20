@@ -186,8 +186,20 @@ pub const SYSTEM_REGISTRY: &[SystemEntry] = &[
         display_name: "Burke-Shaw",
         description: "Two-parameter double-lobe attractor with elegant algebraic structure",
     },
+    SystemEntry {
+        name: "lorenz84",
+        display_name: "Lorenz-84",
+        description: "Atmospheric circulation model with westerly flow and wave interactions",
+    },
+    SystemEntry {
+        name: "rabinovich_fabrikant",
+        display_name: "Rabinovich-Fabrikant",
+        description: "Plasma-physics derived attractor with complex multi-lobe topology",
+    },
 ];
 
+pub mod lorenz84;
+pub mod rabinovich_fabrikant;
 pub mod burke_shaw;
 pub mod chen;
 pub mod dadras;
@@ -227,6 +239,8 @@ pub use burke_shaw::BurkeShaw;
 pub use chen::Chen;
 pub use dadras::Dadras;
 pub use rucklidge::Rucklidge;
+pub use lorenz84::Lorenz84;
+pub use rabinovich_fabrikant::RabinovichFabrikant;
 pub use thomas::Thomas;
 pub use sprott_c::SprottC;
 pub use arnold_cat::ArnoldCat;

@@ -221,6 +221,16 @@ pub fn lerp_config(a: &Config, b: &Config, t: f32) -> Config {
             sigma: lf64(a.burke_shaw.sigma, b.burke_shaw.sigma),
             rho: lf64(a.burke_shaw.rho, b.burke_shaw.rho),
         },
+        lorenz84: crate::config::Lorenz84Config {
+            a: lf64(a.lorenz84.a, b.lorenz84.a),
+            b: lf64(a.lorenz84.b, b.lorenz84.b),
+            f: lf64(a.lorenz84.f, b.lorenz84.f),
+            g: lf64(a.lorenz84.g, b.lorenz84.g),
+        },
+        rabinovich_fabrikant: crate::config::RabinovichFabrikantConfig {
+            alpha: lf64(a.rabinovich_fabrikant.alpha, b.rabinovich_fabrikant.alpha),
+            gamma: lf64(a.rabinovich_fabrikant.gamma, b.rabinovich_fabrikant.gamma),
+        },
         logistic_map: crate::config::LogisticMapConfig {
             r: lf64(a.logistic_map.r, b.logistic_map.r),
         },

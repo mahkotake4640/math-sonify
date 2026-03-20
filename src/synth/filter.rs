@@ -362,4 +362,121 @@ mod tests {
             out
         );
     }
+
+    #[test]
+    fn test_high_pass_passes_high_freq() {
+        // A high-pass at 5000 Hz should pass a 15 kHz sine with little attenuation.
+        let mut filt = BiquadFilter::high_pass(5000.0, 0.707, SR);
+        let rms = sine_rms(&mut filt, 15000.0, 8000);
+        assert!(rms > 0.5, "High-pass should pass 15 kHz, RMS={}", rms);
+    }
+
+    #[test]
+    fn test_high_pass_attenuates_low_freq() {
+        // A high-pass at 5000 Hz should heavily attenuate a 100 Hz sine.
+        let mut filt = BiquadFilter::high_pass(5000.0, 0.707, SR);
+        let rms = sine_rms(&mut filt, 100.0, 8000);
+        assert!(rms < 0.05, "High-pass at 5 kHz should attenuate 100 Hz, RMS={}", rms);
+    }
+
+    #[test]
+    fn test_notch_attenuates_center_freq() {
+        // A notch at 1000 Hz should attenuate the center frequency significantly.
+        let center = 1000.0_f32;
+        let mut filt_notch = BiquadFilter::notch(center, 10.0, SR);
+        let rms_notch = sine_rms(&mut filt_notch, center, 8000);
+
+        let mut filt_bypass = BiquadFilter::notch(center, 10.0, SR);
+        // Bypass comparison: notch at far-away frequency should pass 1 kHz
+        let mut filt_far = BiquadFilter::notch(5000.0, 10.0, SR);
+        let rms_far = sine_rms(&mut filt_far, center, 8000);
+
+        // The notch should attenuate by at least 6 dB vs. notching at a different freq
+        assert!(
+            rms_notch < rms_far * 0.5,
+            "Notch at center should attenuate: notch={}, far={}",
+            rms_notch,
+            rms_far
+        );
+        let _ = filt_notch; // suppress warning
+        let _ = filt_bypass;
+    }
+
+    #[test]
+    fn test_notch_passes_away_from_center() {
+        // A notch at 1000 Hz should pass 10 kHz with little attenuation.
+        let mut filt = BiquadFilter::notch(1000.0, 5.0, SR);
+        let rms = sine_rms(&mut filt, 10000.0, 8000);
+        assert!(rms > 0.6, "Notch at 1 kHz should pass 10 kHz, RMS={}", rms);
+    }
+
+    #[test]
+    fn test_update_lp_changes_cutoff() {
+        // update_lp should produce the same coefficients as constructing a fresh LP at that cutoff.
+        // Verify by comparing RMS: a 5 kHz tone through a 200 Hz LP should be much quieter
+        // than through a 10 kHz LP.
+        let mut filt_wide = BiquadFilter::low_pass(10000.0, 0.707, SR);
+        let rms_wide = sine_rms(&mut filt_wide, 5000.0, 4000);
+
+        // Create a 10 kHz LP, update it to 200 Hz, then warm it up from zero state.
+        let mut filt_updated = BiquadFilter::low_pass(10000.0, 0.707, SR);
+        filt_updated.update_lp(200.0, 0.707, SR);
+        let rms_updated = sine_rms(&mut filt_updated, 5000.0, 4000);
+
+        assert!(
+            rms_updated < rms_wide * 0.5,
+            "After LP cutoff drop to 200 Hz, 5 kHz should be attenuated: wide={}, updated={}",
+            rms_wide,
+            rms_updated
+        );
+    }
+
+    #[test]
+    fn test_update_bp_changes_center() {
+        // After updating BP center to 10 kHz, the old 1 kHz center should be attenuated.
+        let mut filt = BiquadFilter::band_pass(1000.0, 4.0, SR);
+        let rms_at_1k = sine_rms(&mut filt, 1000.0, 4000);
+        filt.update_bp(10000.0, 4.0, SR);
+        let rms_at_1k_after = sine_rms(&mut filt, 1000.0, 4000);
+        assert!(
+            rms_at_1k_after < rms_at_1k * 0.5,
+            "BP moved to 10 kHz should attenuate 1 kHz: before={}, after={}",
+            rms_at_1k,
+            rms_at_1k_after
+        );
+    }
+
+    #[test]
+    fn test_low_shelf_boosts_low_freq() {
+        // A +6 dB low shelf at 500 Hz should boost a 100 Hz tone.
+        let mut filt_flat = BiquadFilter::low_pass(20000.0, 0.707, SR); // near-flat reference
+        let rms_flat = sine_rms(&mut filt_flat, 100.0, 4000);
+
+        let mut filt_shelf = BiquadFilter::low_shelf(500.0, 6.0, 0.707, SR);
+        let rms_shelf = sine_rms(&mut filt_shelf, 100.0, 4000);
+
+        assert!(
+            rms_shelf > rms_flat,
+            "Low shelf +6 dB should boost 100 Hz: flat={}, shelf={}",
+            rms_flat,
+            rms_shelf
+        );
+    }
+
+    #[test]
+    fn test_high_shelf_boosts_high_freq() {
+        // A +6 dB high shelf at 5000 Hz should boost a 15 kHz tone.
+        let mut filt_flat = BiquadFilter::low_pass(20000.0, 0.707, SR);
+        let rms_flat = sine_rms(&mut filt_flat, 15000.0, 4000);
+
+        let mut filt_shelf = BiquadFilter::high_shelf(5000.0, 6.0, 0.707, SR);
+        let rms_shelf = sine_rms(&mut filt_shelf, 15000.0, 4000);
+
+        assert!(
+            rms_shelf > rms_flat,
+            "High shelf +6 dB should boost 15 kHz: flat={}, shelf={}",
+            rms_flat,
+            rms_shelf
+        );
+    }
 }

@@ -5,9 +5,11 @@ use math_sonify_plugin::{
         chord_intervals_for, quantize_to_scale, DirectMapping, Scale, SonifMode, Sonification,
     },
     systems::{
-        ArnoldCat, BurkeShaw, Chen, CoupledMapLattice, Dadras, DoublePendulum, Duffing,
-        DynamicalSystem, HenonMap, Kuramoto, Lorenz, MackeyGlass, Rossler, Rucklidge, SprottC,
-        Thomas, ThreeBody,
+        Aizawa, ArnoldCat, BurkeShaw, Chen, Chua, CoupledMapLattice, Dadras, DelayedMap,
+        DoublePendulum, Duffing, DynamicalSystem, FractionalLorenz, GeodesicTorus, Halvorsen,
+        HenonMap, HindmarshRose, Kuramoto, KuramotoDriven, LogisticMap, Lorenz, Lorenz96,
+        MackeyGlass, Mathieu, NoseHoover, Oregonator, Rossler, Rucklidge, SprottB, SprottC,
+        StandardMap, StochasticLorenz, Thomas, ThreeBody, VanDerPol,
     },
 };
 
@@ -1078,4 +1080,157 @@ fn arnold_cat_state_in_unit_square() {
     for v in s {
         assert!(*v >= 0.0 && *v < 1.0, "ArnoldCat component outside [0,1): {}", v);
     }
+}
+
+// ── Additional system integration tests ──────────────────────────────────────
+
+#[test]
+fn aizawa_stays_finite() {
+    let mut sys = Aizawa::new();
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "Aizawa state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn aizawa_state_bounded() {
+    let mut sys = Aizawa::new();
+    for _ in 0..20_000 { sys.step(0.01); }
+    for v in sys.state() {
+        assert!(v.abs() < 20.0, "Aizawa component out of range: {}", v);
+    }
+}
+
+#[test]
+fn halvorsen_stays_finite() {
+    let mut sys = Halvorsen::new();
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "Halvorsen state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn chua_stays_finite() {
+    let mut sys = Chua::new();
+    for _ in 0..20_000 { sys.step(0.001); }
+    assert!(all_finite(sys.state()), "Chua state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn chua_state_bounded() {
+    let mut sys = Chua::new();
+    for _ in 0..20_000 { sys.step(0.001); }
+    for v in sys.state() {
+        assert!(v.abs() < 100.0, "Chua component out of range: {}", v);
+    }
+}
+
+#[test]
+fn van_der_pol_stays_finite() {
+    let mut sys = VanDerPol::new();
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "VanDerPol state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn hindmarsh_rose_stays_finite() {
+    // I=3.0 drives spiking; r=0.001 is slow adaptation
+    let mut sys = HindmarshRose::new(3.0, 0.001);
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "HindmarshRose state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn lorenz96_stays_finite() {
+    let mut sys = Lorenz96::new();
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "Lorenz96 state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn sprott_b_stays_finite() {
+    let mut sys = SprottB::new();
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "SprottB state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn nose_hoover_stays_finite() {
+    let mut sys = NoseHoover::new();
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "NoseHoover state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn oregonator_stays_finite() {
+    // f=0.5 is a typical stoichiometric parameter for the BZ reaction model
+    let mut sys = Oregonator::new(0.5);
+    for _ in 0..10_000 { sys.step(0.0001); }
+    assert!(all_finite(sys.state()), "Oregonator state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn geodesic_torus_stays_finite() {
+    let mut sys = GeodesicTorus::new(2.0, 0.5);
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "GeodesicTorus state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn standard_map_stays_finite() {
+    // k=0.97 puts the map near the chaos threshold
+    let mut sys = StandardMap::new(0.97);
+    for _ in 0..10_000 { sys.step(1.0); }
+    assert!(all_finite(sys.state()), "StandardMap state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn logistic_map_stays_in_unit_interval() {
+    // r=3.9: deep into the chaotic regime
+    let mut sys = LogisticMap::new(3.9);
+    for _ in 0..10_000 { sys.step(1.0); }
+    let x = sys.state()[0];
+    assert!(x >= 0.0 && x <= 1.0, "LogisticMap x outside [0,1]: {}", x);
+}
+
+#[test]
+fn fractional_lorenz_stays_finite() {
+    // alpha=0.99 approximates standard Lorenz; use classic params
+    let mut sys = FractionalLorenz::new(0.99, 10.0, 28.0, 8.0 / 3.0);
+    for _ in 0..5_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "FractionalLorenz state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn stochastic_lorenz_stays_finite() {
+    let mut sys = StochasticLorenz::new(10.0, 28.0, 8.0 / 3.0, 0.1);
+    for _ in 0..10_000 { sys.step(0.001); }
+    assert!(all_finite(sys.state()), "StochasticLorenz state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn delayed_map_stays_finite_low_r() {
+    // r=2.0 with uniform initial history at 0.5 is a fixed point: x* = 1 - 1/r = 0.5.
+    // The delayed map can diverge at high r because the stabilising (1-x) feedback
+    // uses delayed, not current, state — so r values above ~2 can be unstable.
+    let mut sys = DelayedMap::new(2.0, 5);
+    for _ in 0..10_000 { sys.step(1.0); }
+    assert!(all_finite(sys.state()), "DelayedMap state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn mathieu_stable_parameters_bounded() {
+    // a=0.5, q=0.1 is well below the first parametric resonance tongue (which
+    // opens around a≈1 ± q), so the solution stays bounded.
+    let mut sys = Mathieu::new(0.5, 0.1);
+    for _ in 0..20_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "Mathieu state non-finite: {:?}", sys.state());
+    for v in sys.state() {
+        assert!(v.abs() < 1000.0, "Mathieu component diverged: {}", v);
+    }
+}
+
+#[test]
+fn kuramoto_driven_stays_finite() {
+    let mut sys = KuramotoDriven::new(1.0, 0.5, 1.0);
+    for _ in 0..10_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "KuramotoDriven state non-finite: {:?}", sys.state());
 }

@@ -43,6 +43,8 @@ pub struct Config {
     pub chen: ChenConfig,
     pub dadras: DadrasConfig,
     pub rucklidge: RucklidgeConfig,
+    pub lorenz84: Lorenz84Config,
+    pub rabinovich_fabrikant: RabinovichFabrikantConfig,
 }
 
 impl Default for Config {
@@ -80,6 +82,8 @@ impl Default for Config {
             chen: ChenConfig::default(),
             dadras: DadrasConfig::default(),
             rucklidge: RucklidgeConfig::default(),
+            lorenz84: Lorenz84Config::default(),
+            rabinovich_fabrikant: RabinovichFabrikantConfig::default(),
         }
     }
 }
@@ -600,6 +604,38 @@ impl Default for RucklidgeConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Lorenz84Config {
+    /// Thermal relaxation rate. Default 0.25.
+    pub a: f64,
+    /// Rotational forcing. Default 4.0.
+    pub b: f64,
+    /// Symmetric heating forcing. Default 8.0.
+    pub f: f64,
+    /// Wave (seasonal) forcing. Default 1.23.
+    pub g: f64,
+}
+impl Default for Lorenz84Config {
+    fn default() -> Self {
+        Self { a: 0.25, b: 4.0, f: 8.0, g: 1.23 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct RabinovichFabrikantConfig {
+    /// Damping parameter (α). Default 0.14.
+    pub alpha: f64,
+    /// Excitation parameter (γ). Default 0.1.
+    pub gamma: f64,
+}
+impl Default for RabinovichFabrikantConfig {
+    fn default() -> Self {
+        Self { alpha: 0.14, gamma: 0.1 }
+    }
+}
+
 impl Config {
     /// Clamp all parameters to physically sensible bounds.
     /// Call this after deserializing from user-supplied config files.
@@ -854,6 +890,14 @@ impl Config {
         // Rucklidge
         Self::clamp_log_f64(&mut self.rucklidge.kappa, 0.1, 20.0, "rucklidge.kappa");
         Self::clamp_log_f64(&mut self.rucklidge.lambda, 0.1, 20.0, "rucklidge.lambda");
+        // Lorenz-84
+        Self::clamp_log_f64(&mut self.lorenz84.a, 0.01, 5.0, "lorenz84.a");
+        Self::clamp_log_f64(&mut self.lorenz84.b, 0.1, 20.0, "lorenz84.b");
+        Self::clamp_log_f64(&mut self.lorenz84.f, 0.0, 20.0, "lorenz84.f");
+        Self::clamp_log_f64(&mut self.lorenz84.g, 0.0, 10.0, "lorenz84.g");
+        // Rabinovich-Fabrikant
+        Self::clamp_log_f64(&mut self.rabinovich_fabrikant.alpha, 0.01, 2.0, "rabinovich_fabrikant.alpha");
+        Self::clamp_log_f64(&mut self.rabinovich_fabrikant.gamma, 0.01, 1.0, "rabinovich_fabrikant.gamma");
     }
 
     /// Clamp a `f64` field to `[min, max]`, emitting a tracing warning if clamped.
