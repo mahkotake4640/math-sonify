@@ -874,13 +874,11 @@ mod tests {
 
     #[test]
     fn golden_triangle_amplitude_bounded() {
-        // The leaky-integrator triangle has a startup transient (~1.9 on the first
-        // half-cycle) that decays to steady-state amplitude ≈1.0 over ~1000 samples.
-        // Skip the first 1000 samples (≈5 periods at 220 Hz) to measure only the
-        // settled waveform, same as golden_square_amplitude_bounded.
-        let samples = run_osc(220.0, OscShape::Triangle, 5410);
-        let max_amp = samples[1000..].iter().cloned().fold(0.0f32, f32::max);
-        let min_amp = samples[1000..].iter().cloned().fold(0.0f32, f32::min);
+        // Both tri_state and sq_dc are analytically initialized to their steady-state
+        // values at phase=0, so the waveform starts correctly from the very first sample.
+        let samples = run_osc(220.0, OscShape::Triangle, 4410);
+        let max_amp = samples.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let min_amp = samples.iter().cloned().fold(f32::INFINITY, f32::min);
         assert!(
             max_amp <= 1.2,
             "Triangle amplitude exceeded +1.2: {}",

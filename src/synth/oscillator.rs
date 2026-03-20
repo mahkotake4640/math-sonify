@@ -82,20 +82,27 @@ impl Oscillator {
                 .wrapping_mul(0x9E37_79B9_7F4A_7C15)
                 .wrapping_add(0x517C_C1B7_2722_0A95),
         };
-        // Analytically initialize the triangle integrator to its steady-state trough
-        // so the waveform starts at full amplitude without a multi-period startup transient.
+        // Analytically initialize both triangle integrator state and DC-blocker state to
+        // their steady-state values at phase=0 (start of positive half-cycle) so the
+        // waveform produces correct amplitude from the very first sample without any
+        // startup transient.
         //
-        // At steady state the leaky integrator alternates between trough y0 (at phase=0,
-        // start of positive half-cycle) and peak -y0. Solving the fixed-point equation:
-        //   y_peak = (1-leak)^{T/2} * y0 + (4*dt/leak) * (1 - (1-leak)^{T/2})
-        //   y0 = -y_peak   (odd symmetry)
-        // gives: y0 = -(4*dt/leak) * (1 - p) / (1 + p),  p = (1-leak)^{T/2}
+        // Both the DC blocker (sq_dc) and leaky integrator (tri_state) are 1-pole filters
+        // driven by the ±1 square wave. At phase=0 they are both at their respective
+        // troughs. Solving the symmetric fixed-point equations (see inline math):
+        //
+        //   sq_dc_trough = -(1-p)/(1+p)                     [from LP fixed-point, ±1 input]
+        //   tri_trough   = -(4·dt/leak)·(1-p)/(1+p)         [same shape, scaled by 4·dt/leak]
+        //
+        // where p = (1-α)^{T/2}  and  α = 0.001  (same coefficient for both filters)
         if shape == OscShape::Triangle {
-            let leak = 1e-3_f32;
+            let alpha = 1e-3_f32; // coefficient shared by DC blocker and leaky integrator
             let dt = freq / sample_rate;
             let half_samples = sample_rate / (2.0 * freq.max(1.0));
-            let p = (1.0 - leak).powf(half_samples);
-            osc.tri_state = -(4.0 * dt / leak) * (1.0 - p) / (1.0 + p);
+            let p = (1.0 - alpha).powf(half_samples);
+            let factor = (1.0 - p) / (1.0 + p);
+            osc.sq_dc = -factor;                      // DC-blocker trough at phase=0
+            osc.tri_state = -(4.0 * dt / alpha) * factor; // integrator trough at phase=0
         }
         osc
     }
