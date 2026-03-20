@@ -203,6 +203,32 @@ pub const PRESETS: &[Preset] = &[
         color: Color32::from_rgb(0, 220, 80),
         category: "Meditative",
     },
+
+    // --- EXPERIMENTAL (new systems) ---
+    Preset {
+        name: "Cyclic Tangle",
+        description: "Thomas attractor — three variables each driving the next in a cyclic loop. The dissipation b≈0.208 is the exact threshold between order and chaos.",
+        color: Color32::from_rgb(80, 200, 120),
+        category: "Experimental",
+    },
+    Preset {
+        name: "Polarity Reversal",
+        description: "Rikitake two-disk dynamo — the mathematical model of geomagnetic polarity flips. The irregular intervals between reversals are the pitch.",
+        color: Color32::from_rgb(200, 80, 40),
+        category: "Cinematic",
+    },
+    Preset {
+        name: "Anti-Lorenz",
+        description: "Chen attractor — derived from Lorenz by anti-control. The same folded band topology, but synthesized to be chaotic. A strange attractor by design.",
+        color: Color32::from_rgb(255, 160, 0),
+        category: "Experimental",
+    },
+    Preset {
+        name: "Double Convection",
+        description: "Rucklidge double-scroll — chaos from a model of convection in a heated fluid layer. The two lobes correspond to left and right circulation.",
+        color: Color32::from_rgb(40, 160, 220),
+        category: "Atmospheric",
+    },
 ];
 
 pub fn load_preset(name: &str) -> Config {
@@ -1355,6 +1381,134 @@ pub fn load_preset(name: &str) -> Config {
                 n_oscillators: 8,
                 coupling: 2.5,
             },
+            ..Default::default()
+        },
+
+        // ------------------------------------------------------------------ NEW SYSTEMS
+        "Cyclic Tangle" => Config {
+            system: SystemConfig {
+                name: "thomas".into(),
+                dt: 0.01,
+                speed: 0.5,
+            },
+            sonification: SonificationConfig {
+                mode: "fm".into(),
+                scale: "pentatonic".into(),
+                base_frequency: 110.0,
+                octave_range: 3.0,
+                chord_mode: "none".into(),
+                transpose_semitones: 0.0,
+                voice_levels: [1.0, 0.6, 0.4, 0.2],
+                portamento_ms: 180.0,
+                voice_shapes: ["triangle".into(), "sine".into(), "triangle".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.45,
+                delay_ms: 220.0,
+                delay_feedback: 0.4,
+                master_volume: 0.72,
+                chorus_mix: 0.25,
+                chorus_rate: 0.3,
+                chorus_depth: 0.35,
+                waveshaper_drive: 2.0,
+                waveshaper_mix: 0.15,
+                ..Default::default()
+            },
+            thomas: ThomasConfig { b: 0.208186 },
+            ..Default::default()
+        },
+        "Polarity Reversal" => Config {
+            system: SystemConfig {
+                name: "rikitake".into(),
+                dt: 0.001,
+                speed: 1.2,
+            },
+            sonification: SonificationConfig {
+                mode: "orbital".into(),
+                scale: "chromatic".into(),
+                base_frequency: 82.4,
+                octave_range: 3.5,
+                chord_mode: "none".into(),
+                transpose_semitones: -12.0,
+                voice_levels: [1.0, 0.8, 0.5, 0.2],
+                portamento_ms: 60.0,
+                voice_shapes: ["saw".into(), "saw".into(), "triangle".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.6,
+                delay_ms: 180.0,
+                delay_feedback: 0.55,
+                master_volume: 0.70,
+                chorus_mix: 0.1,
+                waveshaper_drive: 4.0,
+                waveshaper_mix: 0.4,
+                ..Default::default()
+            },
+            rikitake: RikitakeConfig { mu: 1.0, a: 5.0 },
+            ..Default::default()
+        },
+        "Anti-Lorenz" => Config {
+            system: SystemConfig {
+                name: "chen".into(),
+                dt: 0.0005,
+                speed: 1.0,
+            },
+            sonification: SonificationConfig {
+                mode: "spectral".into(),
+                scale: "chromatic".into(),
+                base_frequency: 220.0,
+                octave_range: 3.0,
+                chord_mode: "none".into(),
+                transpose_semitones: 0.0,
+                voice_levels: [1.0, 0.7, 0.5, 0.3],
+                portamento_ms: 40.0,
+                voice_shapes: ["saw".into(), "saw".into(), "triangle".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.3,
+                delay_ms: 140.0,
+                delay_feedback: 0.4,
+                master_volume: 0.73,
+                chorus_mix: 0.2,
+                chorus_rate: 0.5,
+                chorus_depth: 0.3,
+                waveshaper_drive: 3.5,
+                waveshaper_mix: 0.35,
+                ..Default::default()
+            },
+            chen: ChenConfig { a: 40.0, b: 3.0, c: 28.0 },
+            ..Default::default()
+        },
+        "Double Convection" => Config {
+            system: SystemConfig {
+                name: "rucklidge".into(),
+                dt: 0.002,
+                speed: 0.8,
+            },
+            sonification: SonificationConfig {
+                mode: "direct".into(),
+                scale: "just_intonation".into(),
+                base_frequency: 165.0,
+                octave_range: 2.5,
+                chord_mode: "power".into(),
+                transpose_semitones: 5.0,
+                voice_levels: [1.0, 0.7, 0.4, 0.0],
+                portamento_ms: 120.0,
+                voice_shapes: ["sine".into(), "triangle".into(), "sine".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.5,
+                delay_ms: 300.0,
+                delay_feedback: 0.35,
+                master_volume: 0.71,
+                chorus_mix: 0.3,
+                chorus_rate: 0.2,
+                chorus_depth: 0.4,
+                waveshaper_drive: 1.5,
+                waveshaper_mix: 0.0,
+                ..Default::default()
+            },
+            rucklidge: RucklidgeConfig { kappa: 2.0, lambda: 6.7 },
             ..Default::default()
         },
 

@@ -425,6 +425,7 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "The Butterfly's Aria",
         "Siren Call",
         "Throat of the Storm",
+        "Double Convection",
     ];
     let rhythmic_pool: &[&str] = &[
         "Frozen Machinery",
@@ -440,6 +441,7 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "Solar Wind",
         "Electric Kelp",
         "Möbius Lead",
+        "Polarity Reversal",
     ];
     let experimental_pool: &[&str] = &[
         "Neon Labyrinth",
@@ -455,6 +457,8 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "Electric Kelp",
         "Solar Wind",
         "Collapsing Cathedral",
+        "Cyclic Tangle",
+        "Anti-Lorenz",
     ];
 
     let pool = match mood {
@@ -649,6 +653,12 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         let kuramoto_k = rrange(&mut rng, 0.3, 4.5) as f64;
         let duffing_om = rrange(&mut rng, 0.6, 1.4) as f64;
         let halvorsen_a = rrange(&mut rng, 1.2, 1.9) as f64;
+        let thomas_b = rrange(&mut rng, 0.15, 0.30) as f64;
+        let chen_a = rrange(&mut rng, 32.0, 50.0) as f64;
+        let chen_c = rrange(&mut rng, 20.0, 35.0) as f64;
+        let rikitake_mu = rrange(&mut rng, 0.5, 2.0) as f64;
+        let rikitake_a = rrange(&mut rng, 3.0, 8.0) as f64;
+        let rucklidge_lambda = rrange(&mut rng, 5.0, 9.0) as f64;
 
         let name_idx = (i + ri(&mut rng, 3)) % name_pool.len();
         let name = name_pool[name_idx];
@@ -684,6 +694,12 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
             c.kuramoto.coupling = kuramoto_k;
             c.duffing.omega = duffing_om;
             c.halvorsen.a = halvorsen_a;
+            c.thomas.b = thomas_b;
+            c.chen.a = chen_a;
+            c.chen.c = chen_c;
+            c.rikitake.mu = rikitake_mu;
+            c.rikitake.a = rikitake_a;
+            c.rucklidge.lambda = rucklidge_lambda;
 
             c.audio.master_volume = c.audio.master_volume.max(0.62);
         }));
