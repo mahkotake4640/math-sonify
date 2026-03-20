@@ -78,7 +78,11 @@ impl KarplusStrong {
         for i in len..self.buf.len() {
             self.buf[i] = 0.0;
         }
-        self.write = 0;
+        // Start the write pointer AFTER the noise so the first next_sample() read
+        // lands on buf[0] (the noise) rather than the empty tail.  With write=0,
+        // the first read would be from buf[buf.len()-len] which is in the cleared
+        // region, producing silence and immediately tripping the inactivity gate.
+        self.write = len % self.buf.len();
         self.lp_state = 0.0;
         self.ap_state = 0.0;
         self.active = true;
@@ -122,5 +126,55 @@ impl KarplusStrong {
         }
 
         read * self.volume
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SR: f32 = 44100.0;
+
+    #[test]
+    fn test_karplus_silent_before_trigger() {
+        let mut ks = KarplusStrong::new(20.0, SR);
+        assert!(!ks.active, "Should be inactive before trigger");
+        let s = ks.next_sample();
+        assert_eq!(s, 0.0, "Should be silent before trigger");
+    }
+
+    #[test]
+    fn test_karplus_produces_output_after_trigger() {
+        let mut ks = KarplusStrong::new(20.0, SR);
+        ks.trigger(440.0, SR);
+        assert!(ks.active, "Should be active after trigger");
+        let mut max_abs = 0.0_f32;
+        for _ in 0..4410 {
+            let s = ks.next_sample();
+            max_abs = max_abs.max(s.abs());
+        }
+        assert!(max_abs > 0.0, "Triggered string should produce output");
+    }
+
+    #[test]
+    fn test_karplus_output_finite() {
+        let mut ks = KarplusStrong::new(20.0, SR);
+        ks.trigger(440.0, SR);
+        for i in 0..22050 {
+            let s = ks.next_sample();
+            assert!(s.is_finite(), "Output non-finite at sample {}", i);
+        }
+    }
+
+    #[test]
+    fn test_karplus_decays_to_silence() {
+        // With default decay=0.996, the string should eventually go silent
+        let mut ks = KarplusStrong::new(20.0, SR);
+        ks.trigger(440.0, SR);
+        // Run for 5 seconds (should be fully decayed)
+        for _ in 0..SR as usize * 5 {
+            ks.next_sample();
+        }
+        assert!(!ks.active, "String should decay to silence");
     }
 }

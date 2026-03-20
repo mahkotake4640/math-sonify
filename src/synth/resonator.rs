@@ -79,3 +79,50 @@ impl ResonatorBank {
         self.process(noise)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SR: f32 = 44100.0;
+
+    #[test]
+    fn test_resonator_output_finite() {
+        let mut bank = ResonatorBank::new(SR);
+        for _ in 0..2000 {
+            let (l, r) = bank.next_sample();
+            assert!(l.is_finite(), "Resonator L output non-finite");
+            assert!(r.is_finite(), "Resonator R output non-finite");
+        }
+    }
+
+    #[test]
+    fn test_resonator_silent_with_zero_excitation() {
+        let mut bank = ResonatorBank::new(SR);
+        bank.excite_level = 0.0;
+        // Warm up any stored state
+        for _ in 0..1000 {
+            bank.next_sample();
+        }
+        // With zero excitation, filters should drain to silence
+        let (l, r) = bank.next_sample();
+        assert!(
+            l.abs() < 1e-4 && r.abs() < 1e-4,
+            "Zero excitation should produce silence: l={}, r={}",
+            l,
+            r
+        );
+    }
+
+    #[test]
+    fn test_resonator_produces_output_with_excitation() {
+        let mut bank = ResonatorBank::new(SR);
+        bank.excite_level = 1.0;
+        let mut max_abs = 0.0_f32;
+        for _ in 0..2000 {
+            let (l, r) = bank.next_sample();
+            max_abs = max_abs.max(l.abs()).max(r.abs());
+        }
+        assert!(max_abs > 0.0, "Non-zero excitation should produce output");
+    }
+}

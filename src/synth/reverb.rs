@@ -213,3 +213,53 @@ impl Freeverb {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SR: f32 = 44100.0;
+
+    #[test]
+    fn test_freeverb_output_finite() {
+        let mut rv = Freeverb::new(SR);
+        for i in 0..2000 {
+            let x = (i as f32 * 0.05).sin();
+            let (l, r) = rv.process(x, x);
+            assert!(l.is_finite(), "Reverb L output non-finite");
+            assert!(r.is_finite(), "Reverb R output non-finite");
+        }
+    }
+
+    #[test]
+    fn test_freeverb_wet_zero_is_dry() {
+        let mut rv = Freeverb::new(SR);
+        rv.wet = 0.0;
+        let (l, r) = rv.process(0.5, -0.3);
+        assert!((l - 0.5).abs() < 1e-5, "wet=0 should pass dry: {}", l);
+        assert!((r - (-0.3)).abs() < 1e-5, "wet=0 should pass dry: {}", r);
+    }
+
+    #[test]
+    fn test_freeverb_produces_tail_after_impulse() {
+        // After an impulse, reverb tail should linger
+        let mut rv = Freeverb::new(SR);
+        rv.wet = 1.0;
+        // Send impulse then silence
+        rv.process(1.0, 1.0);
+        let mut max_tail = 0.0_f32;
+        for _ in 0..4410 {
+            let (l, _) = rv.process(0.0, 0.0);
+            max_tail = max_tail.max(l.abs());
+        }
+        assert!(max_tail > 0.0, "Reverb should produce a tail after impulse");
+    }
+
+    #[test]
+    fn test_freeverb_nan_input_safe() {
+        let mut rv = Freeverb::new(SR);
+        let (l, r) = rv.process(f32::NAN, f32::NAN);
+        assert!(l.is_finite(), "NaN input should produce finite output");
+        assert!(r.is_finite(), "NaN input should produce finite output");
+    }
+}
