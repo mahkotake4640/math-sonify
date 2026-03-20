@@ -168,11 +168,12 @@ mod tests {
 
     #[test]
     fn test_karplus_decays_to_silence() {
-        // With default decay=0.996, the string should eventually go silent
+        // With default decay=0.996 at 440 Hz (~100 sample delay), the string needs
+        // ~3450 loop passes to reach 1e-6, or about 345000 samples (~7.8 s).
+        // Run 10 seconds to cover the full decay with margin.
         let mut ks = KarplusStrong::new(20.0, SR);
         ks.trigger(440.0, SR);
-        // Run for 5 seconds (should be fully decayed)
-        for _ in 0..SR as usize * 5 {
+        for _ in 0..SR as usize * 10 {
             ks.next_sample();
         }
         assert!(!ks.active, "String should decay to silence");
