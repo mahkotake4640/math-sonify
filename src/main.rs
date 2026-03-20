@@ -42,9 +42,9 @@ use crate::sonification::{
 use crate::synth::OscShape;
 use crate::systems::{
     ArnoldCat, Bouali, BurkeShaw, Chen, CustomOde, Dadras, DelayedMap, FractionalLorenz,
-    GenesioTesi, KuramotoDriven, Liu, LogisticMap, Lorenz84, Mathieu, NewtonLeipnik, Oregonator,
+    Finance, GenesioTesi, KuramotoDriven, Liu, LogisticMap, Lorenz84, Mathieu, NewtonLeipnik, Oregonator,
     RabinovichFabrikant, Rikitake, Rucklidge, ShimizuMorioka, SprottC, SprottD, SprottE,
-    SprottF, SprottG, SprottH, SprottL, StandardMap, StochasticLorenz, Thomas, *,
+    SprottF, SprottG, SprottH, SprottL, StandardMap, StochasticLorenz, Thomas, Windmi, *,
 };
 use crate::ui::{draw_ui, AppState, SharedState};
 use midir;
@@ -2934,6 +2934,8 @@ fn build_system(config: &Config) -> Box<dyn DynamicalSystem> {
             s.m = config.liu.m;
             Box::new(s)
         }
+        "windmi" => Box::new(Windmi::new()),
+        "finance" => Box::new(Finance::new()),
         _ => Box::new(Lorenz::new(
             config.lorenz.sigma,
             config.lorenz.rho,

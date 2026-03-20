@@ -2122,4 +2122,6 @@ mod tests {
             leapfrog(&mut s, &q_idx, &p_idx, 0.01, &velocity, &force);
         }
         let energy = 0.5 * (s[0] * s[0] + s[1] * s[1]);
-        assert!((energy - 0.5).abs() < 1e-
+        assert!((energy - 0.5).abs() < 1e-4, "Leapfrog energy drift: {}", energy);
+    }
+}

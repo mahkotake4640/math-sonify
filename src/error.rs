@@ -120,4 +120,54 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    fn test_ode_integration_error_display() {
+        let err = SonifyError::OdeIntegrationError("state diverged".into());
+        assert!(
+            err.to_string().contains("state diverged"),
+            "OdeIntegrationError display should contain message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_display() {
+        let err = SonifyError::PluginError("init failed".into());
+        assert!(
+            err.to_string().contains("init failed"),
+            "PluginError display should contain message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_render_error_display() {
+        let err = SonifyError::RenderError("buffer overflow".into());
+        assert!(
+            err.to_string().contains("buffer overflow"),
+            "RenderError display should contain message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_sonify_result_ok() {
+        let r: SonifyResult<i32> = Ok(42);
+        assert_eq!(r.unwrap(), 42, "SonifyResult<Ok> should unwrap correctly");
+    }
+
+    #[test]
+    fn test_sonify_result_err() {
+        let r: SonifyResult<i32> = Err(SonifyError::ConfigError("bad".into()));
+        assert!(r.is_err(), "SonifyResult<Err> should be Err");
+    }
+
+    #[test]
+    fn test_error_debug_format_non_empty() {
+        let err = SonifyError::AudioDeviceError("device busy".into());
+        let dbg = format!("{:?}", err);
+        assert!(!dbg.is_empty(), "Debug format should be non-empty");
+        assert!(dbg.contains("AudioDeviceError"), "Debug should name the variant");
+    }
 }
