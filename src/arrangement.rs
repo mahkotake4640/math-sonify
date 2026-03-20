@@ -430,6 +430,8 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "Siren Call",
         "Throat of the Storm",
         "Double Convection",
+        "Mirror Attractor",
+        "Half-Speed Spiral",
     ];
     let rhythmic_pool: &[&str] = &[
         "Frozen Machinery",
@@ -463,6 +465,10 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         "Collapsing Cathedral",
         "Cyclic Tangle",
         "Anti-Lorenz",
+        "Mirror Attractor",
+        "Xz Knot",
+        "Equilibrium Fugue",
+        "Half-Speed Spiral",
     ];
 
     let pool = match mood {
@@ -663,6 +669,8 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
         let rikitake_mu = rrange(&mut rng, 0.5, 2.0) as f64;
         let rikitake_a = rrange(&mut rng, 3.0, 8.0) as f64;
         let rucklidge_lambda = rrange(&mut rng, 5.0, 9.0) as f64;
+        let shimizu_a = rrange(&mut rng, 0.5, 1.2) as f64;
+        let shimizu_b = rrange(&mut rng, 0.3, 0.8) as f64;
 
         let name_idx = (i + ri(&mut rng, 3)) % name_pool.len();
         let name = name_pool[name_idx];
@@ -704,6 +712,8 @@ pub fn generate_song(mood: &str, seed: u64) -> Vec<Scene> {
             c.rikitake.mu = rikitake_mu;
             c.rikitake.a = rikitake_a;
             c.rucklidge.lambda = rucklidge_lambda;
+            c.shimizu_morioka.a = shimizu_a;
+            c.shimizu_morioka.b = shimizu_b;
 
             c.audio.master_volume = c.audio.master_volume.max(0.62);
         }));

@@ -9,8 +9,9 @@ use math_sonify_plugin::{
         Dadras, DelayedMap, DoublePendulum, Duffing, DynamicalSystem, FractionalLorenz,
         GeodesicTorus, Halvorsen, HenonMap, HindmarshRose, Kuramoto, KuramotoDriven, LogisticMap,
         Lorenz, Lorenz84, Lorenz96, MackeyGlass, Mathieu, NewtonLeipnik, NoseHoover, Oregonator,
-        RabinovichFabrikant, Rikitake, Rossler, Rucklidge, SprottB, SprottC, SprottG,
-        SprottH, SprottL, StandardMap, StochasticLorenz, Thomas, ThreeBody, VanDerPol,
+        RabinovichFabrikant, Rikitake, Rossler, Rucklidge, ShimizuMorioka, SprottB, SprottC,
+        SprottD, SprottE, SprottF, SprottG, SprottH, SprottL, StandardMap, StochasticLorenz,
+        Thomas, ThreeBody, VanDerPol,
     },
 };
 
@@ -1496,6 +1497,123 @@ fn newton_leipnik_deterministic() {
     for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
     for (a, b) in s1.state().iter().zip(s2.state().iter()) {
         assert!((a - b).abs() < 1e-12, "Newton-Leipnik not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Shimizu-Morioka integration tests ────────────────────────────────────────
+
+#[test]
+fn shimizu_morioka_stays_finite() {
+    let mut sys = ShimizuMorioka::new();
+    for _ in 0..20_000 { sys.step(0.005); }
+    assert!(all_finite(sys.state()), "Shimizu-Morioka state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn shimizu_morioka_state_bounded() {
+    let mut sys = ShimizuMorioka::new();
+    for _ in 0..20_000 { sys.step(0.005); }
+    let s = sys.state();
+    assert!(s[0].abs() < 15.0, "Shimizu-Morioka x out of range: {}", s[0]);
+    assert!(s[1].abs() < 15.0, "Shimizu-Morioka y out of range: {}", s[1]);
+    assert!(s[2].abs() < 5.0,  "Shimizu-Morioka z out of range: {}", s[2]);
+}
+
+#[test]
+fn shimizu_morioka_deterministic() {
+    let mut s1 = ShimizuMorioka::new();
+    let mut s2 = ShimizuMorioka::new();
+    for _ in 0..500 { s1.step(0.005); s2.step(0.005); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Shimizu-Morioka not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Sprott D integration tests ────────────────────────────────────────────────
+
+#[test]
+fn sprott_d_stays_finite() {
+    // dt=0.01 for 5000 steps (50 time units) — matches the bounded operating range
+    let mut sys = SprottD::new();
+    for _ in 0..5_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "Sprott-D state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn sprott_d_state_bounded() {
+    let mut sys = SprottD::new();
+    for _ in 0..5_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(s[0].abs() < 20.0, "Sprott-D x out of range: {}", s[0]);
+    assert!(s[1].abs() < 20.0, "Sprott-D y out of range: {}", s[1]);
+    assert!(s[2].abs() < 20.0, "Sprott-D z out of range: {}", s[2]);
+}
+
+#[test]
+fn sprott_d_deterministic() {
+    let mut s1 = SprottD::new();
+    let mut s2 = SprottD::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-D not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Sprott E integration tests ────────────────────────────────────────────────
+
+#[test]
+fn sprott_e_stays_finite() {
+    let mut sys = SprottE::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "Sprott-E state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn sprott_e_state_bounded() {
+    let mut sys = SprottE::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(s[0].abs() < 10.0, "Sprott-E x out of range: {}", s[0]);
+    assert!(s[1].abs() < 10.0, "Sprott-E y out of range: {}", s[1]);
+    assert!(s[2].abs() < 10.0, "Sprott-E z out of range: {}", s[2]);
+}
+
+#[test]
+fn sprott_e_deterministic() {
+    let mut s1 = SprottE::new();
+    let mut s2 = SprottE::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-E not deterministic: {} vs {}", a, b);
+    }
+}
+
+// ── Sprott F integration tests ────────────────────────────────────────────────
+
+#[test]
+fn sprott_f_stays_finite() {
+    let mut sys = SprottF::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    assert!(all_finite(sys.state()), "Sprott-F state non-finite: {:?}", sys.state());
+}
+
+#[test]
+fn sprott_f_state_bounded() {
+    let mut sys = SprottF::new();
+    for _ in 0..10_000 { sys.step(0.01); }
+    let s = sys.state();
+    assert!(s[0].abs() < 10.0, "Sprott-F x out of range: {}", s[0]);
+    assert!(s[1].abs() < 10.0, "Sprott-F y out of range: {}", s[1]);
+    assert!(s[2].abs() < 10.0, "Sprott-F z out of range: {}", s[2]);
+}
+
+#[test]
+fn sprott_f_deterministic() {
+    let mut s1 = SprottF::new();
+    let mut s2 = SprottF::new();
+    for _ in 0..500 { s1.step(0.01); s2.step(0.01); }
+    for (a, b) in s1.state().iter().zip(s2.state().iter()) {
+        assert!((a - b).abs() < 1e-12, "Sprott-F not deterministic: {} vs {}", a, b);
     }
 }
 

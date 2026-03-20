@@ -1008,7 +1008,7 @@ fn system_tagline(s: &str) -> &'static str {
         "bouali" => "Double-scroll spiral with x² feedback and z-coupling",
         "newton_leipnik" => "Two coupled rigid-body oscillators spontaneously generating chaos",
         "shimizu_morioka" => "A two-scroll oscillator — x²-driven z couples back to destabilize y",
-        "sprott_d" => "Tightly bounded chaos: y² drives instability while −2y damps strongly",
+        "sprott_d" => "Sprott Case I: y² instability with −1.1z dissipation — bounded chaotic attractor",
         "sprott_e" => "Minimal chaos from a yz product — equilibrium at (¼, 1/16, 0)",
         "sprott_f" => "Slow-spiral chaos: x² drives z while y damps at half speed",
         _ => "A dynamical system evolving through state space",
@@ -8635,9 +8635,9 @@ fn equation_lines(system: &str) -> Vec<&'static str> {
             "z' = x^2 - b*z",
         ],
         "sprott_d" => vec![
-            "x' = -y",
+            "x' = -0.2*y",
             "y' = x + z",
-            "z' = x*z + 3*y^2",
+            "z' = x + y^2 - 1.1*z",
         ],
         "sprott_e" => vec![
             "x' = y*z",

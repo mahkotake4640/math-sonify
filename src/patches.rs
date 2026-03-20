@@ -235,6 +235,24 @@ pub const PRESETS: &[Preset] = &[
         color: Color32::from_rgb(160, 80, 220),
         category: "Experimental",
     },
+    Preset {
+        name: "Xz Knot",
+        description: "Sprott-D: parameter-free chaos from xz coupling and 3y² forcing. One of Sprott's 19 algebraically simplest chaotic flows.",
+        color: Color32::from_rgb(220, 120, 60),
+        category: "Experimental",
+    },
+    Preset {
+        name: "Equilibrium Fugue",
+        description: "Sprott-E: chaos near the fixed point (¼, 1/16, 0). The yz product and x² feedback sustain the attractor with minimal algebra.",
+        color: Color32::from_rgb(60, 200, 140),
+        category: "Melodic",
+    },
+    Preset {
+        name: "Half-Speed Spiral",
+        description: "Sprott-F: the 0.5y damping creates a slow inward spiral that the x² term periodically ruptures into chaos.",
+        color: Color32::from_rgb(100, 160, 255),
+        category: "Atmospheric",
+    },
 ];
 
 pub fn load_preset(name: &str) -> Config {
@@ -1547,6 +1565,99 @@ pub fn load_preset(name: &str) -> Config {
                 ..Default::default()
             },
             shimizu_morioka: ShimizuMoriokaConfig { a: 0.75, b: 0.45 },
+            ..Default::default()
+        },
+        "Xz Knot" => Config {
+            system: SystemConfig {
+                name: "sprott_d".into(),
+                dt: 0.005,
+                speed: 1.0,
+            },
+            sonification: SonificationConfig {
+                mode: "spectral".into(),
+                scale: "chromatic".into(),
+                base_frequency: 220.0,
+                octave_range: 3.5,
+                chord_mode: "none".into(),
+                transpose_semitones: 0.0,
+                voice_levels: [1.0, 0.6, 0.4, 0.2],
+                portamento_ms: 30.0,
+                voice_shapes: ["saw".into(), "saw".into(), "triangle".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.25,
+                delay_ms: 110.0,
+                delay_feedback: 0.4,
+                master_volume: 0.75,
+                chorus_mix: 0.15,
+                chorus_rate: 0.8,
+                chorus_depth: 0.2,
+                waveshaper_drive: 4.0,
+                waveshaper_mix: 0.4,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        "Equilibrium Fugue" => Config {
+            system: SystemConfig {
+                name: "sprott_e".into(),
+                dt: 0.005,
+                speed: 0.8,
+            },
+            sonification: SonificationConfig {
+                mode: "direct".into(),
+                scale: "major".into(),
+                base_frequency: 261.63,
+                octave_range: 2.5,
+                chord_mode: "major".into(),
+                transpose_semitones: 2.0,
+                voice_levels: [1.0, 0.75, 0.5, 0.25],
+                portamento_ms: 60.0,
+                voice_shapes: ["sine".into(), "triangle".into(), "sine".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.4,
+                delay_ms: 200.0,
+                delay_feedback: 0.3,
+                master_volume: 0.7,
+                chorus_mix: 0.2,
+                chorus_rate: 0.4,
+                chorus_depth: 0.35,
+                waveshaper_drive: 1.5,
+                waveshaper_mix: 0.1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        "Half-Speed Spiral" => Config {
+            system: SystemConfig {
+                name: "sprott_f".into(),
+                dt: 0.005,
+                speed: 0.7,
+            },
+            sonification: SonificationConfig {
+                mode: "orbital".into(),
+                scale: "pentatonic".into(),
+                base_frequency: 130.81,
+                octave_range: 2.0,
+                chord_mode: "minor".into(),
+                transpose_semitones: -5.0,
+                voice_levels: [1.0, 0.8, 0.55, 0.3],
+                portamento_ms: 100.0,
+                voice_shapes: ["triangle".into(), "sine".into(), "triangle".into(), "sine".into()],
+            },
+            audio: AudioConfig {
+                reverb_wet: 0.6,
+                delay_ms: 320.0,
+                delay_feedback: 0.45,
+                master_volume: 0.7,
+                chorus_mix: 0.3,
+                chorus_rate: 0.25,
+                chorus_depth: 0.5,
+                waveshaper_drive: 1.2,
+                waveshaper_mix: 0.0,
+                ..Default::default()
+            },
             ..Default::default()
         },
 
