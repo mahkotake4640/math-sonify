@@ -3,7 +3,6 @@
 [![CI](https://github.com/Mattbusel/math-sonify/actions/workflows/ci.yml/badge.svg)](https://github.com/Mattbusel/math-sonify/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.75+](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
-[![Crates.io](https://img.shields.io/crates/v/math-sonify.svg)](https://crates.io/crates/math-sonify)
 
 **Math sonification** is the practice of mapping the evolving state of a mathematical system directly to audio synthesis parameters so that the structure of the mathematics becomes audible. math-sonify runs differential equations continuously in real time and routes every variable of their state vector into oscillator frequencies, grain densities, FM modulation indices, formant positions, or waveguide string parameters. The result is not a preset synthesizer with math-themed names: the Lorenz attractor is actually integrating, the Kuramoto coupling constant is live, the Three-Body gravitational problem is stepped forward at 120 Hz.
 
@@ -20,13 +19,20 @@ This makes the technique useful for:
 
 ---
 
+## Download
+
+**Windows pre-built binary:** download `math-sonify.exe` from the [latest GitHub release](https://github.com/Mattbusel/math-sonify/releases/latest). No install required — double-click and audio starts immediately.
+
+---
+
 ## Architecture
 
 ```
 ODE Solver (120 Hz, sim thread)
     |
-    |  Lorenz / Rossler / Duffing / Kuramoto / Three-Body / ...
-    |  RK4 or leapfrog integration per configured dt
+    |  53 dynamical systems — Lorenz, Rossler, Duffing, Kuramoto, Three-Body,
+    |  Hyperchaos (4D), Finance, WINDMI, Liu, Genesio-Tesi, Shimizu-Morioka, ...
+    |  RK4 integration per configured dt
     |
     v
 Parameter Morphing (arrangement layer)
@@ -37,13 +43,15 @@ Parameter Morphing (arrangement layer)
     v
 Sonification Mapper (sim thread, 120 Hz)
     |
-    |  DirectMapping   -- state quantized to musical scale -> oscillator freqs
-    |  OrbitalResonance-- angular velocity + Lyapunov exponent drive pitch
-    |  GranularMapping -- trajectory speed -> grain density and pitch
-    |  SpectralMapping -- state -> 32-partial additive envelope
-    |  FmMapping       -- attractor drives carrier/modulator ratio and index
-    |  VocalMapping    -- state interpolates between vowel formant positions
-    |  Waveguide       -- Karplus-Strong string with chaotic modulation
+    |  DirectMapping    -- state quantized to musical scale -> oscillator freqs
+    |  OrbitalResonance -- angular velocity + Lyapunov exponent drive pitch
+    |  GranularMapping  -- trajectory speed -> grain density and pitch
+    |  SpectralMapping  -- state -> 32-partial additive envelope
+    |  FmMapping        -- attractor drives carrier/modulator ratio and index
+    |  AmMapping        -- amplitude modulation driven by state variables
+    |  VocalMapping     -- state interpolates between vowel formant positions
+    |  Waveguide        -- Karplus-Strong string with chaotic modulation
+    |  Resonator        -- modal resonator bank driven by attractor
     |
     v  [crossbeam bounded channel, try_recv in audio callback]
     v
@@ -52,7 +60,7 @@ Audio Synthesis (audio thread, 44100 / 48000 Hz)
     |  Per-layer DSP:
     |    Oscillator(s) [PolyBLEP anti-aliased] --> ADSR --> Waveshaper --> Bitcrusher
     |
-    |  Master bus (shared across up to 3 layers):
+    |  Master bus (shared across up to 4 layers):
     |    3-Band EQ --> LP BiquadFilter --> Stereo DelayLine --> Chorus
     |    --> FDN Reverb (8-channel, modulated) --> Lookahead Limiter
     |
@@ -64,83 +72,142 @@ DAW (VST3 / CLAP plugin) or Desktop (standalone cpal output)
 
 ---
 
-## Supported mathematical systems
+## Supported mathematical systems (53)
 
-| System | Dimension | Notes |
-|--------|-----------|-------|
-| Lorenz | 3 | Classic butterfly attractor; chaos onset near rho=24.74 |
-| Rossler | 3 | Spiral attractor; period-doubling as c increases |
-| Double Pendulum | 4 | Lagrangian mechanics (theta1, theta2, p1, p2); leapfrog |
-| Geodesic Torus | 4 | Ergodic irrational winding on a flat torus |
-| Kuramoto | N | N coupled oscillators; synchronization at critical K |
-| Three-Body | 12 | Newtonian gravity, 3 point masses in 2D; figure-8 ICs |
-| Duffing | 2 | Driven nonlinear oscillator; period-doubling cascade |
-| Van der Pol | 2 | Self-sustaining limit cycle; relaxation oscillations |
-| Halvorsen | 3 | Dense cyclic-symmetry spiral attractor |
-| Aizawa | 3 | Six-parameter torus-like attractor |
-| Chua | 3 | Piecewise-linear double-scroll circuit |
-| Hindmarsh-Rose | 3 | Neuron firing model; bursting and spiking |
-| Lorenz-96 | N | Weather model; spatiotemporal chaos at F > 8 |
-| Mackey-Glass | DDE | Delay differential equation; history-dependent |
-| Nose-Hoover | 3 | Thermostatted Hamiltonian; conservative chaos |
-| Coupled Map Lattice | N | Logistic map on a 1D lattice with coupling |
-| Henon Map | 2 | Discrete map; fractal strange attractor |
-| Custom ODE | 3 | User-defined equations via text input |
-| Fractional Lorenz | 3 | Lorenz with derivative order alpha in (0.5, 1.0] |
-
-**Equations (abbreviated):**
-
-```
-Lorenz:      dx/dt = sigma*(y-x),  dy/dt = x*(rho-z)-y,  dz/dt = xy-beta*z
-Rossler:     dx/dt = -y-z,         dy/dt = x+a*y,         dz/dt = b+z*(x-c)
-Duffing:     dx/dt = v,  dv/dt = -delta*v - alpha*x - beta*x^3 + gamma*cos(phi)
-Van der Pol: dx/dt = v,  dv/dt = mu*(1-x^2)*v - x
-Kuramoto:    d(theta_i)/dt = omega_i + (K/N)*sum_j sin(theta_j - theta_i)
-```
+| System | Dim | Type | Notes |
+|--------|-----|------|-------|
+| Lorenz | 3 | chaos | Classic butterfly attractor; chaos onset near rho=24.74 |
+| Rossler | 3 | chaos | Spiral attractor; period-doubling as c increases |
+| Double Pendulum | 4 | chaos | Lagrangian mechanics (θ1, θ2, p1, p2); leapfrog integrator |
+| Geodesic Torus | 4 | quasi-periodic | Ergodic irrational winding on a flat torus |
+| Kuramoto | N | sync | N coupled oscillators; synchronization at critical K |
+| Three-Body | 12 | chaos | Newtonian gravity, 3 point masses in 2D; figure-8 ICs |
+| Duffing | 2 | chaos | Driven nonlinear oscillator; period-doubling cascade |
+| Van der Pol | 2 | limit cycle | Self-sustaining limit cycle; relaxation oscillations |
+| Halvorsen | 3 | chaos | Dense cyclic-symmetry spiral attractor |
+| Aizawa | 3 | chaos | Six-parameter torus-like attractor |
+| Chua | 3 | chaos | Piecewise-linear double-scroll circuit |
+| Hindmarsh-Rose | 3 | chaos | Neuron firing model; bursting and spiking |
+| Lorenz-96 | N | chaos | Weather model; spatiotemporal chaos at F > 8 |
+| Mackey-Glass | DDE | chaos | Delay differential equation; history-dependent |
+| Nose-Hoover | 3 | chaos | Thermostatted Hamiltonian; conservative chaos |
+| Coupled Map Lattice | N | chaos | Logistic map on a 1D lattice with diffusive coupling |
+| Henon Map | 2 | chaos | Discrete map; fractal strange attractor (dim ≈ 1.26) |
+| Custom ODE | 3–4 | user | User-defined equations via text input |
+| Fractional Lorenz | 3 | chaos | Lorenz with derivative order alpha in (0.5, 1.0] |
+| Logistic Map | 1 | chaos | Period-doubling route to chaos; bifurcation diagram classic |
+| Standard Map | 2 | chaos | Area-preserving Chirikov map; KAM tori to global chaos |
+| Arnold Cat | 2 | chaos | Ergodic linear torus map; hyperbolic fixed point |
+| Stochastic Lorenz | 3 | chaos | Lorenz with additive Wiener noise per axis |
+| Delayed Map | 1 | chaos | Logistic map with discrete delay tau |
+| Oregonator | 3 | oscillation | Belousov-Zhabotinsky chemical reaction oscillator |
+| Mathieu | 2 | parametric | Parametric resonance; stability tongues in a/q space |
+| Kuramoto-Driven | N | sync | Kuramoto + external sinusoidal drive on first oscillator |
+| Thomas | 3 | chaos | Conservative symmetric attractor; b≈0.208 chaos boundary |
+| Lorenz-84 | 3 | chaos | Low-order atmospheric circulation model |
+| Dadras | 3 | chaos | Five-parameter attractor with rich bifurcation structure |
+| Rucklidge | 3 | chaos | Double-scroll from a convection model |
+| Chen | 3 | chaos | Lorenz-family; denser scroll than standard Lorenz |
+| Burke-Shaw | 3 | chaos | Two-scroll; sigma/rho parameterization |
+| Rabinovich-Fabrikant | 3 | chaos | Plasma wave instability model |
+| Rikitake | 3 | chaos | Two coupled dynamos; geomagnetic reversal model |
+| Bouali | 3 | chaos | Slow-manifold attractor; a/s parameterization |
+| Newton-Leipnik | 3 | chaos | Two coupled rigid bodies; two coexisting attractors |
+| Sprott B | 3 | chaos | Minimal 5-term polynomial system |
+| Sprott C | 3 | chaos | Minimal polynomial; single quadratic term |
+| Sprott D (Case I) | 3 | chaos | y² instability with −1.1z dissipation |
+| Sprott E | 3 | chaos | Minimal chaos from a yz product |
+| Sprott F | 3 | chaos | Slow-spiral; x² drives z |
+| Sprott G | 3 | chaos | Linear + quadratic; minimal form |
+| Sprott H | 3 | chaos | Single xz product nonlinearity |
+| Sprott K | 3 | chaos | xy product; one of Sprott's simplest forms |
+| Sprott L | 3 | chaos | Bounded strange attractor; yz coupling |
+| Shimizu-Morioka | 3 | chaos | Two-scroll; x²-driven z destabilizes y |
+| Genesio-Tesi | 3 | chaos | Jerk circuit: one x² term is all the chaos needed |
+| Liu | 3 | chaos | Single-band scroll; y² and xz/xy cross-coupling |
+| WINDMI | 3 | chaos | Ionospheric substorm model; exponential nonlinearity |
+| Finance | 3 | chaos | Macroeconomic chaos: interest rate, investment, price |
+| Hyperchaos (Chen-Li) | 4 | hyperchaos | Two positive Lyapunov exponents; richer than ordinary chaos |
 
 ---
 
-## Sonification modes
+## Sonification modes (9)
 
 | Mode | How math maps to audio |
 |------|------------------------|
-| Direct | Each state variable is quantized to the configured scale, producing oscillator frequencies. Amplitude tracks the variable's normalized magnitude. |
-| Orbital | State variables are interpreted as polar coordinates. Angular velocity drives pitch; Lyapunov exponent modulates inharmonicity. |
-| Granular | Trajectory speed controls grain spawn rate (0..50 grains/sec). Position in state space sets grain frequency. Chaos level thickens the cloud. |
-| Spectral | Up to 32 additive partials. Each partial amplitude is derived from a normalized component of the state vector, producing a continuously morphing spectrum. |
-| FM | Two-operator frequency modulation. Carrier frequency tracks the first state variable; modulator-to-carrier ratio and FM index are driven by the remaining variables. |
-| Vocal | State coordinates are mapped to vowel formant positions (F1/F2 pairs). The trajectory wanders through vowel space /a/ /e/ /i/ /o/ /u/. |
-| Waveguide | A Karplus-Strong waveguide string model. Tension and damping are modulated by the attractor trajectory in real time. |
+| Direct | State variables quantized to configured scale → oscillator frequencies. Amplitude tracks normalized magnitude. |
+| Orbital | State interpreted as polar coordinates. Angular velocity drives pitch; Lyapunov exponent modulates inharmonicity. |
+| Granular | Trajectory speed controls grain spawn rate (0–50 grains/sec). Position in state space sets grain frequency. |
+| Spectral | 32 additive partials. Each partial amplitude derived from a normalized component of the state vector. |
+| FM | Two-operator FM synthesis. Carrier tracks first state variable; modulator ratio and index driven by remaining variables. |
+| AM | Amplitude modulation. Carrier frequency from state; AM depth and rate driven by trajectory speed. |
+| Vocal | State coordinates mapped to vowel formant positions (F1/F2). Trajectory wanders through /a/ /e/ /i/ /o/ /u/. |
+| Waveguide | Karplus-Strong string model. Tension and damping modulated by the attractor in real time. |
+| Resonator | Modal resonator bank. Attractor state excites a set of tuned resonant modes. |
 
 ---
 
-## Audio output formats
+## Musical scales (20)
 
-math-sonify outputs **32-bit IEEE float stereo PCM** on the real-time audio thread. It always uses the system default output device.
+| Scale | Intervals (semitones) |
+|-------|-----------------------|
+| Pentatonic | 0, 2, 4, 7, 9 |
+| Natural Minor (Aeolian) | 0, 2, 3, 5, 7, 8, 10 |
+| Harmonic Minor | 0, 2, 3, 5, 7, 8, 11 |
+| Dorian | 0, 2, 3, 5, 7, 9, 10 |
+| Phrygian | 0, 1, 3, 5, 7, 8, 10 |
+| Lydian | 0, 2, 4, 6, 7, 9, 11 |
+| Mixolydian | 0, 2, 4, 5, 7, 9, 10 |
+| Locrian | 0, 1, 3, 5, 6, 8, 10 |
+| Whole Tone | 0, 2, 4, 6, 8, 10 |
+| Blues | 0, 3, 5, 6, 7, 10 |
+| Hirajoshi | 0, 2, 3, 7, 8 |
+| Hungarian Minor | 0, 2, 3, 6, 7, 8, 11 |
+| Octatonic (dim.) | 0, 2, 3, 5, 6, 8, 9, 11 |
+| Chromatic | all 12 semitones |
+| Just Intonation | pure-ratio tuning |
+| Microtonal | 24 equal divisions per octave |
+| EDO-19 | 19 equal divisions of the octave |
+| EDO-31 | 31 equal divisions of the octave |
+| EDO-24 | 24-TET (quarter-tones) |
+| Harmonic Series | 16 partials of a fundamental |
 
-When exporting audio:
-- **Clip save** (`S` key or WAV button): exports the last 60 seconds as 32-bit float stereo WAV to the `clips/` directory.
-- **Loop export**: exports the current loop region as a WAV file.
-- **Headless render** (`--headless --output file.wav`): renders to 16-bit or 32-bit WAV (configurable).
+---
 
-Supported sample rates: **44100 Hz** (default) and **48000 Hz** (set in `config.toml`). Other rates fall back to 44100 Hz.
+## Presets
 
-The plugin (VST3/CLAP) exports audio at whatever sample rate the host requests.
+math-sonify ships with ~40 named presets organized into four moods:
+
+- **Atmospheric** — Midnight Approach, Breathing Galaxy, Aurora Borealis, Deep Hypnosis, Cathedral Organ, Substorm, and more.
+- **Rhythmic** — Frozen Machinery, The Phase Transition, Clockwork Insect, Industrial Heartbeat, Velocity Band, and more.
+- **Experimental** — Neon Labyrinth, Dissociation, Jerk Circuit, Invisible Hand, Hyperchaos Engine, and more.
+- **Melodic** — Glass Harp, Electric Kelp, The Butterfly's Aria, Solar Wind, and more.
+
+The **AUTO** arrangement generator picks 6 presets from a mood pool, scatters system parameters into varied dynamical regimes, randomizes synthesis settings, and builds an 8-scene timeline with morphs as the main musical event.
+
+---
+
+## Audio output
+
+math-sonify outputs **32-bit IEEE float stereo PCM** at the system default sample rate (44100 or 48000 Hz).
+
+| Export method | Details |
+|---------------|---------|
+| Clip save (`S`) | Last 60 seconds → 32-bit float WAV in `clips/` |
+| Loop export | Current loop region → WAV |
+| Headless render | `--headless --duration 60 --output clip.wav` — no display required |
 
 ---
 
 ## Installation
 
-### From crates.io
+### Pre-built binary (Windows)
 
-Requires [Rust](https://rustup.rs/) 1.75 or later and a working audio output device.
-
-```bash
-cargo install math-sonify
-math-sonify
-```
+Download `math-sonify.exe` from the [latest release](https://github.com/Mattbusel/math-sonify/releases/latest) and run it. No dependencies, no install.
 
 ### From source
+
+Requires [Rust](https://rustup.rs/) 1.75+ and a working audio output device.
 
 ```bash
 git clone https://github.com/Mattbusel/math-sonify
@@ -148,37 +215,13 @@ cd math-sonify
 cargo run --release
 ```
 
-### Pre-built binaries
-
-Download a pre-built executable from the [latest GitHub release](https://github.com/Mattbusel/math-sonify/releases/latest).
-
----
-
-## Quickstart
-
-### Standalone application
-
-```bash
-cargo run --release
-```
-
-Audio starts immediately using the system default output device at 44100 Hz. The Lorenz attractor runs in Direct mode with a pentatonic scale. Use the GUI to switch systems, adjust parameters, and configure effects.
-
-### Headless mode (WAV export, no GUI)
-
-```bash
-cargo run --release -- --headless --duration 60 --output clip.wav
-```
-
-Renders 60 seconds of audio to `clip.wav` with no display required. Suitable for batch exports and server environments.
-
 ### Build the VST3 / CLAP plugin
 
 ```bash
 cargo build --release --lib
 ```
 
-The plugin shared library is written to `target/release/`. Copy it to your DAW plugin folder and rescan.
+Copy the output to your DAW plugin folder:
 
 | Platform | File | Destination |
 |----------|------|-------------|
@@ -188,18 +231,27 @@ The plugin shared library is written to `target/release/`. Copy it to your DAW p
 
 ---
 
-## Configuration reference
+## Quickstart
 
-The application reads `config.toml` from the current working directory at startup. All fields are optional; missing values use defaults. The file is watched with `notify`; edits take effect without restarting.
+Audio starts immediately on launch using the system default output device. The Lorenz attractor runs in Direct mode with a pentatonic scale.
+
+### Headless export (no GUI)
+
+```bash
+cargo run --release -- --headless --duration 60 --output clip.wav
+```
+
+---
+
+## Configuration
+
+The application reads `config.toml` from the current working directory at startup. The file is watched with `notify`; edits take effect without restarting.
 
 ```toml
 [system]
-name  = "lorenz"  # active system: lorenz | rossler | double_pendulum | geodesic_torus
-                  # | kuramoto | three_body | duffing | van_der_pol | halvorsen | aizawa
-                  # | chua | hindmarsh_rose | lorenz96 | mackey_glass | nose_hoover
-                  # | coupled_map_lattice | henon_map | custom_ode | fractional_lorenz
-dt    = 0.001     # ODE integration time step (clamped 0.0001..0.1)
-speed = 1.0       # simulation speed multiplier (0..100)
+name  = "lorenz"   # see full system list above
+dt    = 0.001      # ODE integration time step (clamped 0.0001..0.1)
+speed = 1.0        # simulation speed multiplier (0..100)
 
 [lorenz]
 sigma = 10.0
@@ -211,9 +263,24 @@ a = 0.2
 b = 0.2
 c = 5.7
 
+[hyperchaos]
+a = 35.0
+b = 3.0
+c = 28.0
+d = -7.0     # must be negative
+
+[windmi]
+a = 0.9
+b = 2.5
+
+[finance]
+a = 3.0
+b = 0.1
+c = 1.0
+
 [kuramoto]
 n_oscillators = 8
-coupling      = 1.5   # K; synchronization threshold approx 1.0
+coupling      = 1.5
 
 [duffing]
 delta = 0.3
@@ -225,55 +292,41 @@ omega = 1.2
 [van_der_pol]
 mu = 2.0
 
-[halvorsen]
-a = 1.89
-
-[chua]
-alpha = 15.6
-beta  = 28.0
-m0    = -1.143
-m1    = -0.714
-
-[hindmarsh_rose]
-current_i = 3.0  # external drive current (main control parameter)
-r         = 0.006
-
-[lorenz96]
-f = 8.0  # forcing parameter; chaos for f > 8
-
 [audio]
-sample_rate      = 44100   # 44100 or 48000
+sample_rate      = 44100
 buffer_size      = 512
-reverb_wet       = 0.4     # 0..1
-delay_ms         = 300.0   # 1..5000 ms
-delay_feedback   = 0.3     # 0..0.99
-master_volume    = 0.7     # 0..1
+reverb_wet       = 0.4
+delay_ms         = 300.0
+delay_feedback   = 0.3
+master_volume    = 0.7
 bit_depth        = 16.0    # 1..32 (32 = bypass bitcrusher)
-rate_crush       = 0.0     # 0..1 (0 = bypass rate crusher)
-chorus_mix       = 0.0     # 0..1
+rate_crush       = 0.0     # 0..1 (0 = bypass)
+chorus_mix       = 0.0
 chorus_rate      = 0.5     # Hz
 chorus_depth     = 3.0     # ms
-waveshaper_drive = 1.0     # 0..100
-waveshaper_mix   = 0.0     # 0..1
+waveshaper_drive = 1.0
+waveshaper_mix   = 0.0
 
 [sonification]
 mode                = "direct"
-# Modes: direct | orbital | granular | spectral | fm | vocal | waveguide
+# Modes: direct | orbital | granular | spectral | fm | am | vocal | waveguide | resonator
 scale               = "pentatonic"
-# Scales: pentatonic | chromatic | just_intonation | microtonal
-#         | edo19 | edo31 | edo24 | whole_tone | phrygian | lydian
-base_frequency      = 220.0         # Hz, root of the scale
-octave_range        = 3.0           # number of octaves spanned
+# Scales: pentatonic | natural_minor | harmonic_minor | dorian | phrygian | lydian
+#         | mixolydian | locrian | whole_tone | blues | hirajoshi | hungarian_minor
+#         | octatonic | chromatic | just_intonation | microtonal | edo19 | edo31 | edo24
+#         | harmonic_series
+base_frequency      = 220.0
+octave_range        = 3.0
 transpose_semitones = 0.0
 chord_mode          = "none"
-# Chord modes: none | major | minor | power | sus2 | octave | dom7
-portamento_ms       = 80.0          # frequency glide time
+# Chord modes: none | major | minor | power | sus2 | octave | dom7 | open_fifth | cluster
+portamento_ms       = 80.0
 voice_levels        = [1.0, 0.8, 0.6, 0.4]
 voice_shapes        = ["sine", "sine", "sine", "sine"]
 # Shapes: sine | saw | square | triangle | noise
 
 [viz]
-trail_length = 800    # number of points in the phase portrait trail
+trail_length = 800
 projection   = "xy"   # xy | xz | yz | 3d
 glow         = true
 theme        = "neon" # neon | amber | ice | mono
@@ -281,40 +334,17 @@ theme        = "neon" # neon | amber | ice | mono
 
 ---
 
-## Building and testing
+## GUI
 
-```bash
-# Run all unit and integration tests (no display required)
-cargo test --lib --tests
+Five top-level tabs:
 
-# Run only attractor bound tests
-cargo test --lib -- lorenz_stays_on_attractor
+- **SYNTH** — system selector, parameter sliders, sonification mode, scale, effects chain, randomize.
+- **MIXER** — per-layer volume/pan/ADSR, master effects (EQ, delay, chorus, reverb), VU meters, WAV export.
+- **ARRANGE** — scene timeline, morph time controls, AUTO arrangement generator with mood selection.
+- **MATH VIEW** — live phase portrait (XY/XZ/YZ/3D), bifurcation diagram, custom ODE text input, state readout.
+- **WAVEFORM** — oscilloscope and spectrum analyzer.
 
-# Release build (binary)
-cargo build --release --bin math-sonify
-
-# Release build (VST3/CLAP plugin)
-cargo build --release --lib
-
-# Documentation
-cargo doc --no-deps --open
-```
-
-The test suite covers: ODE solver accuracy (attractor bounds, energy conservation, synchronization thresholds), scale quantization, polyphony limits, config parsing and clamping, scene arranger timeline consistency, oscillator amplitude bounds, and ADSR envelope behavior.
-
----
-
-## GUI layout
-
-The application has five top-level tabs:
-
-- **SYNTH** -- system selector, parameter sliders, sonification mode, scale, effects chain.
-- **MIXER** -- per-layer volume/pan/ADSR, master effects (EQ, delay, chorus, reverb), VU meters, WAV export, clip save.
-- **ARRANGE** -- scene timeline, morph time controls, AUTO arrangement generator, probability weights.
-- **MATH VIEW** -- live phase portrait (XY/XZ/YZ/3D), bifurcation diagram, custom ODE text input, state readout.
-- **WAVEFORM** -- oscilloscope and spectrum analyzer.
-
-Performance mode (press `F`) switches to fullscreen phase portrait only.
+Performance mode (`F`) switches to fullscreen phase portrait only.
 
 ---
 
@@ -325,9 +355,9 @@ Performance mode (press `F`) switches to fullscreen phase portrait only.
 | `F` | Toggle fullscreen performance mode |
 | `Space` | Pause / resume simulation |
 | `R` | Reset attractor to default initial condition |
-| `S` | Save clip (last 60 seconds as WAV + PNG) |
+| `S` | Save clip (last 60 seconds as WAV) |
 | `Ctrl+S` | Save current configuration to `config.toml` |
-| `1` to `7` | Switch sonification mode (Direct, Orbital, Granular, Spectral, FM, Vocal, Waveguide) |
+| `1` – `7` | Switch sonification mode |
 | `<` / `>` | Previous / next dynamical system |
 | `Up` / `Down` | Increase / decrease simulation speed by 10% |
 | `E` | Toggle Evolve (autonomous parameter wandering) |
@@ -337,56 +367,63 @@ Performance mode (press `F`) switches to fullscreen phase portrait only.
 
 ---
 
+## Building and testing
+
+```bash
+# Run all unit and integration tests (~1650 tests, no display required)
+cargo test --lib --tests
+
+# Release binary
+cargo build --release --bin math-sonify
+
+# Release plugin
+cargo build --release --lib
+
+# Documentation
+cargo doc --no-deps --open
+```
+
+The test suite covers: ODE solver accuracy (attractor bounds, energy conservation, synchronization thresholds), scale quantization, polyphony, config parsing and clamping, scene arranger timeline consistency, oscillator amplitude bounds, ADSR envelope behavior, all-presets load/validate, lerp_config correctness for every system, and bifurcation parameter sweeps.
+
+---
+
 ## Troubleshooting
 
-### No audio / device not found
-
+**No audio / device not found**
 - math-sonify uses `cpal::default_host().default_output_device()`. Ensure a device is selected in OS audio settings.
-- **Exclusive mode (Windows)**: close any application holding the device in exclusive mode (e.g., games, some audio interfaces).
-- **ALSA errors (Linux)**: install `libasound2-dev` (`sudo apt install libasound2-dev`) and add your user to the `audio` group.
-- **Sample rate mismatch**: set `sample_rate = 48000` in `config.toml` if you see an `AudioDeviceError`.
+- Windows exclusive mode: close any application holding the device exclusively.
+- Linux ALSA: `sudo apt install libasound2-dev`, add user to `audio` group.
+- Sample rate mismatch: set `sample_rate = 48000` in `config.toml`.
 
-### High CPU usage
-
+**High CPU usage**
 - Increase `buffer_size` to 1024 or 2048.
 - Disable Evolve mode when not in use.
-- For Three-Body and Lorenz96, reduce `system.speed`.
+- For Three-Body and Lorenz-96, reduce `system.speed`.
 
-### Distorted audio
+**Distorted audio**
+- Lower `audio.master_volume`.
+- Set `waveshaper_drive = 1.0` and `waveshaper_mix = 0.0`.
 
-- Lower `audio.master_volume` (default 0.7).
-- The lookahead limiter prevents true clipping; audible distortion usually means waveshaper drive is too high. Set `waveshaper_drive = 1.0` and `waveshaper_mix = 0.0`.
+**Phase portrait blank**
+- Wait 2–3 seconds for the trail to build after startup or after pressing `R`.
 
-### Phase portrait is blank
+**Config not loading**
+- math-sonify looks for `config.toml` in the **current working directory**.
 
-- Wait 2-3 seconds after startup or after pressing `R` for the trail to build up.
-- If the system diverges (NaN/Inf state), the engine resets automatically (logged as `OdeIntegrationError`).
-
-### Config file not loading
-
-- math-sonify looks for `config.toml` in the **current working directory**. Run the binary from the directory containing your config file.
-- Parse errors are logged as warnings; invalid values are clamped to their valid range rather than rejected.
-
-### VST3/CLAP plugin not appearing
-
-- Ensure you copied the `.dll`/`.so` to the correct system VST3 folder and triggered a plugin rescan in your DAW.
-- Some DAWs require a full restart after installing new plugins.
-- The plugin must be built with `cargo build --release --lib`, not `--bin`.
+**VST3/CLAP not appearing**
+- Copy to the correct system folder and trigger a plugin rescan in your DAW.
+- The plugin requires `cargo build --release --lib`, not `--bin`.
 
 ---
 
 ## Contributing
 
-1. Fork the repository and create a feature branch.
-2. Run `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` before pushing.
-3. Add tests for any new public API (unit tests in the relevant module, integration tests in `tests/integration.rs`).
-4. Open a pull request. The CI matrix (fmt, clippy, test, doc, release build, audit) must pass.
+1. Fork and create a feature branch.
+2. Run `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings`.
+3. Add tests for new public API (unit tests in the module, integration tests in `tests/integration.rs`).
+4. Open a pull request. CI (fmt, clippy, test, doc, release build) must pass.
 
-Code style notes:
-- No `unsafe` except where unavoidable with a `#[allow(unsafe_code)]` comment explaining why.
-- No `.unwrap()` or `.expect()` in non-test `src/` code; use `?` or explicit `Result` returns.
-- Audio thread code must be real-time safe: no heap allocation, no blocking I/O, no `unwrap`.
-- All public items must have `///` doc comments.
+Code style: no `unsafe` without comment, no `.unwrap()` in `src/` outside tests, audio thread must be real-time safe (no heap allocation, no blocking I/O).
 
 ---
 
@@ -396,4 +433,4 @@ MIT. See [LICENSE](LICENSE).
 
 ---
 
-Built with [Rust](https://www.rust-lang.org), [cpal](https://github.com/RustAudio/cpal), [egui](https://github.com/emilk/egui), [nih-plug](https://github.com/robbert-vdh/nih-plug), [crossbeam](https://github.com/crossbeam-rs/crossbeam), [parking_lot](https://github.com/Amanieu/parking_lot), [hound](https://github.com/ruuda/hound), [tracing](https://github.com/tokio-rs/tracing).
+Built with [Rust](https://www.rust-lang.org), [cpal](https://github.com/RustAudio/cpal), [egui](https://github.com/emilk/egui), [nih-plug](https://github.com/robbert-vdh/nih-plug), [crossbeam](https://github.com/crossbeam-rs/crossbeam), [parking_lot](https://github.com/Amanieu/parking_lot), [hound](https://github.com/ruuda/hound), [rayon](https://github.com/rayon-rs/rayon), [tracing](https://github.com/tokio-rs/tracing).
