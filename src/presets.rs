@@ -23,6 +23,10 @@ pub const PRESETS: &[Preset] = &[
     Preset { name: "Rössler Drift", description: "Gentle spiral attractor, microtonal scale" },
     Preset { name: "FM Chaos", description: "Frequency modulation driven by the butterfly attractor" },
     Preset { name: "Pendulum Meditation", description: "Slow pendulum drift through pure harmonic ratios" },
+    Preset { name: "Thomas Labyrinth", description: "Cyclically symmetric attractor, vocal formants, long reverb" },
+    Preset { name: "Neural Burst", description: "Hindmarsh-Rose neuron spikes drive granular percussion" },
+    Preset { name: "Chemical Wave", description: "Belousov-Zhabotinsky oscillator in spectral mode" },
+    Preset { name: "Sprott Minimal", description: "Algebraically simplest chaos, clean AM sonification" },
 ];
 
 /// Load the [`Config`] for a named preset.
@@ -122,6 +126,53 @@ pub fn load_preset(name: &str) -> Config {
                 voice_levels: [1.0, 0.8, 0.7, 0.5], portamento_ms: 500.0,
             },
             audio: AudioConfig { reverb_wet: 0.75, delay_ms: 700.0, delay_feedback: 0.3, master_volume: 0.65, ..Default::default() },
+            ..Default::default()
+        },
+        "Thomas Labyrinth" => Config {
+            system: SystemConfig { name: "thomas".into(), dt: 0.002, speed: 0.7 },
+            sonification: SonificationConfig {
+                mode: "vocal".into(), scale: "pentatonic".into(),
+                base_frequency: 130.0, octave_range: 3.0,
+                chord_mode: "minor".into(), transpose_semitones: -5.0,
+                voice_levels: [1.0, 0.8, 0.6, 0.4], portamento_ms: 350.0,
+            },
+            audio: AudioConfig { reverb_wet: 0.75, delay_ms: 500.0, delay_feedback: 0.4, master_volume: 0.65, ..Default::default() },
+            thomas: ThomasConfig { b: 0.208186 },
+            ..Default::default()
+        },
+        "Neural Burst" => Config {
+            system: SystemConfig { name: "hindmarsh_rose".into(), dt: 0.001, speed: 3.0 },
+            sonification: SonificationConfig {
+                mode: "granular".into(), scale: "pentatonic".into(),
+                base_frequency: 200.0, octave_range: 2.5,
+                chord_mode: "power".into(), transpose_semitones: 0.0,
+                voice_levels: [1.0, 0.6, 0.4, 0.2], portamento_ms: 20.0,
+            },
+            audio: AudioConfig { reverb_wet: 0.25, delay_ms: 120.0, delay_feedback: 0.35, master_volume: 0.75, ..Default::default() },
+            hindmarsh_rose: HindmarshRoseConfig { current_i: 3.0, r: 0.006 },
+            ..Default::default()
+        },
+        "Chemical Wave" => Config {
+            system: SystemConfig { name: "oregonator".into(), dt: 0.0005, speed: 2.0 },
+            sonification: SonificationConfig {
+                mode: "spectral".into(), scale: "just_intonation".into(),
+                base_frequency: 165.0, octave_range: 3.5,
+                chord_mode: "major".into(), transpose_semitones: 5.0,
+                voice_levels: [1.0, 0.9, 0.6, 0.3], portamento_ms: 80.0,
+            },
+            audio: AudioConfig { reverb_wet: 0.5, delay_ms: 350.0, delay_feedback: 0.42, master_volume: 0.7, ..Default::default() },
+            oregonator: OregonatorConfig { f: 1.0 },
+            ..Default::default()
+        },
+        "Sprott Minimal" => Config {
+            system: SystemConfig { name: "sprott_e".into(), dt: 0.01, speed: 1.0 },
+            sonification: SonificationConfig {
+                mode: "am".into(), scale: "pentatonic".into(),
+                base_frequency: 260.0, octave_range: 2.0,
+                chord_mode: "sus4".into(), transpose_semitones: 0.0,
+                voice_levels: [1.0, 0.7, 0.5, 0.3], portamento_ms: 200.0,
+            },
+            audio: AudioConfig { reverb_wet: 0.45, delay_ms: 280.0, delay_feedback: 0.3, master_volume: 0.7, ..Default::default() },
             ..Default::default()
         },
         _ => Config::default(),
