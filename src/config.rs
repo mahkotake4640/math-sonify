@@ -1183,6 +1183,8 @@ impl From<&str> for Scale {
             "hungarian_minor" => Self::HungarianMinor,
             "locrian" => Self::Locrian,
             "octatonic" => Self::Octatonic,
+            "natural_minor" => Self::NaturalMinor,
+            "harmonic_minor" => Self::HarmonicMinor,
             _ => Self::Pentatonic,
         }
     }

@@ -676,4 +676,66 @@ mod tests {
             assert!((step - expected).abs() < 1e-6, "Octatonic step[{}]: expected {}, got {}", i, expected, step);
         }
     }
+
+    #[test]
+    fn test_natural_minor_scale_produces_finite_output() {
+        let base = 220.0_f32;
+        for &t in &[0.0_f32, 0.2, 0.5, 0.8, 1.0] {
+            let f = quantize_to_scale(t, base, 2.0, Scale::NaturalMinor);
+            assert!(f.is_finite() && f > 0.0, "NaturalMinor at t={}: {}", t, f);
+        }
+    }
+
+    #[test]
+    fn test_natural_minor_scale_interval_count() {
+        let intervals = Scale::NaturalMinor.intervals();
+        assert_eq!(intervals.len(), 7, "NaturalMinor should have 7 notes per octave");
+    }
+
+    #[test]
+    fn test_natural_minor_scale_intervals_correct() {
+        // A Aeolian: [0, 2, 3, 5, 7, 8, 10]
+        let intervals = Scale::NaturalMinor.intervals();
+        let expected = [0.0_f32, 2.0, 3.0, 5.0, 7.0, 8.0, 10.0];
+        assert_eq!(intervals.len(), expected.len());
+        for (i, (&got, &exp)) in intervals.iter().zip(expected.iter()).enumerate() {
+            assert!((got - exp).abs() < 1e-6, "NaturalMinor interval[{}]: expected {}, got {}", i, exp, got);
+        }
+    }
+
+    #[test]
+    fn test_harmonic_minor_scale_produces_finite_output() {
+        let base = 220.0_f32;
+        for &t in &[0.0_f32, 0.2, 0.5, 0.8, 1.0] {
+            let f = quantize_to_scale(t, base, 2.0, Scale::HarmonicMinor);
+            assert!(f.is_finite() && f > 0.0, "HarmonicMinor at t={}: {}", t, f);
+        }
+    }
+
+    #[test]
+    fn test_harmonic_minor_scale_interval_count() {
+        let intervals = Scale::HarmonicMinor.intervals();
+        assert_eq!(intervals.len(), 7, "HarmonicMinor should have 7 notes per octave");
+    }
+
+    #[test]
+    fn test_harmonic_minor_scale_intervals_correct() {
+        // A harmonic minor: [0, 2, 3, 5, 7, 8, 11] — raised 7th vs natural minor
+        let intervals = Scale::HarmonicMinor.intervals();
+        let expected = [0.0_f32, 2.0, 3.0, 5.0, 7.0, 8.0, 11.0];
+        assert_eq!(intervals.len(), expected.len());
+        for (i, (&got, &exp)) in intervals.iter().zip(expected.iter()).enumerate() {
+            assert!((got - exp).abs() < 1e-6, "HarmonicMinor interval[{}]: expected {}, got {}", i, exp, got);
+        }
+    }
+
+    #[test]
+    fn test_harmonic_minor_differs_from_natural_minor() {
+        // Harmonic minor has raised 7th (11 semitones) vs natural minor (10 semitones)
+        let nat = Scale::NaturalMinor.intervals();
+        let harm = Scale::HarmonicMinor.intervals();
+        assert_eq!(nat.len(), harm.len(), "Both should be 7-note scales");
+        // 6th interval (index 6) should differ: 10.0 vs 11.0
+        assert!((nat[6] - harm[6]).abs() > 0.5, "7th degree should differ between natural and harmonic minor");
+    }
 }

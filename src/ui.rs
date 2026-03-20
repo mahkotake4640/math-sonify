@@ -1081,6 +1081,7 @@ fn system_internal_name(display: &str) -> &'static str {
         "WINDMI" => "windmi",
         "Finance" => "finance",
         "Hyperchaos" => "hyperchaos",
+        "Sprott K" => "sprott_k",
         "Sprott D" => "sprott_d",
         "Sprott E" => "sprott_e",
         "Sprott F" => "sprott_f",
@@ -1108,6 +1109,8 @@ fn scale_description(scale: &str) -> &'static str {
         "hungarian_minor" => "Hungarian minor — augmented 4th and leading 7th; dramatic, Eastern European colour",
         "locrian" => "B Locrian — darkest mode; diminished tonic gives an unresolved, suspended tension",
         "octatonic" => "Diminished scale — perfectly symmetric 8-note set; used in jazz and 20th-century composition",
+        "natural_minor" => "A Aeolian — standard minor scale; melancholic, familiar, widely used in classical and rock",
+        "harmonic_minor" => "A harmonic minor — raised 7th creates an exotic leading tone; flamenco and Middle-Eastern colour",
         _ => "",
     }
 }
@@ -3073,6 +3076,8 @@ fn draw_advanced_panel(
             ("hungarian_minor", "Hungarian Minor"),
             ("locrian", "Locrian"),
             ("octatonic", "Octatonic (Diminished)"),
+            ("natural_minor", "Natural Minor"),
+            ("harmonic_minor", "Harmonic Minor"),
         ];
         let current_scale = st.config.sonification.scale.clone();
         let current_scale_label = scales
@@ -3282,6 +3287,7 @@ fn draw_advanced_panel(
                 "windmi",
                 "finance",
                 "hyperchaos",
+                "sprott_k",
                 "sprott_d",
                 "sprott_e",
                 "sprott_f",
