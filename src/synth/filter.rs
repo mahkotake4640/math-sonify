@@ -386,7 +386,7 @@ mod tests {
         let mut filt_notch = BiquadFilter::notch(center, 10.0, SR);
         let rms_notch = sine_rms(&mut filt_notch, center, 8000);
 
-        let mut filt_bypass = BiquadFilter::notch(center, 10.0, SR);
+        let filt_bypass = BiquadFilter::notch(center, 10.0, SR);
         // Bypass comparison: notch at far-away frequency should pass 1 kHz
         let mut filt_far = BiquadFilter::notch(5000.0, 10.0, SR);
         let rms_far = sine_rms(&mut filt_far, center, 8000);

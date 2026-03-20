@@ -1902,8 +1902,7 @@ mod tests {
 mod ode_property_tests {
     use crate::config::Config;
     use crate::systems::duffing::Duffing;
-    use crate::systems::{DynamicalSystem, Kuramoto, Lorenz, Rossler};
-    use crate::synth::grain::GrainEngine;
+    use crate::systems::{DynamicalSystem, Lorenz, Rossler};
 
     fn all_finite(state: &[f64]) -> bool {
         state.iter().all(|v| v.is_finite())
