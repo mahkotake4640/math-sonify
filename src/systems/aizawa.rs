@@ -138,4 +138,23 @@ mod tests {
         assert!((s[1] - 0.5).abs() < 1e-15);
         assert!((s[2] - 0.5).abs() < 1e-15);
     }
+
+    #[test]
+    fn test_aizawa_speed_positive_after_step() {
+        let mut sys = Aizawa::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_aizawa_state_finite_after_long_run() {
+        let mut sys = Aizawa::new();
+        for _ in 0..5000 {
+            sys.step(0.01);
+        }
+        assert!(
+            sys.state().iter().all(|v| v.is_finite()),
+            "State should stay finite: {:?}", sys.state()
+        );
+    }
 }

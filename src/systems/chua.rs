@@ -134,4 +134,23 @@ mod tests {
         assert!((s[1] - (-0.5)).abs() < 1e-15);
         assert!((s[2] - 2.0).abs() < 1e-15);
     }
+
+    #[test]
+    fn test_chua_speed_positive_after_step() {
+        let mut sys = Chua::new();
+        sys.step(0.001);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_chua_state_finite_after_long_run() {
+        let mut sys = Chua::new();
+        for _ in 0..5000 {
+            sys.step(0.001);
+        }
+        assert!(
+            sys.state().iter().all(|v| v.is_finite()),
+            "State should stay finite: {:?}", sys.state()
+        );
+    }
 }

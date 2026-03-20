@@ -162,4 +162,25 @@ mod tests {
             assert!(v > 0.0 && v < 1.0, "set_state value out of (0,1): {}", v);
         }
     }
+
+    #[test]
+    fn test_cml_speed_positive_after_step() {
+        let mut sys = CoupledMapLattice::new(3.7, 0.1);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_cml_different_r_different_dynamics() {
+        let mut sys_low = CoupledMapLattice::new(2.0, 0.1);
+        let mut sys_high = CoupledMapLattice::new(3.9, 0.1);
+        for _ in 0..100 {
+            sys_low.step(0.01);
+            sys_high.step(0.01);
+        }
+        let d: f64 = sys_low.state().iter().zip(sys_high.state().iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(d > 0.01, "Different r should give different CML dynamics: d={}", d);
+    }
 }

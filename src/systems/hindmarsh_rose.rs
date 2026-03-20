@@ -194,4 +194,29 @@ mod tests {
         assert!((s[1] - (-5.0)).abs() < 1e-15);
         assert!((s[2] - (-1.0)).abs() < 1e-15);
     }
+
+    #[test]
+    fn test_hindmarsh_rose_speed_positive_after_step() {
+        let mut sys = HindmarshRose::new(2.0, 0.01);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_hindmarsh_rose_different_i_affects_spiking() {
+        // Different current I (first param) should produce different membrane potentials
+        let mut sys_low = HindmarshRose::new(1.0, 0.01);
+        let mut sys_high = HindmarshRose::new(4.0, 0.01);
+        for _ in 0..1000 {
+            sys_low.step(0.01);
+            sys_high.step(0.01);
+        }
+        let x_low = sys_low.state()[0];
+        let x_high = sys_high.state()[0];
+        assert!(
+            (x_low - x_high).abs() > 0.01,
+            "Different I should give different membrane voltage: I=1 → {}, I=4 → {}",
+            x_low, x_high
+        );
+    }
 }

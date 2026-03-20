@@ -131,4 +131,23 @@ mod tests {
         assert!((s[1] - 2.0).abs() < 1e-15);
         assert!((s[2] - 3.0).abs() < 1e-15);
     }
+
+    #[test]
+    fn test_nose_hoover_speed_positive_after_step() {
+        let mut sys = NoseHoover::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_nose_hoover_state_finite_after_long_run() {
+        let mut sys = NoseHoover::new();
+        for _ in 0..5000 {
+            sys.step(0.01);
+        }
+        assert!(
+            sys.state().iter().all(|v| v.is_finite()),
+            "State should stay finite: {:?}", sys.state()
+        );
+    }
 }

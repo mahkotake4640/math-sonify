@@ -147,4 +147,19 @@ mod tests {
         assert!((x1 - (x0 + y0).rem_euclid(1.0)).abs() < 1e-12, "x1 mismatch");
         assert!((y1 - (x0 + 2.0 * y0).rem_euclid(1.0)).abs() < 1e-12, "y1 mismatch");
     }
+
+    #[test]
+    fn test_arnold_cat_speed_positive_after_step() {
+        let mut sys = ArnoldCat::new();
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_arnold_cat_set_state() {
+        let mut sys = ArnoldCat::new();
+        sys.set_state(&[0.3, 0.7]);
+        assert!((sys.state()[0] - 0.3).abs() < 1e-15, "x should be 0.3");
+        assert!((sys.state()[1] - 0.7).abs() < 1e-15, "y should be 0.7");
+    }
 }

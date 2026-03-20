@@ -254,4 +254,26 @@ mod tests {
         let s = sys.state();
         assert!(s.iter().all(|v| v.is_finite()));
     }
+
+    #[test]
+    fn test_fractional_lorenz_speed_positive_after_step() {
+        let mut sys = FractionalLorenz::new(0.95, 10.0, 28.0, 8.0 / 3.0);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_fractional_lorenz_different_alpha_different_dynamics() {
+        let mut sys_low = FractionalLorenz::new(0.8, 10.0, 28.0, 8.0 / 3.0);
+        let mut sys_high = FractionalLorenz::new(1.0, 10.0, 28.0, 8.0 / 3.0);
+        for _ in 0..200 {
+            sys_low.step(0.01);
+            sys_high.step(0.01);
+        }
+        let d: f64 = sys_low.state().iter().zip(sys_high.state().iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(d > 1e-6, "Different alpha should give different trajectories: d={}", d);
+    }
 }

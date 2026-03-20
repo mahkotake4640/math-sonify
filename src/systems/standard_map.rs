@@ -144,4 +144,26 @@ mod tests {
         let expected = (theta0 + p0).rem_euclid(TAU);
         assert!((theta1 - expected).abs() < 1e-12, "k=0 should give theta += p");
     }
+
+    #[test]
+    fn test_standard_map_speed_positive_after_step() {
+        let mut sys = StandardMap::new(1.0);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_standard_map_large_k_different_from_small_k() {
+        // Larger k (more stochastic) should give a different trajectory than small k
+        let mut sys_small = StandardMap::new(0.1);
+        let mut sys_large = StandardMap::new(5.0);
+        for _ in 0..100 {
+            sys_small.step(0.01);
+            sys_large.step(0.01);
+        }
+        let d: f64 = sys_small.state().iter().zip(sys_large.state().iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(d > 1e-6, "Different k should give different dynamics: d={}", d);
+    }
 }

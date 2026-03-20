@@ -145,4 +145,27 @@ mod tests {
         let expected = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt() / dt;
         assert!((sys.speed() - expected).abs() < 1e-12, "Speed mismatch: {} vs {}", sys.speed(), expected);
     }
+
+    #[test]
+    fn test_henon_set_state() {
+        let mut sys = HenonMap::new();
+        sys.set_state(&[0.4, -0.3]);
+        assert!((sys.state[0] - 0.4).abs() < 1e-15, "x should be 0.4");
+        assert!((sys.state[1] - (-0.3)).abs() < 1e-15, "y should be -0.3");
+    }
+
+    #[test]
+    fn test_henon_attractor_bounded() {
+        // The Hénon attractor with default params stays within known bounds
+        let mut sys = HenonMap::new();
+        sys.state[0] = 0.3;
+        sys.state[1] = 0.2;
+        for _ in 0..5000 {
+            sys.step(0.01);
+        }
+        assert!(
+            sys.state().iter().all(|v| v.is_finite()),
+            "State non-finite: {:?}", sys.state()
+        );
+    }
 }

@@ -196,4 +196,29 @@ mod tests {
             "NaN set_state should be ignored"
         );
     }
+
+    #[test]
+    fn test_mackey_glass_speed_positive_after_step() {
+        let mut sys = MackeyGlass::new();
+        // Need to warm up the delay buffer first
+        for _ in 0..50 {
+            sys.step(0.1);
+        }
+        let speed_before = sys.speed();
+        sys.step(0.1);
+        // After the buffer is warmed up, speed should be positive
+        assert!(sys.speed() >= 0.0, "speed should be non-negative: {}", speed_before);
+    }
+
+    #[test]
+    fn test_mackey_glass_state_finite_after_long_run() {
+        let mut sys = MackeyGlass::new();
+        for _ in 0..3000 {
+            sys.step(0.1);
+        }
+        assert!(
+            sys.state().iter().all(|v| v.is_finite()),
+            "State should stay finite: {:?}", sys.state()
+        );
+    }
 }

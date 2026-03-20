@@ -138,4 +138,26 @@ mod tests {
         sys.step(0.01);
         assert!((sys.state[1] - r).abs() < 1e-15, "r not preserved in state[1]");
     }
+
+    #[test]
+    fn test_logistic_speed_positive_after_step() {
+        let mut sys = LogisticMap::new(3.9);
+        sys.step(0.01);
+        assert!(sys.speed() > 0.0, "speed should be positive: {}", sys.speed());
+    }
+
+    #[test]
+    fn test_logistic_different_r_different_dynamics() {
+        let mut sys1 = LogisticMap::new(2.0); // period-1 fixed point
+        let mut sys2 = LogisticMap::new(3.9); // chaos
+        for _ in 0..1000 {
+            sys1.step(0.01);
+            sys2.step(0.01);
+        }
+        assert!(
+            (sys1.state[0] - sys2.state[0]).abs() > 0.01,
+            "Different r should produce different steady states: r=2 → {}, r=3.9 → {}",
+            sys1.state[0], sys2.state[0]
+        );
+    }
 }
