@@ -30,6 +30,8 @@ pub mod zoo;
 pub mod effects;
 pub mod blend;
 pub mod scale_mapper;
+pub mod euclidean;
+pub mod tuning;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
