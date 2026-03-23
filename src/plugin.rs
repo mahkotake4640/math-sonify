@@ -40,6 +40,8 @@ pub mod generative_counterpoint;
 pub mod spectral_morph;
 pub mod stochastic_composer;
 pub mod binaural_beats;
+pub mod sequencer;
+pub mod chord_progression;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
