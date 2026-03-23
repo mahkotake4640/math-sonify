@@ -5,6 +5,7 @@
 
 mod arrangement;
 mod audio;
+mod audio_driven;
 mod bifurcation;
 mod collab;
 mod collaboration;
