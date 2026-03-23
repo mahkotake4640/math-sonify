@@ -60,6 +60,8 @@ pub mod audio_effects;
 pub mod notation_exporter;
 pub mod algorithmic_composer;
 pub mod tuning_system;
+pub mod chord_analyzer;
+pub mod beat_tracker;
 
 use std::path::Path;
 use std::sync::Arc;
