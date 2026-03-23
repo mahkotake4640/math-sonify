@@ -10,16 +10,19 @@ math-sonify is a real-time generative audio engine that runs mathematical dynami
 
 ## Feature highlights
 
-1. **53 dynamical systems** — Lorenz, Rossler, Double Pendulum, Kuramoto, Three-Body, Hyperchaos (Chen-Li), WINDMI, Finance, all Sprott cases, and more (full list below).
+1. **53 dynamical systems** — Lorenz, Rossler, Double Pendulum, Kuramoto, Three-Body, Hyperchaos (Chen-Li), WINDMI, Finance, all Sprott cases, Tinkerbell map, and more (full list below).
 2. **9 sonification modes** — Direct, Orbital, Granular, Spectral, FM, AM, Vocal, Waveguide, Resonator.
 3. **20 musical scales** — Pentatonic through Microtonal, EDO-19/24/31, Harmonic Series, Just Intonation.
 4. **MIDI export** — trajectory-to-MIDI conversion; outputs Standard MIDI Files (SMF) importable into any DAW.
 5. **Preset gallery** — 16+ named presets with mood tags, complexity ratings, favorites, and a discovery mode that surfaces less-played entries.
-6. **Collaborative performance** — JSON/WebSocket session protocol; multiple performers share attractor state in real time.
-7. **Scene arranger** — 8-scene timeline with smooth parameter morphs; AUTO generator builds full arrangements from a mood pool.
-8. **VST3 / CLAP plugin** — load inside Ableton, FL Studio, Logic Pro, Reaper, and any other NIH-plug-compatible DAW.
-9. **Headless render** — `--headless --duration 60 --output clip.wav` with no display required.
-10. **Live config reload** — edit `config.toml` while the engine runs; changes take effect without restart.
+6. **Collaborative session mode** — real-time multi-user parameter control via a WebSocket server with per-participant colour highlights, conflict resolution, and full session replay log.
+7. **Audio-driven ODE morphing** — reverse the sonification pipeline: incoming microphone audio extracts features (RMS, spectral centroid, flux, 8-band energy) and maps them to ODE parameters in real time. Can run simultaneously with the forward synthesis path (dual mode).
+8. **Lyapunov exponent tracker** — real-time estimation of the maximal Lyapunov exponent; displayed in the MATH VIEW tab.
+9. **FFT spectral overlay** — live FFT spectrum superimposed on the phase portrait and the WAVEFORM tab.
+10. **Scene arranger** — 8-scene timeline with smooth parameter morphs; AUTO generator builds full arrangements from a mood pool.
+11. **VST3 / CLAP plugin** — load inside Ableton, FL Studio, Logic Pro, Reaper, and any other NIH-plug-compatible DAW.
+12. **Headless render** — `--headless --duration 60 --output clip.wav` with no display required.
+13. **Live config reload** — edit `config.toml` while the engine runs; changes take effect without restart.
 
 ---
 
@@ -307,9 +310,66 @@ let favs = gallery.favorites();
 
 ---
 
-## Collaboration mode guide
+## Collaborative session guide
 
-math-sonify includes a JSON-based collaborative performance protocol that lets multiple performers share attractor state in real time. Any transport layer (WebSocket, UDP, OSC) can carry the messages; the module itself only handles serialisation and session logic.
+math-sonify includes two complementary collaboration features: a low-level protocol (`collaboration.rs`) for sharing attractor state between performers, and a full-featured **Collaborative Session** server (`collab.rs`) for real-time multi-user parameter editing.
+
+### Collaborative Session server (`collab.rs`)
+
+The session server is a raw-TCP WebSocket-style server that accepts JSON connections from any number of participants. Each participant can claim ownership of specific ODE parameters, edit them in real time, and all changes propagate immediately to every other connected client.
+
+**Key types:**
+
+| Type | Role |
+|------|------|
+| `CollabServer` | TCP listener; spawns a thread per client |
+| `SessionEvent` | Events emitted to the simulation thread (`ParamChanged`, `ClientJoined`, `ClientLeft`) |
+| `SharedSynthState` | ODE parameters + sonification mode + scale, wrapped in `Arc<RwLock<>>` for lock-free reads |
+| `ParticipantCursor` | Each participant has a unique colour highlight on the parameter they are currently editing |
+| `SessionLog` | Full ordered history of every parameter change for post-session replay |
+
+**Wire protocol** (newline-delimited JSON):
+
+```json
+// Client -> Server
+{ "claim":   ["rho", "sigma"] }
+{ "set":     { "rho": 28.5 } }
+{ "release": ["rho"] }
+
+// Server -> Client
+{ "welcome":     { "client_id": 3 } }
+{ "update":      { "rho": 28.5, "owner": 3 } }
+{ "error":       "parameter 'rho' is owned by client 1" }
+{ "peer_joined": { "client_id": 4, "total": 2 } }
+{ "peer_left":   { "client_id": 4, "total": 1 } }
+```
+
+**Conflict resolution:** last-write-wins per parameter. A participant must first `claim` a parameter; attempts to `set` an unclaimed or foreign-owned parameter are rejected with an `error` message.
+
+**Starting the server:**
+
+```rust
+use math_sonify_plugin::collab::{CollabServer, SessionEvent};
+use crossbeam_channel::unbounded;
+
+let (tx, rx) = unbounded::<SessionEvent>();
+let server = CollabServer::new("127.0.0.1:9001", tx).unwrap();
+server.run_background();
+
+// In the simulation thread:
+for event in rx.try_iter() {
+    match event {
+        SessionEvent::ParamChanged { name, value, .. } => { /* apply to ODE */ }
+        _ => {}
+    }
+}
+```
+
+Connect any WebSocket client (browser, `websocat`, Python `websockets`) to `ws://127.0.0.1:9001` to join the session.
+
+### Legacy performance protocol (`collaboration.rs`)
+
+math-sonify also includes a JSON-based collaborative performance protocol that lets multiple performers share attractor state in real time. Any transport layer (WebSocket, UDP, OSC) can carry the messages; the module itself only handles serialisation and session logic.
 
 ### Concepts
 
@@ -565,6 +625,124 @@ projection   = "xy"   # xy | xz | yz | 3d
 glow         = true
 theme        = "neon" # neon | amber | ice | mono
 ```
+
+---
+
+## Audio-driven ODE morphing guide
+
+In addition to the classic forward pipeline (ODE state → audio), math-sonify can reverse the flow: use **incoming microphone audio** to continuously modify ODE parameters in real time.
+
+### How it works
+
+```
+Microphone / line-in (cpal default input)
+    |
+    v  per-frame (configurable hop size, default 512 samples)
+AudioInputAnalyzer
+    |  computes:
+    |    RMS        → Lorenz σ  (louder = more chaos, σ ∈ [5, 30])
+    |    Centroid   → Lorenz ρ  (brighter spectrum = higher ρ, ρ ∈ [15, 60])
+    |    Flux       → system switch trigger (transients trigger attractor changes)
+    |    8-band energy → Lorenz β (mid-band energy → β ∈ [1.5, 4.0])
+    v
+AudioFeatures { rms, centroid, flux, bands: [f32; 8] }
+    |
+    v
+AudioOdeBridge  (delta suppression: only emits patch when change exceeds threshold)
+    |
+    v
+OdePatch → simulation thread (applies sigma/rho/beta overrides)
+```
+
+### Dual mode
+
+`DualMode` lets both pipelines run simultaneously:
+
+| Mode | Description |
+|------|-------------|
+| `ForwardOnly` | Classic: ODE state drives audio synthesis (default) |
+| `ReverseOnly` | Microphone input drives ODE parameters only |
+| `Both` | Both paths active simultaneously — environment modulates the attractor which modulates the sound which feeds back into the environment |
+
+### Usage
+
+```rust
+use math_sonify_plugin::audio_driven::{AudioOdeBridge, BridgeConfig, DualMode, DualModeKind};
+use crossbeam_channel::unbounded;
+
+// Build the reverse pipeline
+let dual = DualMode::new(BridgeConfig::default());
+let (mut analyzer, patch_rx, _stop) = dual.build_reverse_pipeline();
+
+// Feed audio samples from cpal input callback:
+// analyzer.feed(sample);  // called per sample in the cpal callback
+
+// In the simulation thread:
+for patch in patch_rx.try_iter() {
+    if let Some(sigma) = patch.sigma { ode_params.sigma = sigma; }
+    if let Some(rho)   = patch.rho   { ode_params.rho   = rho;   }
+    if patch.trigger_system_switch   { /* switch to next attractor */ }
+}
+```
+
+### Configuration (`BridgeConfig`)
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `sigma_min` / `sigma_max` | 5.0 / 30.0 | Lorenz σ range |
+| `rho_min` / `rho_max` | 15.0 / 60.0 | Lorenz ρ range |
+| `beta_min` / `beta_max` | 1.5 / 4.0 | Lorenz β range |
+| `flux_switch_threshold` | 0.6 | Flux above this triggers a system switch |
+| `fft_size` | 1024 | FFT frame size (power of two) |
+| `hop_size` | 512 | Samples between analysis frames |
+
+---
+
+## Mathematical background
+
+### Dynamical systems and attractors
+
+A **dynamical system** is a set of differential equations `dx/dt = f(x)` or a map `x_{n+1} = f(x_n)`. The long-term behaviour of trajectories in phase space determines the system's character:
+
+- **Fixed point** — all trajectories converge to a single point (stable equilibrium).
+- **Limit cycle** — trajectories converge to a closed loop (periodic oscillation).
+- **Quasi-periodic** — trajectories wind around a torus; the ratio of frequencies is irrational.
+- **Chaotic attractor (strange attractor)** — trajectories are bounded but never repeat; nearby trajectories diverge exponentially (sensitive dependence on initial conditions).
+
+### Lyapunov exponents
+
+The **maximal Lyapunov exponent** λ₁ quantifies the average rate of exponential divergence of nearby trajectories:
+
+```
+||δx(t)|| ≈ e^{λ₁ t} ||δx(0)||
+```
+
+- λ₁ < 0: stable fixed point or limit cycle.
+- λ₁ = 0: quasi-periodic or at a bifurcation boundary.
+- λ₁ > 0: chaotic. The Lorenz system at standard parameters has λ₁ ≈ 0.906.
+
+math-sonify estimates λ₁ using a standard rescaling algorithm: a shadow trajectory is integrated alongside the main one, the separation is measured every N steps, its logarithm is accumulated, and the separation is rescaled. This runs at `LYAP_INTERVAL_TICKS` (every 2 seconds of sim time).
+
+### FFT spectral analysis
+
+The FFT module (`spectrum.rs`) computes a 1024-point Hann-windowed FFT of the synthesised audio output and displays:
+
+- Magnitude spectrum (dB scale, linear frequency axis).
+- Spectral centroid (brightness indicator).
+- Fundamental frequency estimate via parabolic interpolation on the magnitude peak.
+
+The audio-driven morphing module uses the same FFT on the *input* signal to extract audio features.
+
+### Chaos onset in the Lorenz system
+
+The Lorenz system `(σ=10, β=8/3, ρ)` undergoes the following transitions as ρ increases:
+
+| ρ range | Behaviour |
+|---------|-----------|
+| ρ < 1 | All trajectories converge to origin |
+| 1 < ρ < 13.93 | Two stable fixed points (C+ and C−) |
+| 13.93 < ρ < 24.06 | Unstable limit cycles; trajectories still attracted to C± |
+| ρ > 24.74 | Strange attractor (chaos onset) — the classic butterfly |
 
 ---
 
