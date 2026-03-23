@@ -42,6 +42,8 @@ pub mod stochastic_composer;
 pub mod binaural_beats;
 pub mod sequencer;
 pub mod chord_progression;
+pub mod sonification_pipeline;
+pub mod musical_analysis;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
