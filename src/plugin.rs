@@ -52,6 +52,8 @@ pub mod melody_generator;
 pub mod dynamic_processor;
 pub mod pitch_detector;
 pub mod audio_analyzer;
+pub mod wavetable_synth;
+pub mod spatial_audio;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
