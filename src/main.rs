@@ -6,6 +6,7 @@
 mod arrangement;
 mod audio;
 mod bifurcation;
+mod collaboration;
 mod config;
 pub mod error;
 pub mod evolution;
@@ -13,6 +14,7 @@ mod midi_export;
 mod osc;
 mod osc_sync;
 mod patches;
+mod preset_gallery;
 mod preset_interpolation;
 mod recorder;
 mod sonification;

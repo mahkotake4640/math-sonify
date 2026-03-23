@@ -42,6 +42,7 @@ egui = "0.27"
 # Config + serialization
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 notify = "6"
 
 # Concurrency utilities
