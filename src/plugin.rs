@@ -57,6 +57,8 @@ pub mod wavetable_synth;
 pub mod spatial_audio;
 pub mod chord_voicing;
 pub mod rhythm_engine;
+pub mod midi_sequencer;
+pub mod envelope_generator;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
