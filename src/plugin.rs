@@ -54,6 +54,8 @@ pub mod pitch_detector;
 pub mod audio_analyzer;
 pub mod wavetable_synth;
 pub mod spatial_audio;
+pub mod chord_voicing;
+pub mod rhythm_engine;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
