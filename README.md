@@ -976,6 +976,162 @@ The test suite covers: ODE solver accuracy (attractor bounds, energy conservatio
 
 ---
 
+## Bifurcation Sweeper (`src/bifurcation.rs`)
+
+The bifurcation sweeper runs a dynamical system across a continuous range of a single parameter, records the steady-state attractor at each step, and exports the results in two formats.
+
+| Output | Description |
+|--------|-------------|
+| SVG diagram | Attractor z-coordinate vs parameter value — classic bifurcation plot rendered as a dark-background SVG. |
+| Sweep WAV | Each parameter step rendered as a short audio clip, concatenated into a single mono WAV file that audibly sweeps through the parameter range. |
+
+### Usage
+
+Trigger from the UI with the **Bifurcation Sweep** button in the **Bifurc** tab (tab 7), or call from Rust:
+
+```rust
+use math_sonify::bifurcation::{BifurcationConfig, BifurcationSweeper};
+
+let config = BifurcationConfig {
+    parameter_name: "rho".into(),
+    range_start: 0.5,
+    range_end: 30.0,
+    steps: 200,
+    duration_per_step_ms: 300,
+};
+let result = BifurcationSweeper::sweep(&config, &base_cfg, Path::new("recordings"))?;
+println!("WAV written to: {}", result.audio_path.display());
+```
+
+Files are written to the `recordings/` directory (created automatically).
+
+---
+
+## Preset Interpolation and Morphing (`src/preset_interpolation.rs`)
+
+Linear interpolation between any two named presets. All numeric fields are blended continuously; string fields (system name, mode, scale, chord mode) switch at t = 0.5.
+
+### Key types
+
+| Type | Purpose |
+|------|---------|
+| `PresetInterpolator` | Single shot — interpolate between two configs at any `t` in [0, 1]. |
+| `PresetMorphSchedule` | A sequence of `(preset_name, duration_ms)` pairs forming a morph timeline. |
+| `MorphTimeline` | Stateful player for a `PresetMorphSchedule`; call `.tick()` each frame. |
+| `MorphState` | Current position (0–1) between source and target with completion check. |
+
+### Usage
+
+```rust
+use math_sonify::preset_interpolation::{interpolate, PresetMorphSchedule, MorphTimeline};
+
+// Single interpolation at t = 0.5
+let mid = interpolate(&load_preset("Lorenz Ambience"), &load_preset("FM Chaos"), 0.5);
+
+// Full morph timeline
+let sched = PresetMorphSchedule::from_pairs(&[
+    ("Lorenz Ambience", 8_000),
+    ("FM Chaos",        6_000),
+    ("Thomas Labyrinth", 10_000),
+]);
+let mut timeline = MorphTimeline::new(sched);
+loop {
+    let cfg = timeline.tick(); // call each UI frame
+    engine.apply_config(cfg);
+    if timeline.is_finished() { break; }
+}
+```
+
+The **Morph** control in the **ARRANGE** tab exposes source/target preset selectors and a duration slider.
+
+---
+
+## Collaborative OSC Sync (`src/osc_sync.rs`, `osc` feature)
+
+Enables real-time parameter synchronization between multiple running instances over UDP multicast.
+
+Enable with `--features osc` (adds the `rosc` optional dependency).
+
+### Supported OSC paths
+
+| Path | Arguments | Action |
+|------|-----------|--------|
+| `/mathsonify/param/{name}` | `f32` value | Set a named parameter on all peers |
+| `/mathsonify/preset/{name}` | _(none)_ | Switch preset across all instances |
+| `/mathsonify/sync/beat` | `f32` timestamp | Beat sync for tempo alignment |
+
+### Components
+
+| Type | Role |
+|------|------|
+| `OscSyncServer` | Listens on UDP port 9001; joins multicast group `239.0.0.1`. |
+| `OscSyncClient` | Broadcasts messages to the same multicast group. |
+| `CollaborativeSession` | Tracks connected peers by IP; applies last-writer-wins conflict resolution with monotonic timestamps. Peer count shown in status bar. |
+
+```rust
+use math_sonify::osc_sync::{OscSyncServer, OscSyncClient, CollaborativeSession};
+
+let server  = OscSyncServer::new()?;
+let client  = OscSyncClient::new()?;
+let session = CollaborativeSession::new();
+
+// Broadcast a parameter change:
+client.send_param("reverb_wet", 0.6)?;
+
+// Receive and apply incoming changes:
+if let Some((addr, msg)) = server.try_recv() {
+    session.apply(addr, msg);
+}
+println!("{} peer(s) connected", session.peer_count());
+```
+
+---
+
+## Audio Recording Mode (`src/recorder.rs`)
+
+Press **R** to start/stop recording. Files are saved to `recordings/YYYYMMDD_HHMMSS.wav` (epoch timestamp). A pulsing red **REC** indicator appears in the status bar while active.
+
+### Configuration
+
+| Option | Values | Default |
+|--------|--------|---------|
+| Bit depth | 16-bit int, 32-bit float | 32-bit float |
+| Sample rate | 44.1 kHz, 48 kHz | matches audio engine |
+
+### Types
+
+| Type | Purpose |
+|------|---------|
+| `AudioRecorder` | Appends live stereo interleaved f32 samples to a WAV file. |
+| `SegmentRecorder` | Fixed-duration clip (default 60 s), auto-named by system + preset. |
+
+```rust
+use math_sonify::recorder::{AudioRecorder, RecordingDepth, RecordingSampleRate, SegmentRecorder};
+
+// Open a rolling recorder
+let mut rec = AudioRecorder::start(
+    Path::new("recordings"),
+    RecordingDepth::Bits32,
+    RecordingSampleRate::Hz44100,
+)?;
+rec.push_samples(&stereo_f32_samples)?;
+let path = rec.stop()?;
+
+// Auto-named segment (60 s clip)
+let mut seg = SegmentRecorder::start(
+    Path::new("recordings"),
+    "lorenz",
+    "Lorenz Ambience",
+    60,
+    RecordingDepth::Bits32,
+    RecordingSampleRate::Hz44100,
+)?;
+let done = seg.push_samples(&samples)?;  // returns true when clip is full
+if done { seg.finish()?; }
+```
+
+---
+
 ## Contributing
 
 1. Fork and create a feature branch.

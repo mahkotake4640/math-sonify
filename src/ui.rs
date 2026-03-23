@@ -797,6 +797,11 @@ impl AppState {
             custom_ic: vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             vu_peak_hold: [0.0; 4],
             vu_peak_decay_timer: 0.0,
+            morph_source: String::new(),
+            morph_target: String::new(),
+            morph_duration_ms: 5000,
+            osc_sync_peers: 0,
+            recorder_active: false,
         }
     }
 
@@ -1372,12 +1377,15 @@ pub fn draw_ui(
                 if let Some(mut lock) = recording.try_lock() {
                     *lock = None;
                 }
+                state.lock().recorder_active = false;
             } else {
+                // Save to recordings/ subdirectory (created if needed).
+                let _ = std::fs::create_dir_all("recordings");
                 let secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let filename = format!("recording_{}.wav", secs);
+                let filename = format!("recordings/{}.wav", secs);
                 let spec = hound::WavSpec {
                     channels: 2,
                     sample_rate: sr,
@@ -1388,6 +1396,7 @@ pub fn draw_ui(
                     if let Some(mut lock) = recording.try_lock() {
                         *lock = Some(writer);
                     }
+                    state.lock().recorder_active = true;
                 }
             }
         }
@@ -1654,6 +1663,35 @@ pub fn draw_ui(
                                             .color(chaos_col)
                                             .strong(),
                                     );
+                                    // Recording indicator: red dot when recording is active.
+                                    {
+                                        let rec_active = state.lock().recorder_active;
+                                        if rec_active {
+                                            let (r, _) = ui.allocate_exact_size(
+                                                Vec2::new(32.0, 12.0),
+                                                Sense::hover(),
+                                            );
+                                            let t2 = ui.input(|i| i.time as f32);
+                                            let alpha = ((t2 * 3.0).sin() * 0.4 + 0.6).clamp(0.0, 1.0);
+                                            ui.painter().circle_filled(
+                                                Pos2::new(r.min.x + 6.0, r.center().y),
+                                                4.5,
+                                                Color32::from_rgba_premultiplied(
+                                                    230,
+                                                    40,
+                                                    40,
+                                                    (alpha * 255.0) as u8,
+                                                ),
+                                            );
+                                            ui.painter().text(
+                                                Pos2::new(r.min.x + 14.0, r.center().y),
+                                                egui::Align2::LEFT_CENTER,
+                                                "REC",
+                                                egui::FontId::proportional(9.5),
+                                                Color32::from_rgb(230, 40, 40),
+                                            );
+                                        }
+                                    }
                                     // Mini VU bars (right of status, left of chaos%)
                                     ui.add_space(4.0);
                                     let vu_peak = ((sb_vu[0] + sb_vu[1]) * 0.5).clamp(0.0, 1.0);
@@ -9562,9 +9600,9 @@ fn draw_math_view(
         draw_phase_clock(&painter, right_rect, current_state, current_deriv);
     }
 
-    // Feature #7: Lyapunov exponent scrolling history line graph
+    // Feature #7: Lyapunov exponent scrolling history line graph (enhanced)
     if !lyapunov_history.is_empty() {
-        let graph_h = 60.0f32;
+        let graph_h = 90.0f32;
         let graph_rect = Rect::from_min_max(
             Pos2::new(rect.left() + 10.0, rect.max.y - graph_h - 10.0),
             Pos2::new(mid_x - 10.0, rect.max.y - 10.0),
@@ -9575,15 +9613,47 @@ fn draw_math_view(
             3.0,
             Stroke::new(1.0, Color32::from_rgb(40, 50, 80)),
         );
+
+        let zero_y = graph_rect.center().y;
+        let hist_vec: Vec<f32> = lyapunov_history.iter().copied().collect();
+        let current_lam = *hist_vec.last().unwrap_or(&0.0);
+
+        // Background tints: red above zero (chaos), blue below (stable)
+        let chaos_rect = Rect::from_min_max(
+            graph_rect.min,
+            Pos2::new(graph_rect.right(), zero_y),
+        );
+        let stable_rect = Rect::from_min_max(
+            Pos2::new(graph_rect.left(), zero_y),
+            graph_rect.max,
+        );
+        painter.rect_filled(chaos_rect, 0.0, Color32::from_rgba_premultiplied(60, 10, 10, 40));
+        painter.rect_filled(stable_rect, 0.0, Color32::from_rgba_premultiplied(10, 20, 60, 40));
+
+        // Axis labels
         painter.text(
             Pos2::new(graph_rect.left() + 4.0, graph_rect.top() + 2.0),
             Align2::LEFT_TOP,
-            "\u{03bb}\u{2081} history",
-            FontId::monospace(10.0),
-            Color32::from_rgb(140, 160, 200),
+            "chaos",
+            FontId::monospace(8.0),
+            Color32::from_rgba_premultiplied(200, 80, 80, 180),
         );
+        painter.text(
+            Pos2::new(graph_rect.left() + 4.0, graph_rect.bottom() - 10.0),
+            Align2::LEFT_TOP,
+            "stable",
+            FontId::monospace(8.0),
+            Color32::from_rgba_premultiplied(80, 130, 230, 180),
+        );
+        painter.text(
+            Pos2::new(graph_rect.right() - 4.0, zero_y - 1.0),
+            Align2::RIGHT_BOTTOM,
+            "0",
+            FontId::monospace(8.0),
+            Color32::from_rgba_premultiplied(140, 140, 180, 200),
+        );
+
         // Zero dashed line
-        let zero_y = graph_rect.center().y;
         let mut dx = graph_rect.left();
         while dx < graph_rect.right() {
             painter.line_segment(
@@ -9595,16 +9665,39 @@ fn draw_math_view(
             );
             dx += 12.0;
         }
-        let hist_vec: Vec<f32> = lyapunov_history.iter().copied().collect();
+
+        // Regime label: current λ value and regime name
+        let (regime_str, regime_color) = if current_lam > 0.05 {
+            ("chaotic", Color32::from_rgb(220, 80, 60))
+        } else if current_lam < -0.05 {
+            ("stable", Color32::from_rgb(60, 130, 255))
+        } else {
+            ("periodic", Color32::from_rgb(240, 220, 60))
+        };
+        let lam_label = format!("\u{03bb}\u{2081} = {:.3}  [{}]", current_lam, regime_str);
+        painter.text(
+            Pos2::new(graph_rect.left() + 4.0, graph_rect.top() + 2.0 + 10.0),
+            Align2::LEFT_TOP,
+            lam_label,
+            FontId::monospace(9.0),
+            regime_color,
+        );
+
         let n = hist_vec.len();
         let max_abs = hist_vec.iter().map(|v| v.abs()).fold(0.01f32, f32::max);
         if n >= 2 {
             for i in 1..n {
                 let lam = hist_vec[i];
+                // Magnitude-weighted color gradient
+                let intensity = (lam.abs() / max_abs).clamp(0.0, 1.0);
                 let color = if lam > 0.05 {
-                    Color32::from_rgb(60, 220, 80)
+                    let r = (80.0 + 160.0 * intensity) as u8;
+                    let g = (200.0 - 100.0 * intensity) as u8;
+                    Color32::from_rgb(r, g, 60)
                 } else if lam < -0.05 {
-                    Color32::from_rgb(60, 130, 255)
+                    let b = (180.0 + 75.0 * intensity) as u8;
+                    let g = (80.0 + 60.0 * intensity) as u8;
+                    Color32::from_rgb(40, g, b)
                 } else {
                     Color32::from_rgb(240, 220, 60)
                 };
