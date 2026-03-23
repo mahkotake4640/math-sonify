@@ -509,6 +509,14 @@ pub struct AppState {
     // ── VU Meter Peak Hold ───────────────────────────────────────────────────
     pub vu_peak_hold: [f32; 4],
     pub vu_peak_decay_timer: f32,
+    // ── Preset Morph controls (ARRANGE tab) ──────────────────────────────────
+    pub morph_source: String,
+    pub morph_target: String,
+    pub morph_duration_ms: u64,
+    // ── OSC Sync peer count (status bar) ─────────────────────────────────────
+    pub osc_sync_peers: usize,
+    // ── Audio Recorder toggle ────────────────────────────────────────────────
+    pub recorder_active: bool,
 }
 
 /// Periodic session log entry (written by sim thread every ~60s).
@@ -2330,6 +2338,52 @@ pub fn draw_ui(
                     );
                     ctx.request_repaint();
                 }
+                // ── Bifurcation Sweep button ─────────────────────────────
+                // Runs BifurcationSweeper on a background thread: exports SVG
+                // diagram + concatenated WAV of the full parameter sweep.
+                if !computing {
+                    let sweep_clicked = ui
+                        .add(
+                            Button::new(
+                                RichText::new("Bifurcation Sweep")
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(60, 0, 100)),
+                        )
+                        .on_hover_text(
+                            "Sweep the selected parameter, export SVG diagram + WAV audio",
+                        )
+                        .clicked();
+                    if sweep_clicked {
+                        let (param, cfg_snap) = {
+                            let st = state.lock();
+                            (st.bifurc_param.clone(), st.config.clone())
+                        };
+                        std::thread::spawn(move || {
+                            let sweep_cfg = crate::bifurcation::BifurcationConfig {
+                                parameter_name: param,
+                                ..crate::bifurcation::BifurcationConfig::default()
+                            };
+                            let dir = std::path::PathBuf::from("recordings");
+                            match crate::bifurcation::BifurcationSweeper::sweep(
+                                &sweep_cfg,
+                                &cfg_snap,
+                                &dir,
+                            ) {
+                                Ok(result) => {
+                                    tracing::info!(
+                                        audio = %result.audio_path.display(),
+                                        "Bifurcation sweep complete"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Bifurcation sweep failed: {e}");
+                                }
+                            }
+                        });
+                    }
+                }
+
                 // Basin controls — always visible when on the basin tab
                 if viz_tab == 8 {
                     ui.horizontal(|ui| {
@@ -6445,6 +6499,83 @@ fn draw_arrange_tab(ui: &mut Ui, state: &SharedState, recording: &WavRecorder) {
         );
     }
     ui.add_space(6.0);
+
+    // ── Preset Morph section ─────────────────────────────────────────────────
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Morph").color(CYAN).strong());
+        ui.add_space(4.0);
+
+        let (src, tgt, dur_ms) = {
+            let st = state.lock();
+            (
+                st.morph_source.clone(),
+                st.morph_target.clone(),
+                st.morph_duration_ms,
+            )
+        };
+
+        // Source preset selector.
+        let mut new_src = src.clone();
+        ComboBox::from_id_source("morph_src")
+            .selected_text(if new_src.is_empty() { "Source" } else { &new_src })
+            .width(130.0)
+            .show_ui(ui, |ui| {
+                for p in crate::patches::PRESETS {
+                    if ui.selectable_label(new_src == p.name, p.name).clicked() {
+                        new_src = p.name.to_string();
+                    }
+                }
+            });
+
+        ui.label(RichText::new("→").color(AMBER));
+
+        // Target preset selector.
+        let mut new_tgt = tgt.clone();
+        ComboBox::from_id_source("morph_tgt")
+            .selected_text(if new_tgt.is_empty() { "Target" } else { &new_tgt })
+            .width(130.0)
+            .show_ui(ui, |ui| {
+                for p in crate::patches::PRESETS {
+                    if ui.selectable_label(new_tgt == p.name, p.name).clicked() {
+                        new_tgt = p.name.to_string();
+                    }
+                }
+            });
+
+        // Duration slider.
+        let mut new_dur = dur_ms;
+        ui.add(
+            egui::Slider::new(&mut new_dur, 500..=30_000)
+                .text("ms")
+                .suffix(" ms"),
+        );
+
+        // Apply button.
+        let can_morph = !new_src.is_empty() && !new_tgt.is_empty() && new_src != new_tgt;
+        let morph_btn = ui
+            .add_enabled(
+                can_morph,
+                Button::new(RichText::new("Morph").color(Color32::WHITE))
+                    .fill(Color32::from_rgb(80, 0, 120)),
+            )
+            .on_hover_text("Interpolate from source to target preset over the given duration");
+        if morph_btn.clicked() {
+            let sched = crate::preset_interpolation::PresetMorphSchedule::from_pairs(&[
+                (new_src.as_str(), new_dur),
+                (new_tgt.as_str(), new_dur),
+            ]);
+            let mut tl = crate::preset_interpolation::MorphTimeline::new(sched);
+            let cfg = tl.tick();
+            state.lock().config = cfg;
+        }
+
+        // Persist selector state.
+        let mut st = state.lock();
+        st.morph_source = new_src;
+        st.morph_target = new_tgt;
+        st.morph_duration_ms = new_dur;
+    });
 
     // Visual timeline
     let scenes_for_tl = state.lock().scenes.clone();
