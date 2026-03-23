@@ -30,6 +30,11 @@ mod spectrum;
 mod synth;
 mod synthesis;
 mod systems;
+mod stochastic_resonance;
+mod networks;
+mod spectral_composition;
+mod cellular_automaton;
+mod quantum_oscillator;
 #[cfg(test)]
 mod tests;
 mod ui;

@@ -1023,7 +1023,8 @@ mod tests {
         let bar = q.ticks_per_bar();
         // Advance exactly one bar.
         q.advance(bar);
-        assert_eq!(q.cursor_ticks, 0, "cursor should wrap to 0");
+        // After advancing by exactly one bar, bar_position should be 0.
+        assert!(q.bar_position() < 1e-9, "bar position should wrap to 0, got {}", q.bar_position());
     }
 
     #[test]
