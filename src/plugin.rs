@@ -36,6 +36,8 @@ pub mod markov_music;
 pub mod signal_processing;
 pub mod harmony_system;
 pub mod rhythm_quantizer;
+pub mod generative_counterpoint;
+pub mod spectral_morph;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
