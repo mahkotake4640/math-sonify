@@ -28,6 +28,8 @@ pub mod randomizer;
 pub mod duffing;
 pub mod zoo;
 pub mod effects;
+pub mod blend;
+pub mod scale_mapper;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};

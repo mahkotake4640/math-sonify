@@ -39,6 +39,8 @@ mod networks;
 mod spectral_composition;
 mod cellular_automaton;
 mod quantum_oscillator;
+pub mod blend;
+pub mod scale_mapper;
 #[cfg(test)]
 mod tests;
 mod ui;
@@ -3333,6 +3335,8 @@ fn run_headless(args: &[String]) -> anyhow::Result<()> {
     let patch_name = arg_after(args, "--patch");
     let attractor_name = arg_after(args, "--attractor");
     let run_spectrum = args.contains(&"--spectrum".to_string());
+    let blend_spec = arg_after(args, "--blend");
+    let scale_spec = arg_after(args, "--scale");
 
     println!("Math Sonify headless render");
     println!("  Duration : {} s", duration_secs);
@@ -3360,6 +3364,62 @@ fn run_headless(args: &[String]) -> anyhow::Result<()> {
         };
         config.system.name = mapped.to_string();
         println!("  Attractor: {}", config.system.name);
+    }
+
+    // --blend attractor_a:attractor_b: demonstrate multi-attractor blend
+    if let Some(spec) = blend_spec {
+        let parts: Vec<&str> = spec.splitn(2, ':').collect();
+        let name_a = parts.first().copied().unwrap_or("lorenz");
+        let name_b = parts.get(1).copied().unwrap_or("rossler");
+        println!("[blend] Blending {} -> {}", name_a, name_b);
+        use crate::blend::{AttractorBlend, AttractorState, BlendConfig, MultiAttractorSequencer, SequenceEntry};
+        let a = AttractorState::new(1.0, 1.0, 1.0);
+        let b = AttractorState::new(5.0, 5.0, 5.0);
+        let cfg = BlendConfig::new(0.5);
+        let mid = AttractorBlend::interpolate(a, b, &cfg);
+        println!("[blend] midpoint state: ({:.4}, {:.4}, {:.4})", mid.x, mid.y, mid.z);
+        let entries = vec![
+            SequenceEntry { attractor_name: name_a.to_string(), duration_samples: 100, crossfade_samples: 20 },
+            SequenceEntry { attractor_name: name_b.to_string(), duration_samples: 100, crossfade_samples: 20 },
+        ];
+        let traj = MultiAttractorSequencer::render(&entries, config.system.dt);
+        println!("[blend] rendered {} states", traj.len());
+        return Ok(());
+    }
+
+    // --scale mode:root_midi: demonstrate scale mapping
+    if let Some(spec) = scale_spec {
+        use crate::scale_mapper::{MusicalScale, ScaleMapper, ScaleMode};
+        use crate::blend::AttractorState;
+        let parts: Vec<&str> = spec.splitn(2, ':').collect();
+        let mode_str = parts.first().copied().unwrap_or("major");
+        let root_midi: u8 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(60);
+        let mode = match mode_str.to_lowercase().as_str() {
+            "minor"      => ScaleMode::Minor,
+            "pentatonic" => ScaleMode::Pentatonic,
+            "dorian"     => ScaleMode::Dorian,
+            "phrygian"   => ScaleMode::Phrygian,
+            "lydian"     => ScaleMode::Lydian,
+            "wholetone"  => ScaleMode::WholeTone,
+            "chromatic"  => ScaleMode::Chromatic,
+            _            => ScaleMode::Major,
+        };
+        let scale = MusicalScale::new(root_midi, mode);
+        let mapper = ScaleMapper::new(scale.clone(), 2);
+        println!("[scale] mode={:?} root_midi={}", mode, root_midi);
+        println!("[scale] pitch class set: {:?}", scale.pitch_class_set());
+        // Map a sample trajectory
+        let mut sys = build_system(&config);
+        let dt = config.system.dt;
+        for i in 0..8 {
+            sys.step(dt);
+            let st = sys.state();
+            let state = AttractorState::new(st[0], st[1], st[2]);
+            let pitch = mapper.map_state(&state);
+            println!("[scale] step={} midi={} freq={:.2}Hz degree={} chord={:?}",
+                i, pitch.midi_note, pitch.freq_hz, pitch.scale_degree, pitch.chord);
+        }
+        return Ok(());
     }
 
     // --spectrum: run spectral analysis on the trajectory and print dominant frequencies

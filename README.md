@@ -1285,6 +1285,88 @@ let sample = synth.next_sample(&state, 44100.0);
 
 ---
 
+## Multi-Attractor Blend (`src/blend.rs`)
+
+Smoothly interpolates between two attractor states and sequences multiple attractors with S-curve crossfades.
+
+```rust
+use math_sonify_plugin::blend::{AttractorBlend, AttractorState, BlendConfig, MultiAttractorSequencer, SequenceEntry};
+
+// Linear blend at 50%
+let a = AttractorState::new(1.0, 2.0, 3.0);
+let b = AttractorState::new(10.0, 20.0, 30.0);
+let cfg = BlendConfig::new(0.5);
+let mid = AttractorBlend::interpolate(a, b, &cfg);
+
+// S-curve crossfade between two trajectories
+let a_traj: Vec<AttractorState> = vec![AttractorState::new(0.0, 0.0, 0.0); 100];
+let b_traj: Vec<AttractorState> = vec![AttractorState::new(5.0, 5.0, 5.0); 100];
+let blended = AttractorBlend::smooth_transition(&a_traj, &b_traj, 50);
+
+// Alpha schedule (smoothstep 0→1)
+let schedule = AttractorBlend::morph(64);
+
+// Sequence two attractors with crossfade
+let entries = vec![
+    SequenceEntry { attractor_name: "lorenz".to_string(), duration_samples: 200, crossfade_samples: 40 },
+    SequenceEntry { attractor_name: "rossler".to_string(), duration_samples: 200, crossfade_samples: 40 },
+];
+let trajectory = MultiAttractorSequencer::render(&entries, 0.01);
+```
+
+**CLI:** `--blend lorenz:rossler` — renders a blended trajectory and prints state count.
+
+**Key types:**
+- `AttractorState { x, y, z }` — phase-space point
+- `BlendConfig { alpha }` — blend weight (0 = A, 1 = B)
+- `AttractorBlend::smooth_transition` — smoothstep S-curve crossfade
+- `AttractorBlend::morph` — alpha schedule from 0 to 1
+- `MultiAttractorSequencer::render` — full multi-segment sequencer
+
+---
+
+## Scale/Mode Mapper (`src/scale_mapper.rs`)
+
+Maps attractor state values to musical pitches in a chosen scale/mode.
+
+```rust
+use math_sonify_plugin::scale_mapper::{MusicalScale, ScaleMapper, ScaleMode, midi_to_freq};
+use math_sonify_plugin::blend::AttractorState;
+
+// Create a D major scale
+let scale = MusicalScale::new(62, ScaleMode::Major);
+println!("{:?}", scale.pitch_class_set()); // [0, 2, 4, 5, 7, 9, 11]
+
+// Quantize a value to the nearest note
+let midi = scale.quantize(0.3, 2); // across 2 octaves
+
+// Get a triad
+let chord = scale.chord(-0.5); // [root, third, fifth]
+
+// Full attractor → MIDI pipeline
+let mapper = ScaleMapper::new(scale, 2);
+let state = AttractorState::new(2.5, -0.8, 14.0);
+let pitch = mapper.map_state(&state);
+println!("MIDI {} ({:.1} Hz), degree {}, chord {:?}",
+    pitch.midi_note, pitch.freq_hz, pitch.scale_degree, pitch.chord);
+
+// Hz conversion
+let freq = midi_to_freq(69); // 440.0
+```
+
+**CLI:** `--scale major:60` — maps a sample Lorenz trajectory to the C major scale and prints MIDI notes.
+
+**Supported modes:** `Major`, `Minor`, `Pentatonic`, `Dorian`, `Phrygian`, `Lydian`, `WholeTone`, `Chromatic`.
+
+**Key types:**
+- `MusicalScale { root_midi, mode }` — scale definition
+- `MusicalScale::pitch_class_set()` — semitone intervals above root
+- `MusicalScale::quantize(value, octaves)` — maps [-1,1] → nearest MIDI note
+- `MusicalScale::chord(value)` — returns triad `[root, third, fifth]`
+- `ScaleMapper::map_state(state)` → `MappedPitch { midi_note, freq_hz, scale_degree, chord }`
+
+---
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
