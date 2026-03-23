@@ -6,4 +6,7 @@
 
 pub mod physical;
 
-pub use physical::{build_physical_synth, PhysicalMode, PhysicalSynth, PluckedString, TubeResonator};
+pub use physical::{
+    build_physical_synth, AdsrEnvelope, FmConfig, FmSynth, PhysicalMode, PhysicalSynth,
+    PluckedString, TubeResonator,
+};

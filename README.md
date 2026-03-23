@@ -1143,6 +1143,113 @@ Code style: no `unsafe` without comment, no `.unwrap()` in `src/` outside tests,
 
 ---
 
+## Rössler Attractor (`src/rossler.rs`)
+
+A standalone module providing idiomatic config/state types for the Rössler spiral strange attractor.
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `RosslerConfig { a, b, c }` | Classic params: `a=0.2, b=0.2, c=5.7` (default) |
+| `RosslerState { x, y, z }` | Current phase-space position |
+| `RosslerAttractor` | RK4 integrator with `step(dt)`, `state()`, `derivatives()` |
+
+### Equations of motion
+
+```
+dx/dt = -y - z
+dy/dt =  x + a·y
+dz/dt =  b + z·(x - c)
+```
+
+With `a=0.2, b=0.2, c=5.7` the attractor is bounded (|x|, |y| < 30) and exhibits near-periodic chaos.
+
+### Example
+
+```rust
+use math_sonify_plugin::rossler::{RosslerAttractor, RosslerConfig};
+
+let mut attractor = RosslerAttractor::new(RosslerConfig::default());
+for _ in 0..1000 {
+    attractor.step(0.01);
+}
+let s = attractor.state();
+println!("x={:.3} y={:.3} z={:.3}", s.x, s.y, s.z);
+```
+
+---
+
+## Van der Pol Oscillator (`src/vanderpol.rs`)
+
+A standalone module for the Van der Pol self-sustaining limit-cycle oscillator.
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `VanDerPolConfig { mu }` | Nonlinearity parameter; `mu=1.0` is classic |
+| `VanDerPolState { x, y }` | Displacement and velocity |
+| `VanDerPolOscillator` | RK4 integrator with `step(dt)`, `state()`, `derivatives()` |
+
+### Equations of motion
+
+```
+dx/dt = y
+dy/dt = μ·(1 − x²)·y − x
+```
+
+For μ > 0 the system converges to a stable limit cycle. Larger μ gives
+increasingly relaxation-oscillator-like behaviour with sharp transitions.
+
+### Example
+
+```rust
+use math_sonify_plugin::vanderpol::{VanDerPolConfig, VanDerPolOscillator};
+
+let mut osc = VanDerPolOscillator::new(VanDerPolConfig { mu: 2.0 });
+for _ in 0..2000 {
+    osc.step(0.01);
+}
+let s = osc.state();
+println!("x={:.3} y={:.3}", s.x, s.y);
+```
+
+---
+
+## FM Synthesis (`src/synthesis/physical.rs`)
+
+DX7-style frequency modulation synthesis is now available as a `PhysicalSynth` mode.
+
+### New types
+
+| Type | Description |
+|------|-------------|
+| `FmConfig { carrier_ratio, modulator_ratio, modulation_index }` | Classic DX7-style parameters |
+| `AdsrEnvelope { attack_samples, decay_samples, sustain_level, release_samples }` | Sample-accurate ADSR |
+| `FmSynth` | FM synthesizer implementing `PhysicalSynth` |
+| `PhysicalMode::Fm` | New factory variant |
+
+### State mapping
+
+| State dimension | FM parameter |
+|----------------|--------------|
+| `state[0]` | Carrier frequency (log-mapped over `freq_min..freq_max`) |
+| `state[1]` | Modulation index (0→4) |
+| `state[2]` | ADSR re-trigger threshold |
+
+### Usage
+
+```rust
+use math_sonify_plugin::synthesis::{build_physical_synth, FmConfig, FmSynth, PhysicalMode};
+
+let mut synth = build_physical_synth(PhysicalMode::Fm, 80.0, 1200.0, 44100.0);
+let state = [1.0f64, 0.5, 0.0];
+let sample = synth.next_sample(&state, 44100.0);
+```
+
+---
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

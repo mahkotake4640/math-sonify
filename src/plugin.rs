@@ -15,9 +15,12 @@ pub mod audio_driven;
 pub mod config;
 pub mod error;
 pub mod patches;
+pub mod rossler;
 pub mod sonification;
 pub mod synth;
 pub mod systems;
+pub mod vanderpol;
+pub mod synthesis;
 
 use config::SonificationConfig;
 use sonification::{DirectMapping, Sonification};
