@@ -58,6 +58,8 @@ pub mod generative_counterpoint;
 pub mod spectral_morph;
 pub mod audio_effects;
 pub mod notation_exporter;
+pub mod algorithmic_composer;
+pub mod tuning_system;
 
 use std::path::Path;
 use std::sync::Arc;
