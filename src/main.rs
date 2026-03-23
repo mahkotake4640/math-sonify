@@ -3,6 +3,8 @@
 // To add unsafe code, you must justify it with #[allow(unsafe_code)] at the call site.
 #![deny(unsafe_code)]
 
+mod waveform;
+mod arpeggiator;
 mod arrangement;
 mod audio;
 mod rossler;
